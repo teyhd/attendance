@@ -1,0 +1,20 @@
+{
+  "name": "attendance-1",
+  "version": "1.0.0",
+  "description": "",
+  "homepage": "https://github.com/teyhd/attendance#readme",
+  "bugs": {
+    "url": "https://github.com/teyhd/attendance/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/teyhd/attendance.git"
+  },
+  "license": "ISC",
+  "author": "TEYHD",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  }
+}
