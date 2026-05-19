@@ -1,0 +1,46 @@
+<section class="max-w-3xl mx-auto">
+  <div class="bg-white shadow rounded-lg p-6 space-y-4">
+    <div class="flex items-center justify-between">
+      <div>
+        <p class="text-sm text-gray-500">Класс {{#with (findById classes child.classId)}}{{name}}{{/with}}</p>
+        <h1 class="text-2xl font-semibold">Отметить отсутствие: {{child.name}}</h1>
+      </div>
+      <a href="/attendance?class={{selectedClass}}" class="text-sm text-blue-600 hover:text-blue-800">← Назад к списку</a>
+    </div>
+
+    <form method="post" action="/attendance" class="space-y-4">
+      <input type="hidden" name="childId" value="{{child.id}}" />
+      <input type="hidden" name="classId" value="{{selectedClass}}" />
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1" for="from">Начало отсутствия</label>
+        <input id="from" name="from" type="datetime-local" value="{{now}}" required class="w-full rounded border-gray-300 focus:border-blue-500 focus:ring-blue-500" />
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1" for="to">Окончание (необязательно)</label>
+        <input id="to" name="to" type="datetime-local" class="w-full rounded border-gray-300 focus:border-blue-500 focus:ring-blue-500" />
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1" for="reason">Типовая причина</label>
+          <select id="reason" name="reason" class="w-full rounded border-gray-300 focus:border-blue-500 focus:ring-blue-500">
+            {{#each reasons}}
+              <option value="{{id}}">{{name}}</option>
+            {{/each}}
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1" for="comment">Комментарий</label>
+          <textarea id="comment" name="comment" rows="3" class="w-full rounded border-gray-300 focus:border-blue-500 focus:ring-blue-500" placeholder="Уточнение причины, детали"></textarea>
+        </div>
+      </div>
+
+      <div class="pt-2 flex gap-3">
+        <button type="submit" class="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700">Сохранить</button>
+        <a href="/attendance?class={{selectedClass}}" class="px-4 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200">Отмена</a>
+      </div>
+    </form>
+  </div>
+</section>

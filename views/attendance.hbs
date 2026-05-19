@@ -1,0 +1,198 @@
+<section class="space-y-6">
+  <div class="bg-white shadow rounded-lg p-5 space-y-4">
+    <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
+      <div>
+        <h1 class="text-2xl font-semibold">Посещаемость</h1>
+        <p class="text-sm text-gray-600">Выберите класс, затем отметьте отсутствия учеников.</p>
+      </div>
+      {{#if success}}
+        <div class="rounded border border-green-200 bg-green-50 text-green-800 px-4 py-2 text-sm">Отметка сохранена.</div>
+      {{/if}}
+    </div>
+    <form method="get" action="/attendance" class="flex flex-col sm:flex-row gap-4 items-start sm:items-end">
+      <label class="flex flex-col text-sm text-gray-700">
+        Класс
+        <select name="class" class="mt-1 rounded border-gray-300 focus:border-blue-500 focus:ring-blue-500">
+          {{#each classes}}
+            <option value="{{id}}" {{#if (eq ../selectedClass id)}}selected{{/if}}>{{name}}</option>
+          {{/each}}
+        </select>
+      </label>
+      <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Показать</button>
+    </form>
+  </div>
+
+  <div class="grid lg:grid-cols-3 gap-4">
+    <div class="lg:col-span-1 bg-white shadow rounded-lg p-5">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-lg font-semibold">Ученики</h2>
+        <span class="text-sm text-gray-500">{{children.length}} шт.</span>
+      </div>
+      {{#if children.length}}
+        <div class="space-y-2">
+          {{#each children}}
+            <a href="/attendance?class={{../selectedClass}}&student={{id}}" class="block border rounded-lg px-4 py-3 hover:border-indigo-400 hover:bg-indigo-50 transition {{#if isActive}}border-indigo-500 bg-indigo-50{{/if}}">
+              <div class="flex items-start justify-between gap-2">
+                <div>
+                  <div class="font-medium text-gray-900">{{name}}</div>
+                  <div class="text-sm text-gray-500">Класс {{#with (findById ../classes classId)}}{{name}}{{/with}}</div>
+                </div>
+                {{#if hasAbsence}}
+                  <span class="text-xs px-2 py-1 rounded-full bg-amber-100 text-amber-800">Есть отметки</span>
+                {{/if}}
+              </div>
+            </a>
+          {{/each}}
+        </div>
+      {{else}}
+        <div class="text-sm text-gray-500">В этом классе пока нет учеников.</div>
+      {{/if}}
+    </div>
+
+    <div class="lg:col-span-2 bg-white shadow rounded-lg p-5 space-y-5">
+      {{#if selectedChild}}
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <p class="text-sm text-gray-500">Класс {{#with (findById classes selectedChild.classId)}}{{name}}{{/with}}</p>
+            <h2 class="text-xl font-semibold text-gray-900">{{selectedChild.name}}</h2>
+          </div>
+          <div class="text-sm text-gray-600">ID: {{selectedChild.id}}</div>
+        </div>
+
+        <div class="border rounded-lg p-4">
+          <div class="flex items-center justify-between mb-3">
+            <span class="font-semibold text-gray-900">Текущие/будущие отсутствия</span>
+            <span class="text-sm text-gray-500">{{currentAbsences.length}} шт.</span>
+          </div>
+          {{#if currentAbsences.length}}
+            <div class="divide-y divide-gray-100">
+              {{#each currentAbsences}}
+                <div class="py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                  <div>
+                    <div class="text-sm font-medium text-gray-900">{{from}}{{#if to}} — {{to}}{{/if}}</div>
+                    <div class="text-xs text-gray-600">Причина: {{#with (findById ../reasons reason)}}{{name}}{{else}}Не указана{{/with}}</div>
+                    {{#if comment}}
+                      <div class="text-xs text-gray-500 mt-1">Комментарий: {{comment}}</div>
+                    {{/if}}
+                  </div>
+                  <div class="text-xs text-gray-400 text-right">Добавлено: {{createdAt}}</div>
+                </div>
+              {{/each}}
+            </div>
+          {{else}}
+            <p class="text-sm text-gray-500">Активных отметок нет.</p>
+          {{/if}}
+        </div>
+
+        <div class="border rounded-lg p-4 space-y-4">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <div class="font-semibold text-gray-900">Новая отметка об отсутствии</div>
+              <p class="text-sm text-gray-600">Заполните время, причину и комментарий при необходимости.</p>
+            </div>
+            <div class="flex gap-2">
+              <button type="button" data-fill="today" class="px-3 py-2 text-sm bg-gray-100 text-gray-800 rounded hover:bg-gray-200">Сегодня</button>
+              <button type="button" data-fill="lesson" class="px-3 py-2 text-sm bg-gray-100 text-gray-800 rounded hover:bg-gray-200">Один урок</button>
+            </div>
+          </div>
+
+          <form method="post" action="/attendance" class="space-y-4">
+            <input type="hidden" name="childId" value="{{selectedChild.id}}" />
+            <input type="hidden" name="classId" value="{{selectedClass}}" />
+
+            <div class="grid md:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1" for="absence-from">С какой даты/времени</label>
+                <input id="absence-from" name="from" type="datetime-local" value="{{defaultFrom}}" required class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500" />
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1" for="absence-to">По какую дату/время (можно пусто)</label>
+                <input id="absence-to" name="to" type="datetime-local" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500" />
+              </div>
+            </div>
+
+            <div class="grid md:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1" for="reason">Причина</label>
+                <select id="reason" name="reason" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
+                  {{#each reasons}}
+                    <option value="{{id}}">{{name}}</option>
+                  {{/each}}
+                </select>
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1" for="comment">Комментарий</label>
+                <textarea id="comment" name="comment" rows="3" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500" placeholder="Например: предупредили заранее"></textarea>
+              </div>
+            </div>
+
+            <div class="pt-2">
+              <button type="submit" class="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700">Сохранить</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="border rounded-lg p-4">
+          <div class="font-semibold text-gray-900 mb-3">Все отметки ученика</div>
+          {{#if childAbsences.length}}
+            <div class="overflow-x-auto">
+              <table class="min-w-full text-sm text-left">
+                <thead class="text-gray-500">
+                  <tr>
+                    <th class="py-2 pr-4">Период</th>
+                    <th class="py-2 pr-4">Причина</th>
+                    <th class="py-2 pr-4">Комментарий</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                  {{#each childAbsences}}
+                    <tr class="align-top">
+                      <td class="py-2 pr-4 text-gray-900">{{from}}{{#if to}} — {{to}}{{/if}}</td>
+                      <td class="py-2 pr-4 text-gray-700">{{#with (findById ../reasons reason)}}{{name}}{{else}}Не указана{{/with}}</td>
+                      <td class="py-2 pr-4 text-gray-600">{{#if comment}}{{comment}}{{else}}—{{/if}}</td>
+                    </tr>
+                  {{/each}}
+                </tbody>
+              </table>
+            </div>
+          {{else}}
+            <p class="text-sm text-gray-500">Отметок пока нет.</p>
+          {{/if}}
+        </div>
+      {{else}}
+        <div class="text-sm text-gray-500">Выберите класс и ученика, чтобы добавить отметку.</div>
+      {{/if}}
+    </div>
+  </div>
+</section>
+
+<script>
+(() => {
+  const fromInput = document.getElementById('absence-from');
+  const toInput = document.getElementById('absence-to');
+  if (!fromInput || !toInput) return;
+
+  const pad = (n) => String(n).padStart(2, '0');
+  const format = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+  const setToday = () => {
+    const now = new Date();
+    const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), now.getMinutes());
+    const dayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59);
+    fromInput.value = format(dayStart);
+    toInput.value = format(dayEnd);
+  };
+
+  const setOneLesson = () => {
+    const base = fromInput.value ? new Date(fromInput.value) : new Date();
+    const end = new Date(base.getTime() + 45 * 60 * 1000);
+    fromInput.value = format(base);
+    toInput.value = format(end);
+  };
+
+  const todayBtn = document.querySelector('[data-fill="today"]');
+  const lessonBtn = document.querySelector('[data-fill="lesson"]');
+  if (todayBtn) todayBtn.addEventListener('click', setToday);
+  if (lessonBtn) lessonBtn.addEventListener('click', setOneLesson);
+})();
+</script>

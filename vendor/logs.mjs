@@ -20,6 +20,7 @@ export function mlog (par) {
     let datecreate = new Date();
     let texta = `\n ${curdate(datecreate.getHours())}:${curdate(datecreate.getMinutes())}:${curdate(datecreate.getSeconds())}`;
     let obj = arguments;
+    const logsDir = path.join(appDir, 'logs');
   
     for (const key in obj) {
       if (typeof obj[key]=='object') {
@@ -31,7 +32,8 @@ export function mlog (par) {
       }
       
     } 
-    fs.writeFileSync(path.join(appDir,'logs',`${curdate(datecreate.getDate())}.${curdate(datecreate.getMonth()+1)} log.txt`),
+    fs.ensureDirSync(logsDir);
+    fs.writeFileSync(path.join(logsDir,`${curdate(datecreate.getDate())}.${curdate(datecreate.getMonth()+1)} log.txt`),
     texta,
     {
       encoding: "utf8",

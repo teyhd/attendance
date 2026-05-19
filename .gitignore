@@ -5,6 +5,8 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 lerna-debug.log*
+vendor/logs/
+vendor/logs/*
 
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
@@ -69,6 +71,28 @@ web_modules/
 .env
 .env.*
 !.env.example
+
+# Local agent/runtime context with operational access
+AGENTS.local.md
+*.local.md
+.codex-local/
+
+# Secrets and private credentials
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+*_rsa
+*_ed25519
+
+# Local OS/editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache
