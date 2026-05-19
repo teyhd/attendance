@@ -201,16 +201,22 @@ function buildUserContext(claims, cfg) {
   const userID = Number(claims.sub || 0);
   const rawRoleId = extractServiceRoleID(claims.right, cfg.serviceID);
   const role = roleName(rawRoleId);
+  const permissions = attendancePermissions(rawRoleId);
   return {
     id: userID,
     name: String(claims.name || `uid:${userID}`),
     rawRoleId,
     role,
     landing: '/attendance',
-    permissions: {
-      use_attendance: rawRoleId > 0,
-      mark_absence: rawRoleId > 0,
-    },
+    permissions,
+  };
+}
+
+export function attendancePermissions(roleID) {
+  const allowedRole = [2, 3, 4, 5].includes(Number(roleID));
+  return {
+    use_attendance: allowedRole,
+    mark_absence: allowedRole,
   };
 }
 

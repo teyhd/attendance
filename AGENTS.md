@@ -75,6 +75,7 @@
 - Сервис SSO для Attendance: `sso.srvs.name = atten`, текущий `SSO_SERVICE_ID=13`.
 - Вход выполняется через `https://platoniks.ru/sso`; callback production: `https://stud.platoniks.ru/api/cb`.
 - Роли доступа бери из JWT claim `right`, выбирая максимальный `role_id` только для `srv_id == SSO_SERVICE_ID`.
+- Доступ к рабочему экрану Attendance дают только `role_id=2`, `3`, `4`, `5`; `role_id=1` student и отсутствие роли доступа не дают.
 - Классы бери из `sso.kaf_name` с `type = 1`; учеников бери из `sso.users` с `type = 1` и `status = 1`.
 - Не создавай локальные таблицы классов/учеников, если эти данные уже есть в SSO.
 - Не пиши в `sso.*`, `school_local.sso_users`, `school_local.sso_kafs` и не меняй SSO-схему миграциями.

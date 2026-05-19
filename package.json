@@ -18,7 +18,7 @@
     "start": "node attendacs.js",
     "dev": "nodemon attendacs.js",
     "build:css": "tailwindcss -i ./assets/tailwind.css -o ./public/assets/app.css --minify",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test"
   },
   "dependencies": {
     "cookie-parser": "^1.4.7",
