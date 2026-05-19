@@ -1,9 +1,6 @@
 import fs from 'fs-extra'
 import path from 'path'
 
-import request from 'request'
-import urlencode from 'urlencode'
-
 import { fileURLToPath } from 'url';
 
 // Получаем __dirname в ESM
@@ -21,6 +18,7 @@ export function mlog (par) {
     let texta = `\n ${curdate(datecreate.getHours())}:${curdate(datecreate.getMinutes())}:${curdate(datecreate.getSeconds())}`;
     let obj = arguments;
     const logsDir = path.join(appDir, 'logs');
+    const logName = `${curdate(datecreate.getDate())}.${curdate(datecreate.getMonth()+1)}.${String(datecreate.getFullYear()).slice(-2)}.txt`;
   
     for (const key in obj) {
       if (typeof obj[key]=='object') {
@@ -32,14 +30,12 @@ export function mlog (par) {
       }
       
     } 
-    fs.ensureDirSync(logsDir);
-    fs.writeFileSync(path.join(logsDir,`${curdate(datecreate.getDate())}.${curdate(datecreate.getMonth()+1)} log.txt`),
-    texta,
-    {
-      encoding: "utf8",
-      flag: "a+",
-      //mode: 0o666
-    });
+    try {
+      fs.ensureDirSync(logsDir);
+      fs.appendFileSync(path.join(logsDir, logName), texta, { encoding: "utf8" });
+    } catch (err) {
+      console.error('Не удалось записать runtime-лог:', err?.message || err);
+    }
   
     console.log(texta);
     return texta
@@ -59,7 +55,10 @@ export function say(msg,all=true) {
 }
 
 function sendtg(num,msg) {
-    request(`http://home.teyhd.ru:3334/?msg=${urlencode(msg)}&num=${urlencode(num)}`)
+    const url = new URL('http://home.teyhd.ru:3334/');
+    url.searchParams.set('msg', msg);
+    url.searchParams.set('num', num);
+    fetch(url).catch(() => {});
 }
 
 

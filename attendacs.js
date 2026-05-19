@@ -1,23 +1,20 @@
-import { mlog, say } from './vendor/logs.mjs'
+import { mlog } from './vendor/logs.mjs'
 process.on('uncaughtException', (err) => {
 mlog('Глобальный косяк приложения!!! ', err.stack);
 }); //Если все пошло по ***, спасет ситуацию
 import 'dotenv/config'
 
-import bcrypt from 'bcrypt';
 import * as db from './vendor/db.mjs';
+import { requirePageAuth, requirePermission, setupAuthRoutes } from './vendor/auth.mjs';
 
 import express from 'express'
 import exphbs from 'express-handlebars'
-import session from 'express-session'
 import cookieParser from 'cookie-parser'
 import path from 'path'
-import fs from 'fs-extra'
 import { fileURLToPath } from 'url';
 
 let i_count = 1;
 var PORT = process.env.PORT || 789;
-const SESSION_SECRET = process.env.SESSION_SECRET || 'attendance-dev-session-secret';
  //PORT = process.env.PORT || 80;
 const app = express();
 const hbs = exphbs.create({
@@ -123,26 +120,9 @@ app.use(express.static(publicPath));
 app.use(cookieParser());
 app.set('trust proxy', 1);
 
-app.use(session({name: 'sso.sid',resave:true,saveUninitialized:false, secret: SESSION_SECRET, cookie:
-  {secure: false, // ⚠️ обязательно false на HTTP!
-  httpOnly: true}
-}))
-
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
-
-const classes = [
-  { id: '1a', name: '1А' },
-  { id: '1b', name: '1Б' },
-  { id: '2a', name: '2А' }
-];
-
-const children = [
-  { id: 'c1', name: 'Иван Иванов', classId: '1a' },
-  { id: 'c2', name: 'Мария Петрова', classId: '1a' },
-  { id: 'c3', name: 'Алексей Смирнов', classId: '1b' },
-  { id: 'c4', name: 'София Кузнецова', classId: '2a' }
-];
+setupAuthRoutes(app);
 
 const absences = [];
 
@@ -157,66 +137,73 @@ app.get('/', (req, res) => {
   res.redirect('/attendance');
 });
 
-app.get('/attendance', (req, res) => {
-  const selectedClass = req.query.class || classes[0]?.id;
-  const classChildren = children.filter((c) => !selectedClass || String(c.classId) === String(selectedClass));
-  const requestedStudent = req.query.student;
-  const selectedChild = classChildren.find((c) => String(c.id) === String(requestedStudent)) || classChildren[0] || null;
-  const selectedStudentId = selectedChild?.id || '';
-  const now = new Date();
+app.get('/attendance', requirePageAuth, async (req, res) => {
+  try {
+    const classes = await db.getClasses();
+    const selectedClass = req.query.class || classes[0]?.id || '';
+    const classChildren = selectedClass ? await db.getStudentsByClass(selectedClass) : [];
+    const requestedStudent = req.query.student;
+    const selectedChild = classChildren.find((c) => String(c.id) === String(requestedStudent)) || classChildren[0] || null;
+    const selectedStudentId = selectedChild?.id || '';
+    const now = new Date();
 
-  const childrenView = classChildren.map((child) => ({
-    ...child,
-    hasAbsence: absences.some((a) => String(a.childId) === String(child.id)),
-    isActive: selectedStudentId && String(selectedStudentId) === String(child.id),
-  }));
+    const childrenView = classChildren.map((child) => ({
+      ...child,
+      hasAbsence: absences.some((a) => String(a.childId) === String(child.id)),
+      isActive: selectedStudentId && String(selectedStudentId) === String(child.id),
+    }));
 
-  const childAbsences = absences
-    .filter((item) => selectedStudentId && String(item.childId) === String(selectedStudentId))
-    .map((item) => ({
-      ...item,
-      child: children.find((c) => String(c.id) === String(item.childId)) || null,
-    }))
-    .sort((a, b) => new Date(b.from) - new Date(a.from));
+    const childAbsences = absences
+      .filter((item) => selectedStudentId && String(item.childId) === String(selectedStudentId))
+      .map((item) => ({
+        ...item,
+        child: classChildren.find((c) => String(c.id) === String(item.childId)) || selectedChild || null,
+      }))
+      .sort((a, b) => new Date(b.from) - new Date(a.from));
 
-  const currentAbsences = childAbsences.filter((item) => {
-    const from = new Date(item.from);
-    const to = item.to ? new Date(item.to) : null;
-    if (to) return to >= now;
-    return from >= new Date(now.getFullYear(), now.getMonth(), now.getDate()) || from <= now;
-  });
+    const currentAbsences = childAbsences.filter((item) => {
+      const from = new Date(item.from);
+      const to = item.to ? new Date(item.to) : null;
+      if (to) return to >= now;
+      return from >= new Date(now.getFullYear(), now.getMonth(), now.getDate()) || from <= now;
+    });
 
-  res.render('attendance', {
-    title: 'Посещаемость',
-    classes,
-    children: childrenView,
-    selectedChild,
-    selectedStudentId,
-    childAbsences,
-    currentAbsences,
-    selectedClass,
-    reasons: absenceReasons,
-    defaultFrom: new Date().toISOString().slice(0, 16),
-    success: req.query.success,
-  });
+    res.render('attendance', {
+      title: 'Посещаемость',
+      currentUser: req.authUser,
+      classes,
+      children: childrenView,
+      selectedChild,
+      selectedStudentId,
+      childAbsences,
+      currentAbsences,
+      selectedClass,
+      reasons: absenceReasons,
+      defaultFrom: new Date().toISOString().slice(0, 16),
+      success: req.query.success,
+    });
+  } catch (err) {
+    mlog('Ошибка загрузки страницы посещаемости', err);
+    res.status(500).send('Не удалось загрузить данные посещаемости');
+  }
 });
 
-app.get('/attendance/:childId/new', (req, res) => {
+app.get('/attendance/:childId/new', requirePageAuth, async (req, res) => {
   const { childId } = req.params;
   const selectedClass = req.query.class;
-  const child = children.find((c) => String(c.id) === String(childId));
-  if (!child) return res.status(404).send('Ребенок не найден');
+  const child = await db.getStudentById(childId);
+  if (!child) return res.status(404).send('Ученик не найден');
 
   const redirectClass = selectedClass || child.classId;
   res.redirect(`/attendance?class=${encodeURIComponent(redirectClass)}&student=${encodeURIComponent(child.id)}`);
 });
 
-app.post('/attendance', (req, res) => {
+app.post('/attendance', requirePageAuth, requirePermission('mark_absence'), async (req, res) => {
   const { childId, from, to, reason, comment, classId } = req.body;
-  const child = children.find((c) => String(c.id) === String(childId));
+  const child = await db.getStudentById(childId);
 
   if (!child) {
-    return res.status(400).send('Неверный ребенок');
+    return res.status(400).send('Неверный ученик');
   }
 
   if (!from) {
@@ -231,6 +218,7 @@ app.post('/attendance', (req, res) => {
     reason: reason || 'other',
     comment: comment || '',
     createdAt: new Date().toISOString(),
+    createdBy: req.authUser?.id || null,
   };
 
   absences.push(newAbsence);

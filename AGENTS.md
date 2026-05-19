@@ -58,11 +58,26 @@
   - `DBUSER`
   - `DBPASS`
   - `DBNAMESUSR`
-  - `SESSION_SECRET`
-- В production `SESSION_SECRET` должен задаваться через окружение PM2 или `.env`, а не храниться в Git.
+  - `SSO_BASE_URL`
+  - `SSO_CLIENT_ID`
+  - `SSO_CLIENT_SECRET`
+  - `SSO_CALLBACK_URL`
+  - `SSO_SERVICE_ID`
+  - `JWT_SECRET`
+  - `AUTH_SESSION_SECRET`
+  - `AUTH_SESSION_COOKIE_NAME`
+  - `AUTH_SESSION_TTL`
+  - `AUTH_DISABLED` только для локальной разработки.
+- В production `SSO_CLIENT_SECRET`, `JWT_SECRET` и `AUTH_SESSION_SECRET` должны задаваться через окружение PM2 или `.env`, а не храниться в Git.
 
 ## Границы данных
-- Считай SSO и общие школьные справочники внешним контуром, пока пользователь явно не попросит менять их.
+- SSO и общие школьные справочники являются внешним read-only контуром.
+- Сервис SSO для Attendance: `sso.srvs.name = atten`, текущий `SSO_SERVICE_ID=13`.
+- Вход выполняется через `https://platoniks.ru/sso`; callback production: `https://stud.platoniks.ru/api/cb`.
+- Роли доступа бери из JWT claim `right`, выбирая максимальный `role_id` только для `srv_id == SSO_SERVICE_ID`.
+- Классы бери из `sso.kaf_name` с `type = 1`; учеников бери из `sso.users` с `type = 1` и `status = 1`.
+- Не создавай локальные таблицы классов/учеников, если эти данные уже есть в SSO.
+- Не пиши в `sso.*`, `school_local.sso_users`, `school_local.sso_kafs` и не меняй SSO-схему миграциями.
 - Не выполняй destructive SQL-операции без прямого запроса и понятного rollback-плана.
 - Не меняй схему БД наугад: сначала найди источник данных и согласуй миграционный подход.
 - Не печатай содержимое `.env` и реальные credential values в ответах.

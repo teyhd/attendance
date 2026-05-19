@@ -10,8 +10,12 @@
   <header class="bg-white shadow-sm">
     <div class="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
       <div class="text-xl font-semibold">Учёт посещаемости</div>
-      <nav class="text-sm text-gray-600">
+      <nav class="flex items-center gap-4 text-sm text-gray-600">
         <a href="/attendance" class="hover:text-gray-900">Посещаемость</a>
+        {{#if currentUser}}
+          <span class="hidden sm:inline text-gray-500">{{currentUser.name}}</span>
+          <a href="/api/auth/logout" class="hover:text-gray-900">Выйти</a>
+        {{/if}}
       </nav>
     </div>
   </header>
