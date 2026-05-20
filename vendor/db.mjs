@@ -28,8 +28,21 @@ const CLASS_CHART_COLORS = [
   '#0369a1',
 ];
 const REASON_BAR_COLORS = {
-  default: '#059669',
-  quality: '#d97706',
+  illness: '#059669',
+  family: '#2563eb',
+  trip: '#7c3aed',
+  [WITHOUT_REASON_CODE]: '#d97706',
+  [OTHER_REASON_CODE]: '#f59e0b',
+  default: '#0f766e',
+};
+const REASON_CELL_PALETTES = {
+  illness: { bg: '#ecfdf5', border: '#86efac', text: '#065f46', strongBg: '#059669', strongText: '#ffffff' },
+  family: { bg: '#eff6ff', border: '#93c5fd', text: '#1d4ed8', strongBg: '#2563eb', strongText: '#ffffff' },
+  trip: { bg: '#f5f3ff', border: '#c4b5fd', text: '#5b21b6', strongBg: '#7c3aed', strongText: '#ffffff' },
+  [WITHOUT_REASON_CODE]: { bg: '#fef3c7', border: '#fde68a', text: '#92400e', strongBg: '#d97706', strongText: '#111827' },
+  [OTHER_REASON_CODE]: { bg: '#fff7ed', border: '#fed7aa', text: '#9a3412', strongBg: '#f59e0b', strongText: '#111827' },
+  attention: { bg: '#fee2e2', border: '#fecaca', text: '#991b1b', strongBg: '#dc2626', strongText: '#ffffff' },
+  default: { bg: '#ecfeff', border: '#67e8f9', text: '#155e75', strongBg: '#0f766e', strongText: '#ffffff' },
 };
 
 const sets = {
@@ -808,6 +821,13 @@ function buildMonthlyAnalytics({ range, classes, selectedClass, students, period
         dailyBucket.absentStudents.add(studentId);
         dailyBucket.periodIds.add(periodId);
         dailyBucket.absenceDays.add(dayKey);
+        const dayHours = hoursWithinDay(period, day);
+        dailyBucket.absenceHours += dayHours;
+        const dailyReasonBucket = ensureDailyReasonBucket(dailyBucket.reasonBuckets, period);
+        dailyReasonBucket.absenceDays.add(dayKey);
+        dailyReasonBucket.periodIds.add(periodId);
+        dailyReasonBucket.students.add(studentId);
+        dailyReasonBucket.absenceHours += dayHours;
       }
 
       if (isWithoutReason) {
@@ -824,20 +844,31 @@ function buildMonthlyAnalytics({ range, classes, selectedClass, students, period
   }
 
   const totalAbsenceDays = absenceDayKeys.size;
-  const dailyRows = Array.from(dailyBuckets.values()).map((bucket) => ({
-    date: bucket.date,
-    day_label: bucket.date.slice(8, 10),
-    absent_students: bucket.absentStudents.size,
-    absence_periods: bucket.periodIds.size,
-    absence_days: bucket.absenceDays.size,
-    without_reason: bucket.withoutReason.size,
-    needs_attention: bucket.needsAttention.size,
-  }));
+  const dailyRows = Array.from(dailyBuckets.values()).map((bucket) => {
+    const reasonSegments = dailyReasonSegments(bucket);
+    return {
+      date: bucket.date,
+      date_label: formatDateLabel(bucket.date),
+      day_label: bucket.date.slice(8, 10),
+      absent_students: bucket.absentStudents.size,
+      absence_periods: bucket.periodIds.size,
+      absence_days: bucket.absenceDays.size,
+      absence_hours: round1(bucket.absenceHours),
+      absence_hours_label: formatHoursShort(bucket.absenceHours),
+      without_reason: bucket.withoutReason.size,
+      needs_attention: bucket.needsAttention.size,
+      reason_segments: reasonSegments,
+      reason_summary: dailyReasonSummary(reasonSegments),
+      top_reason_code: reasonSegments[0]?.code || '',
+      top_reason_name: reasonSegments[0]?.name || '',
+      top_reason_color: reasonSegments[0]?.color || REASON_BAR_COLORS.default,
+    };
+  });
   const maxDailyDays = Math.max(0, ...dailyRows.map((row) => row.absence_days));
   for (const row of dailyRows) {
     row.bar_width = maxDailyDays ? percentOf(row.absence_days, maxDailyDays) : 0;
     row.heat_style = dailyHeatStyle(row, maxDailyDays);
-    row.heat_title = dailyHeatTitle(row);
+    row.heat_title = richDailyHeatTitle(row);
   }
   const dailyCalendar = buildDailyCalendar(range, dailyRows);
   const dailyActiveRows = dailyRows.filter((row) => (
@@ -1082,6 +1113,19 @@ function formatHoursShort(value) {
   return `${text} ч.`;
 }
 
+function formatDateLabel(value) {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return String(value || '');
+  return `${match[3]}.${match[2]}.${match[1]}`;
+}
+
+function hoursWithinDay(period, day) {
+  return hoursWithinRange(period.starts_at, period.ends_at, {
+    start_at: `${day} 00:00:00`,
+    end_at: `${day} 23:59:59`,
+  });
+}
+
 function truncateText(value, maxLength) {
   const text = String(value || '').trim();
   if (text.length <= maxLength) return text;
@@ -1115,32 +1159,82 @@ function buildDailyCalendar(range, dailyRows) {
   return slots;
 }
 
+function dailyReasonSegments(bucket) {
+  const totalDays = bucket.absenceDays.size;
+  return Array.from(bucket.reasonBuckets.values())
+    .map((item) => {
+      const absenceDays = item.absenceDays.size;
+      const hoursLabel = formatHoursShort(item.absenceHours);
+      const title = `${item.name}: ${absenceDays} дн., ${item.students.size} уч., ${item.periodIds.size} пер., ${hoursLabel}`;
+      return {
+        code: item.code,
+        name: item.name,
+        color: reasonBarColor(item.code),
+        absence_days: absenceDays,
+        absence_hours: round1(item.absenceHours),
+        absence_hours_label: hoursLabel,
+        periods: item.periodIds.size,
+        students: item.students.size,
+        width: percentOf(absenceDays, totalDays),
+        title,
+      };
+    })
+    .sort((a, b) => (
+      b.absence_days - a.absence_days ||
+      b.absence_hours - a.absence_hours ||
+      a.name.localeCompare(b.name, 'ru')
+    ));
+}
+
+function dailyReasonSummary(segments) {
+  if (!segments.length) return '';
+  const [top, ...rest] = segments;
+  const suffix = rest.length ? ` +${rest.length}` : '';
+  return `${top.name} · ${top.absence_days} дн.${suffix}`;
+}
+
 function dailyHeatStyle(row, maxDailyDays) {
-  if (Number(row.needs_attention || 0) > 0) {
-    return 'background-color:#fee2e2;border-color:#fecaca;color:#991b1b;';
-  }
-  if (Number(row.without_reason || 0) > 0) {
-    return 'background-color:#fef3c7;border-color:#fde68a;color:#92400e;';
-  }
   if (Number(row.absence_days || 0) <= 0) {
     return 'background-color:#f8fafc;border-color:#e2e8f0;color:#94a3b8;';
   }
 
   const ratio = maxDailyDays ? Number(row.absence_days || 0) / maxDailyDays : 0;
-  if (ratio >= 0.67) {
-    return 'background-color:#4f46e5;border-color:#4f46e5;color:#ffffff;';
+  if (Number(row.needs_attention || 0) > 0) {
+    return paletteStyle(REASON_CELL_PALETTES.attention, ratio, maxDailyDays);
   }
-  if (ratio >= 0.34) {
-    return 'background-color:#c7d2fe;border-color:#a5b4fc;color:#3730a3;';
+  if (Number(row.without_reason || 0) > 0) {
+    return paletteStyle(REASON_CELL_PALETTES[WITHOUT_REASON_CODE], ratio, maxDailyDays);
   }
-  return 'background-color:#e0e7ff;border-color:#c7d2fe;color:#3730a3;';
+
+  const palette = REASON_CELL_PALETTES[row.top_reason_code] || REASON_CELL_PALETTES.default;
+  return paletteStyle(palette, ratio, maxDailyDays);
+}
+
+function paletteStyle(palette, ratio, maxDailyDays) {
+  const useStrong = maxDailyDays > 1 && ratio >= 0.67;
+  const background = useStrong ? palette.strongBg : palette.bg;
+  const color = useStrong ? palette.strongText : palette.text;
+  return `background-color:${background};border-color:${palette.border};color:${color};`;
 }
 
 function reasonBarColor(code) {
-  if (isWithoutReasonCode(code) || isOtherReasonCode(code)) {
-    return REASON_BAR_COLORS.quality;
+  return REASON_BAR_COLORS[code] || REASON_BAR_COLORS.default;
+}
+
+function richDailyHeatTitle(row) {
+  const parts = [
+    row.date_label || row.date,
+    `ученик-дней: ${Number(row.absence_days || 0)}`,
+    `учеников: ${Number(row.absent_students || 0)}`,
+    `периодов: ${Number(row.absence_periods || 0)}`,
+    `часов: ${row.absence_hours_label || formatHoursShort(row.absence_hours)}`,
+  ];
+  for (const reason of row.reason_segments || []) {
+    parts.push(`${reason.name}: ${reason.absence_days} дн., ${reason.students} уч., ${reason.periods} пер., ${reason.absence_hours_label}`);
   }
-  return REASON_BAR_COLORS.default;
+  if (Number(row.without_reason || 0) > 0) parts.push(`без причины: ${Number(row.without_reason || 0)}`);
+  if (Number(row.needs_attention || 0) > 0) parts.push(`внимание: ${Number(row.needs_attention || 0)}`);
+  return parts.join('\n');
 }
 
 function dailyHeatTitle(row) {
@@ -1197,8 +1291,10 @@ function createDailyBucket(date) {
     absentStudents: new Set(),
     periodIds: new Set(),
     absenceDays: new Set(),
+    absenceHours: 0,
     withoutReason: new Set(),
     needsAttention: new Set(),
+    reasonBuckets: new Map(),
   };
 }
 
@@ -1234,6 +1330,21 @@ function ensureReasonBucket(map, period) {
       periods: 0,
       students: new Set(),
       absenceDays: new Set(),
+    });
+  }
+  return map.get(code);
+}
+
+function ensureDailyReasonBucket(map, period) {
+  const code = period.reason_code || OTHER_REASON_CODE;
+  if (!map.has(code)) {
+    map.set(code, {
+      code,
+      name: period.reason_name || code,
+      absenceDays: new Set(),
+      periodIds: new Set(),
+      students: new Set(),
+      absenceHours: 0,
     });
   }
   return map.get(code);
