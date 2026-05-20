@@ -1186,7 +1186,6 @@ function createDailyBucket(date) {
     absentStudents: new Set(),
     periodIds: new Set(),
     absenceDays: new Set(),
-    absenceHours: 0,
     withoutReason: new Set(),
     needsAttention: new Set(),
   };
@@ -1200,6 +1199,7 @@ function createClassBucket(item) {
     absentStudents: new Set(),
     periodIds: new Set(),
     absenceDays: new Set(),
+    absenceHours: 0,
     withoutReason: new Set(),
     needsAttention: new Set(),
     periods: 0,
