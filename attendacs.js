@@ -139,7 +139,9 @@ app.get('/', (req, res) => {
 });
 
 app.get('/attendance', requirePageAuth, asyncHandler(async (req, res) => {
-  const classes = await db.getClasses();
+  const baseClasses = await db.getClasses();
+  const mentorClassIds = await db.getMentorClassIds(req.authUser?.id);
+  const classes = orderClassesByPreference(baseClasses, mentorClassIds);
   const selectedClass = resolveSelectedClass(classes, req.query.class);
   const selectedDate = normalizeDateInput(req.query.date) || formatDateInput(new Date());
   const activeFilter = normalizeAttendanceFilter(req.query.filter);
@@ -236,6 +238,7 @@ app.get('/attendance', requirePageAuth, asyncHandler(async (req, res) => {
     currentUser: req.authUser,
     activePage: 'attendance',
     classes,
+    mentorClassIds,
     children,
     selectedChild,
     selectedStudentId,
@@ -262,9 +265,11 @@ app.get('/attendance', requirePageAuth, asyncHandler(async (req, res) => {
 }));
 
 app.get('/attendance/analytics', requirePageAuth, asyncHandler(async (req, res) => {
+  const mentorClassIds = await db.getMentorClassIds(req.authUser?.id);
+  const classId = req.query.class || mentorClassIds[0] || undefined;
   const analytics = await db.getMonthlyAttendanceAnalytics({
     month: req.query.month,
-    classId: req.query.class,
+    classId,
   });
 
   res.render('analytics', {
@@ -272,7 +277,7 @@ app.get('/attendance/analytics', requirePageAuth, asyncHandler(async (req, res) 
     currentUser: req.authUser,
     activePage: 'analytics',
     analytics,
-    classOptions: analytics.available_classes,
+    classOptions: orderClassesByPreference(analytics.available_classes, mentorClassIds),
     kpiCards: buildAnalyticsKpiCards(analytics),
   });
 }));
@@ -661,6 +666,21 @@ function resolveSelectedClass(classes, requestedClass) {
   const requested = String(requestedClass || '').trim();
   const found = classes.find((item) => String(item.id) === requested);
   return found ? String(found.id) : String(classes[0].id);
+}
+
+function orderClassesByPreference(classes, preferredClassIds = []) {
+  if (!Array.isArray(classes) || !classes.length) return [];
+  const preferred = new Set((preferredClassIds || []).map((id) => String(id)));
+  if (!preferred.size) return classes;
+
+  return classes
+    .map((item, index) => ({
+      ...item,
+      isMentorClass: preferred.has(String(item.id)),
+      originalIndex: index,
+    }))
+    .sort((a, b) => Number(b.isMentorClass) - Number(a.isMentorClass) || a.originalIndex - b.originalIndex)
+    .map(({ originalIndex, ...item }) => item);
 }
 
 function normalizeAttendanceFilter(value) {

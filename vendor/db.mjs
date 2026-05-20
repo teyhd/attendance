@@ -222,6 +222,28 @@ export async function getClasses() {
   return rows;
 }
 
+export async function getMentorClassIds(userId) {
+  const id = Number(userId);
+  if (!Number.isInteger(id) || id <= 0) return [];
+
+  const [rows] = await usr.query(
+    `SELECT DISTINCT CAST(t.class_id AS CHAR) AS id
+       FROM school_local.info_class_tutor t
+       JOIN sso.kaf_name k ON k.id = t.class_id
+      WHERE t.tutor_id = ?
+        AND t.class_id IS NOT NULL
+        AND k.type = 1
+        AND k.id > 0
+      ORDER BY
+        CASE WHEN NULLIF(REGEXP_SUBSTR(k.name, '^[0-9]+'), '') IS NULL THEN 1 ELSE 0 END,
+        CAST(NULLIF(REGEXP_SUBSTR(k.name, '^[0-9]+'), '') AS UNSIGNED),
+        k.name,
+        k.id`,
+    [id],
+  );
+  return rows.map((row) => String(row.id));
+}
+
 export async function getStudentsByClass(classId) {
   const [rows] = await usr.query(
     `SELECT
