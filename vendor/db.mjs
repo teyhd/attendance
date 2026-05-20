@@ -686,7 +686,7 @@ async function getMonthlyAnalyticsPeriods(range, classId) {
     'u.status = 1',
     'k.type = 1',
   ];
-  const params = [range.end_at, range.start_at];
+  const params = [range.start_at, range.end_at, range.end_at, range.start_at];
   if (classId) {
     where.push('p.class_id = ?');
     params.push(classId);
@@ -701,6 +701,10 @@ async function getMonthlyAnalyticsPeriods(range, classId) {
         k.name AS class_name,
         DATE_FORMAT(p.starts_at, '%Y-%m-%d %H:%i:%s') AS starts_at,
         DATE_FORMAT(p.ends_at, '%Y-%m-%d %H:%i:%s') AS ends_at,
+        ROUND(GREATEST(0, TIMESTAMPDIFF(MINUTE,
+          GREATEST(p.starts_at, ?),
+          LEAST(COALESCE(p.ends_at, TIMESTAMP(DATE(p.starts_at), '23:59:59')), ?)
+        ) / 60), 4) AS period_hours,
         p.reason_code,
         r.name AS reason_name,
         r.is_excused,
@@ -757,7 +761,9 @@ function buildMonthlyAnalytics({ range, classes, selectedClass, students, period
     const classId = String(period.class_id);
     const days = expandDateRangeWithinMonth(period.starts_at, period.ends_at || period.starts_at, range);
     if (!days.length) continue;
-    const periodHours = hoursWithinRange(period.starts_at, period.ends_at, range);
+    const periodHours = Number.isFinite(Number(period.period_hours))
+      ? Number(period.period_hours)
+      : hoursWithinRange(period.starts_at, period.ends_at, range);
 
     const isWithoutReason = isWithoutReasonCode(period.reason_code);
     const needsAttention = period.attention_status === 'needs_attention';
