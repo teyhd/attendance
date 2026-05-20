@@ -1,0 +1,213 @@
+<style>
+  @media print {
+    .no-print { display: none !important; }
+    body { background: #fff !important; }
+    header, main { box-shadow: none !important; }
+  }
+</style>
+
+<section class="space-y-4">
+  <div class="bg-white shadow rounded-lg p-4 space-y-4">
+    <div class="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-3">
+      <div>
+        <h1 class="text-xl font-semibold text-gray-900">Аналитика посещаемости</h1>
+        <div class="mt-1 text-sm text-gray-600">{{analytics.month_label}} · {{analytics.class_name}}</div>
+      </div>
+
+      <form method="get" action="/attendance/analytics" class="no-print flex flex-col sm:flex-row gap-2 sm:items-end">
+        <label class="text-sm text-gray-700">
+          <span class="block mb-1">Месяц</span>
+          <input name="month" value="{{analytics.month}}" type="month" class="w-full sm:w-40 rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500" />
+        </label>
+        <label class="text-sm text-gray-700">
+          <span class="block mb-1">Класс</span>
+          <select name="class" class="w-full sm:w-44 rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
+            {{#each classOptions}}
+              <option value="{{id}}" {{#if selected}}selected{{/if}}>{{name}}</option>
+            {{/each}}
+          </select>
+        </label>
+        <button type="submit" class="px-4 py-2 bg-gray-900 text-white rounded hover:bg-gray-800">Показать</button>
+        <button type="button" onclick="window.print()" class="px-4 py-2 border rounded bg-white text-gray-700 hover:bg-gray-50">Печать</button>
+        <button type="button" data-export-analytics class="px-4 py-2 border rounded bg-white text-gray-700 hover:bg-gray-50">CSV</button>
+      </form>
+    </div>
+
+    <div class="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
+      {{#each kpiCards}}
+        <div class="border-l-4 {{border_class}} border rounded bg-white p-3">
+          <div class="text-xs text-gray-500">{{label}}</div>
+          <div class="mt-1 text-2xl font-semibold text-gray-900">{{value}}</div>
+          <div class="mt-1 text-xs text-gray-500">{{hint}}</div>
+        </div>
+      {{/each}}
+    </div>
+  </div>
+
+  {{#unless analytics.has_data}}
+    <div class="bg-white shadow rounded-lg p-6">
+      <div class="text-base font-semibold text-gray-900">За выбранный месяц активных отметок нет</div>
+      <div class="mt-1 text-sm text-gray-500">Отчет готов к чтению, когда появятся записи об отсутствии.</div>
+    </div>
+  {{else}}
+    {{#if analytics.quality.has_issues}}
+      <div class="bg-white shadow rounded-lg p-4">
+        <h2 class="text-base font-semibold text-gray-900">Качество данных</h2>
+        <div class="mt-3 grid sm:grid-cols-3 gap-2">
+          {{#each analytics.quality.issues}}
+            <div class="border rounded p-3 bg-amber-50 border-amber-200">
+              <div class="text-xs text-amber-800">{{label}}</div>
+              <div class="mt-1 text-xl font-semibold text-amber-900">{{value}}</div>
+            </div>
+          {{/each}}
+        </div>
+      </div>
+    {{/if}}
+
+    <div class="grid lg:grid-cols-3 gap-4">
+      <div class="lg:col-span-2 bg-white shadow rounded-lg p-4">
+        <div class="flex items-center justify-between gap-3">
+          <h2 class="text-base font-semibold text-gray-900">Динамика по дням</h2>
+          <span class="text-sm text-gray-500">ученик-день</span>
+        </div>
+        <div class="mt-4 grid sm:grid-cols-2 xl:grid-cols-3 gap-2">
+          {{#each analytics.daily_active}}
+            <div class="flex items-center gap-2 text-sm">
+              <div class="w-8 text-gray-500">{{day_label}}</div>
+              <div class="flex-1 h-2 rounded-full bg-gray-100 overflow-hidden">
+                <div class="h-2 rounded-full bg-indigo-600" style="width: {{bar_width}}%;"></div>
+              </div>
+              <div class="w-8 text-right font-medium text-gray-900">{{absence_days}}</div>
+            </div>
+          {{/each}}
+        </div>
+        {{#if analytics.hidden_zero_days}}
+          <div class="mt-3 text-xs text-gray-500">Дни без отметок скрыты: {{analytics.hidden_zero_days}}</div>
+        {{/if}}
+      </div>
+
+      <div class="bg-white shadow rounded-lg p-4">
+        <h2 class="text-base font-semibold text-gray-900">Причины</h2>
+        <div class="mt-4 space-y-3">
+          {{#each analytics.reasons}}
+            <div>
+              <div class="flex items-center justify-between gap-2 text-sm">
+                <span class="font-medium text-gray-900">{{name}}</span>
+                <span class="text-gray-500">{{absence_days}} дн. · {{percent}}%</span>
+              </div>
+              <div class="mt-1 h-2 rounded-full bg-gray-100 overflow-hidden">
+                <div class="h-2 rounded-full {{bar_class}}" style="width: {{bar_width}}%;"></div>
+              </div>
+            </div>
+          {{/each}}
+        </div>
+      </div>
+    </div>
+
+    <div class="grid lg:grid-cols-2 gap-4">
+      <div class="bg-white shadow rounded-lg p-4">
+        <h2 class="text-base font-semibold text-gray-900">Классы</h2>
+        <div class="mt-4 space-y-3">
+          {{#each analytics.classes}}
+            <div>
+              <div class="flex items-center justify-between gap-2 text-sm">
+                <a href="/attendance?class={{class_id}}&date={{../analytics.period.to}}&filter=attention" class="font-medium text-gray-900 hover:text-indigo-700">{{class_name}}</a>
+                <span class="text-gray-500">{{absent_students}}/{{students_total}} · {{absence_days}} дн.</span>
+              </div>
+              <div class="mt-1 h-2 rounded-full bg-gray-100 overflow-hidden">
+                <div class="h-2 rounded-full bg-sky-600" style="width: {{bar_width}}%;"></div>
+              </div>
+              <div class="mt-1 flex gap-3 text-xs text-gray-500">
+                <span>периодов: {{periods}}</span>
+                <span>без причины: {{without_reason}}</span>
+                <span>внимание: {{needs_attention}}</span>
+              </div>
+            </div>
+          {{/each}}
+        </div>
+        {{#if analytics.hidden_zero_classes}}
+          <div class="mt-3 text-xs text-gray-500">Классы без отметок скрыты: {{analytics.hidden_zero_classes}}</div>
+        {{/if}}
+      </div>
+
+      <div class="bg-white shadow rounded-lg p-4">
+        <h2 class="text-base font-semibold text-gray-900">Требуют внимания</h2>
+        {{#if analytics.risk_students}}
+          <div class="mt-3 overflow-x-auto">
+            <table class="min-w-full text-sm">
+              <thead class="text-xs text-gray-500">
+                <tr class="border-b">
+                  <th class="py-2 pr-3 text-left font-medium">Ученик</th>
+                  <th class="py-2 pr-3 text-left font-medium">Класс</th>
+                  <th class="py-2 pr-3 text-right font-medium">Дни</th>
+                  <th class="py-2 pr-3 text-right font-medium">Внимание</th>
+                  <th class="py-2 text-left font-medium">Последний контекст</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-100">
+                {{#each analytics.risk_students}}
+                  <tr>
+                    <td class="py-2 pr-3 font-medium text-gray-900">{{student_name}}</td>
+                    <td class="py-2 pr-3 text-gray-600">{{class_name}}</td>
+                    <td class="py-2 pr-3 text-right text-gray-900">{{absence_days}}</td>
+                    <td class="py-2 pr-3 text-right text-red-700">{{needs_attention}}</td>
+                    <td class="py-2 text-gray-600">
+                      <div class="font-medium text-gray-800">{{last_reason}}</div>
+                      {{#if last_comment_short}}
+                        <div class="max-w-sm text-xs text-gray-500 break-words">{{last_comment_short}}</div>
+                        {{#if has_long_comment}}
+                          <details class="mt-1 max-w-sm text-xs text-gray-500">
+                            <summary class="cursor-pointer select-none text-indigo-700">показать полностью</summary>
+                            <div class="mt-1 break-words">{{last_comment}}</div>
+                          </details>
+                        {{/if}}
+                      {{/if}}
+                    </td>
+                  </tr>
+                {{/each}}
+              </tbody>
+            </table>
+          </div>
+        {{else}}
+          <div class="mt-3 text-sm text-gray-500">Открытых рисков нет.</div>
+        {{/if}}
+      </div>
+    </div>
+  {{/unless}}
+</section>
+
+<script id="analytics-data" type="application/json">{{{json analytics}}}</script>
+<script>
+(() => {
+  const button = document.querySelector('[data-export-analytics]');
+  const source = document.getElementById('analytics-data');
+  if (!button || !source) return;
+
+  const quote = (value) => `"${String(value ?? '').replaceAll('"', '""')}"`;
+  const row = (values) => values.map(quote).join(';');
+  const data = JSON.parse(source.textContent || '{}');
+
+  button.addEventListener('click', () => {
+    const lines = [
+      row(['Раздел', 'Класс', 'Ученик', 'Дни', 'Периоды', 'Без причины', 'Внимание', 'Последний контекст']),
+    ];
+
+    (data.classes || []).forEach((item) => {
+      lines.push(row(['Класс', item.class_name, '', item.absence_days, item.periods, item.without_reason, item.needs_attention, '']));
+    });
+
+    (data.risk_students || []).forEach((item) => {
+      lines.push(row(['Ученик риска', item.class_name, item.student_name, item.absence_days, item.periods, item.without_reason, item.needs_attention, item.last_comment || item.last_reason || '']));
+    });
+
+    const blob = new Blob([`\uFEFF${lines.join('\n')}`], { type: 'text/csv;charset=utf-8' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `attendance-${data.month || 'report'}-${data.class_id || 'all'}.csv`;
+    document.body.append(link);
+    link.click();
+    URL.revokeObjectURL(link.href);
+    link.remove();
+  });
+})();
+</script>

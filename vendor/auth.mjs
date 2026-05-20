@@ -61,14 +61,36 @@ export function requirePageAuth(req, res, next) {
   return res.redirect('/api/auth/login');
 }
 
+export function requireApiAuth(req, res, next) {
+  const cfg = getAuthConfig();
+  const user = getAuthUserFromRequest(req);
+  if (user?.permissions?.use_attendance) {
+    req.authUser = user;
+    return next();
+  }
+  if (user && !user.permissions?.use_attendance) {
+    return res.status(403).json({ error: 'forbidden' });
+  }
+  if (!authConfigured() && !cfg.authDisabled) {
+    return res.status(503).json({ error: 'auth_not_configured' });
+  }
+  return res.status(401).json({ authenticated: false, login_url: '/api/auth/login' });
+}
+
 export function requirePermission(permission) {
   return (req, res, next) => {
     const user = req.authUser || getAuthUserFromRequest(req);
     if (!user) {
-      return res.status(401).json({ authenticated: false, login_url: '/api/auth/login' });
+      if (wantsJson(req)) {
+        return res.status(401).json({ authenticated: false, login_url: '/api/auth/login' });
+      }
+      return res.redirect('/api/auth/login');
     }
     req.authUser = user;
     if (!user.permissions?.[permission]) {
+      if (wantsJson(req)) {
+        return res.status(403).json({ error: 'forbidden' });
+      }
       return res.status(403).send('Нет доступа к действию');
     }
     return next();
@@ -213,10 +235,12 @@ function buildUserContext(claims, cfg) {
 }
 
 export function attendancePermissions(roleID) {
-  const allowedRole = [2, 3, 4, 5].includes(Number(roleID));
+  const role = Number(roleID);
+  const canUse = [2, 3, 4, 5].includes(role);
+  const canManage = [3, 4, 5].includes(role);
   return {
-    use_attendance: allowedRole,
-    mark_absence: allowedRole,
+    use_attendance: canUse,
+    mark_absence: canManage,
   };
 }
 
@@ -315,4 +339,8 @@ function appBaseURL(callbackURL) {
   } catch {
     return '';
   }
+}
+
+function wantsJson(req) {
+  return req.path?.startsWith('/api/') || String(req.get?.('accept') || '').includes('application/json');
 }

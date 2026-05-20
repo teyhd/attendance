@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{title}}</title>
+  <link rel="icon" href="/favicon.ico" sizes="any">
   <link rel="stylesheet" href="/assets/app.css">
   <!-- Yandex.Metrika counter -->
   <script type="text/javascript">
@@ -21,19 +22,23 @@
       ecommerce:"dataLayer"
     });
   </script>
-  <script type="text/javascript" src="https://api.uxrocket.ru/js/uxrocket.js" authkey="E7TH49MVLG" fetchpriority="high"></script>
+  {{#if enableUxRocket}}
+    <script type="text/javascript" src="https://api.uxrocket.ru/js/uxrocket.js" authkey="E7TH49MVLG" fetchpriority="high"></script>
+  {{/if}}
   <noscript><div><img src="https://mc.yandex.ru/watch/99316009" style="position:absolute; left:-9999px;" alt=""></div></noscript>
   <!-- /Yandex.Metrika counter -->
 </head>
 <body class="bg-gray-50 min-h-screen text-gray-900">
   <header class="bg-white shadow-sm">
-    <div class="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
-      <div class="text-xl font-semibold">Учёт посещаемости</div>
-      <nav class="flex items-center gap-4 text-sm text-gray-600">
-        <a href="/attendance" class="hover:text-gray-900">Посещаемость</a>
+    <div class="max-w-6xl mx-auto px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+      <div class="text-lg sm:text-xl font-semibold leading-tight">Учёт посещаемости</div>
+      <nav class="w-full sm:w-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-gray-600">
+        <a href="/attendance" class="hover:text-gray-900 {{#if (eq activePage 'attendance')}}font-semibold text-gray-900{{/if}}">Посещаемость</a>
+        <a href="/attendance/analytics" class="hover:text-gray-900 {{#if (eq activePage 'analytics')}}font-semibold text-gray-900{{/if}}">Аналитика</a>
         {{#if currentUser}}
-          <span class="hidden sm:inline text-gray-500">{{currentUser.name}}</span>
-          <a href="/api/auth/logout" class="hover:text-gray-900">Выйти</a>
+          <span class="max-w-[12rem] truncate text-gray-500">{{currentUser.name}}</span>
+          <span class="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700">{{roleLabel currentUser}}</span>
+          <a href="/api/auth/logout" class="ml-auto sm:ml-0 hover:text-gray-900">Выйти</a>
         {{/if}}
       </nav>
     </div>
