@@ -74,6 +74,28 @@ export function percentOf(value, total) {
   return Math.round((Number(value || 0) / Number(total)) * 100);
 }
 
+export function compareClassNames(left, right) {
+  const a = classNameParts(left);
+  const b = classNameParts(right);
+  if (a.hasNumber !== b.hasNumber) return a.hasNumber ? -1 : 1;
+  if (a.number !== b.number) return a.number - b.number;
+  return (
+    a.suffix.localeCompare(b.suffix, 'ru', { numeric: true, sensitivity: 'base' }) ||
+    a.text.localeCompare(b.text, 'ru', { numeric: true, sensitivity: 'base' })
+  );
+}
+
+function classNameParts(value) {
+  const text = String(value || '').trim();
+  const match = text.match(/^(\d+)(?:[-\s]*(.*))?$/u);
+  return {
+    text,
+    hasNumber: Boolean(match),
+    number: match ? Number(match[1]) : Number.MAX_SAFE_INTEGER,
+    suffix: match?.[2] || '',
+  };
+}
+
 function addDays(dateText, amount) {
   const [year, month, day] = dateText.split('-').map(Number);
   const date = new Date(Date.UTC(year, month - 1, day + amount));

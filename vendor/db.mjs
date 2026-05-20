@@ -1,6 +1,7 @@
 import mysql from 'mysql2';
 import {
   buildMonthRange,
+  compareClassNames,
   expandDateRangeWithinMonth,
   normalizeAnalyticsMonth,
   percentOf,
@@ -850,12 +851,7 @@ function buildMonthlyAnalytics({ range, classes, selectedClass, students, period
   for (const row of classRowsAll) {
     row.bar_width = maxClassDays ? percentOf(row.absence_days, maxClassDays) : 0;
   }
-  classRowsAll.sort((a, b) => (
-    b.absence_days - a.absence_days ||
-    b.needs_attention - a.needs_attention ||
-    b.without_reason - a.without_reason ||
-    compareClassNames(a.class_name, b.class_name)
-  ));
+  classRowsAll.sort((a, b) => compareClassNames(a.class_name, b.class_name));
   const classRows = selectedClass.id === 'all'
     ? classRowsAll.filter((row) => row.periods > 0 || row.absence_days > 0 || row.without_reason > 0 || row.needs_attention > 0)
     : classRowsAll;
@@ -957,24 +953,6 @@ function normalizeAnalyticsClass(classes, classId) {
     if (found) return { id: String(found.id), name: found.name };
   }
   return { id: 'all', name: 'Все классы' };
-}
-
-function compareClassNames(left, right) {
-  const a = classNameParts(left);
-  const b = classNameParts(right);
-  if (a.hasNumber !== b.hasNumber) return a.hasNumber ? -1 : 1;
-  if (a.number !== b.number) return a.number - b.number;
-  return a.text.localeCompare(b.text, 'ru', { numeric: true, sensitivity: 'base' });
-}
-
-function classNameParts(value) {
-  const text = String(value || '').trim();
-  const match = text.match(/^(\d+)/);
-  return {
-    text,
-    hasNumber: Boolean(match),
-    number: match ? Number(match[1]) : Number.MAX_SAFE_INTEGER,
-  };
 }
 
 function truncateText(value, maxLength) {

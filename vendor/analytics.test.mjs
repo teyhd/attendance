@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   buildMonthRange,
+  compareClassNames,
   expandDateRangeWithinMonth,
   normalizeAnalyticsMonth,
 } from './analytics.mjs';
@@ -41,5 +42,13 @@ test('expandDateRangeWithinMonth counts open periods as start day only', () => {
   assert.deepEqual(
     expandDateRangeWithinMonth('2026-05-10 08:00:00', null, range),
     ['2026-05-10'],
+  );
+});
+
+test('compareClassNames sorts classes in natural school order', () => {
+  const classes = ['5-2', '1', '10', '11', '2', '5-1', '8-АРТ', '8-2', 'ДШК'];
+  assert.deepEqual(
+    classes.toSorted(compareClassNames),
+    ['1', '2', '5-1', '5-2', '8-2', '8-АРТ', '10', '11', 'ДШК'],
   );
 });
