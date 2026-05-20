@@ -27,6 +27,10 @@ const CLASS_CHART_COLORS = [
   '#a16207',
   '#0369a1',
 ];
+const REASON_BAR_COLORS = {
+  default: '#059669',
+  quality: '#d97706',
+};
 
 const sets = {
   host: process.env.MDBHOST,
@@ -852,7 +856,7 @@ function buildMonthlyAnalytics({ range, classes, selectedClass, students, period
       absence_days: bucket.absenceDays.size,
       percent: percentOf(bucket.absenceDays.size, totalAbsenceDays),
       bar_width: percentOf(bucket.absenceDays.size, totalAbsenceDays),
-      bar_class: isWithoutReasonCode(bucket.code) || isOtherReasonCode(bucket.code) ? 'bg-amber-500' : 'bg-emerald-600',
+      bar_color: reasonBarColor(bucket.code),
     }))
     .sort((a, b) => b.absence_days - a.absence_days || a.name.localeCompare(b.name, 'ru'));
 
@@ -1130,6 +1134,13 @@ function dailyHeatStyle(row, maxDailyDays) {
     return 'background-color:#c7d2fe;border-color:#a5b4fc;color:#3730a3;';
   }
   return 'background-color:#e0e7ff;border-color:#c7d2fe;color:#3730a3;';
+}
+
+function reasonBarColor(code) {
+  if (isWithoutReasonCode(code) || isOtherReasonCode(code)) {
+    return REASON_BAR_COLORS.quality;
+  }
+  return REASON_BAR_COLORS.default;
 }
 
 function dailyHeatTitle(row) {
