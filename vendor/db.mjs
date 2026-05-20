@@ -1188,8 +1188,8 @@ function createDailyBucket(date) {
 
 function createClassBucket(item) {
   return {
-    class_id: String(item.id ?? item.class_id ?? ''),
-    class_name: item.name || item.class_name || '',
+    class_id: String(item.class_id ?? item.id ?? ''),
+    class_name: item.class_name || item.name || '',
     students_total: 0,
     absentStudents: new Set(),
     periodIds: new Set(),
@@ -1201,7 +1201,7 @@ function createClassBucket(item) {
 }
 
 function ensureClassBucket(map, item) {
-  const classId = String(item.id ?? item.class_id ?? '');
+  const classId = String(item.class_id ?? item.id ?? '');
   if (!map.has(classId)) {
     map.set(classId, createClassBucket(item));
   }
