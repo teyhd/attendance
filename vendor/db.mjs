@@ -3,6 +3,7 @@ import {
   buildMonthRange,
   compareClassNames,
   expandDateRangeWithinMonth,
+  hoursWithinRange,
   normalizeAnalyticsMonth,
   percentOf,
 } from './analytics.mjs';
@@ -14,6 +15,18 @@ import {
 } from './absence-reasons.mjs';
 
 const FAR_FUTURE = '9999-12-31 23:59:59';
+const CLASS_CHART_COLORS = [
+  '#2563eb',
+  '#059669',
+  '#d97706',
+  '#0891b2',
+  '#4f46e5',
+  '#65a30d',
+  '#0f766e',
+  '#64748b',
+  '#a16207',
+  '#0369a1',
+];
 
 const sets = {
   host: process.env.MDBHOST,
@@ -744,6 +757,7 @@ function buildMonthlyAnalytics({ range, classes, selectedClass, students, period
     const classId = String(period.class_id);
     const days = expandDateRangeWithinMonth(period.starts_at, period.ends_at || period.starts_at, range);
     if (!days.length) continue;
+    const periodHours = hoursWithinRange(period.starts_at, period.ends_at, range);
 
     const isWithoutReason = isWithoutReasonCode(period.reason_code);
     const needsAttention = period.attention_status === 'needs_attention';
@@ -762,6 +776,7 @@ function buildMonthlyAnalytics({ range, classes, selectedClass, students, period
     classBucket.periods += 1;
     classBucket.periodIds.add(periodId);
     classBucket.absentStudents.add(studentId);
+    classBucket.absenceHours += periodHours;
     riskBucket.periods += 1;
 
     if (!riskBucket.last_starts_at || String(period.starts_at) >= riskBucket.last_starts_at) {
@@ -843,6 +858,8 @@ function buildMonthlyAnalytics({ range, classes, selectedClass, students, period
       absent_students: bucket.absentStudents.size,
       periods: bucket.periods,
       absence_days: bucket.absenceDays.size,
+      absence_hours: round1(bucket.absenceHours),
+      absence_hours_label: formatHoursShort(bucket.absenceHours),
       without_reason: bucket.withoutReason.size,
       needs_attention: bucket.needsAttention.size,
     }))
@@ -853,8 +870,9 @@ function buildMonthlyAnalytics({ range, classes, selectedClass, students, period
   }
   classRowsAll.sort((a, b) => compareClassNames(a.class_name, b.class_name));
   const classRows = selectedClass.id === 'all'
-    ? classRowsAll.filter((row) => row.periods > 0 || row.absence_days > 0 || row.without_reason > 0 || row.needs_attention > 0)
+    ? classRowsAll.filter((row) => row.periods > 0 || row.absence_days > 0 || row.absence_hours > 0 || row.without_reason > 0 || row.needs_attention > 0)
     : classRowsAll;
+  const classChart = buildClassDistributionChart(classRows);
 
   const riskStudents = Array.from(riskBuckets.values())
     .map((bucket) => ({
@@ -919,6 +937,8 @@ function buildMonthlyAnalytics({ range, classes, selectedClass, students, period
       students_with_absences: absentStudents.size,
       absence_periods: totalPeriods,
       absence_days: totalAbsenceDays,
+      absence_hours: classChart.total_hours,
+      absence_hours_label: classChart.total_hours_label,
       with_reason_percent: totalPeriods ? percentOf(totalPeriods - withoutReasonPeriods, totalPeriods) : 100,
       without_reason: withoutReasonPeriods,
       without_reason_days: countPeriodDays(periods, range, (period) => isWithoutReasonCode(period.reason_code)),
@@ -933,6 +953,7 @@ function buildMonthlyAnalytics({ range, classes, selectedClass, students, period
     reasons: reasonRows,
     classes: classRows,
     classes_all: classRowsAll,
+    class_chart: classChart,
     hidden_zero_classes: classRowsAll.length - classRows.length,
     risk_students: riskStudents,
     quality: {
@@ -953,6 +974,102 @@ function normalizeAnalyticsClass(classes, classId) {
     if (found) return { id: String(found.id), name: found.name };
   }
   return { id: 'all', name: 'Все классы' };
+}
+
+function buildClassDistributionChart(classRows) {
+  const activeRows = classRows
+    .filter((row) => row.absence_days > 0 || row.absence_hours > 0)
+    .map((row) => ({
+      ...row,
+      chart_value: row.absence_days > 0 ? row.absence_days : row.absence_hours,
+    }));
+
+  const totalDays = activeRows.reduce((sum, row) => sum + Number(row.absence_days || 0), 0);
+  const totalHoursRaw = activeRows.reduce((sum, row) => sum + Number(row.absence_hours || 0), 0);
+  const totalValue = totalDays > 0 ? totalDays : totalHoursRaw;
+
+  if (!activeRows.length || totalValue <= 0) {
+    return {
+      has_data: false,
+      gradient: 'conic-gradient(#e5e7eb 0deg 360deg)',
+      total_days: 0,
+      total_hours: 0,
+      total_hours_label: formatHoursShort(0),
+      basis_label: 'ученик-дней',
+      items: [],
+    };
+  }
+
+  const sortedRows = activeRows.sort((a, b) => (
+    b.chart_value - a.chart_value ||
+    b.absence_days - a.absence_days ||
+    compareClassNames(a.class_name, b.class_name)
+  ));
+  const visibleRows = sortedRows.slice(0, 8);
+  const hiddenRows = sortedRows.slice(8);
+  const chartRows = visibleRows.map((row) => ({ ...row }));
+  if (hiddenRows.length) {
+    chartRows.push({
+      class_id: 'other',
+      class_name: 'Остальные',
+      students_total: hiddenRows.reduce((sum, row) => sum + Number(row.students_total || 0), 0),
+      absent_students: hiddenRows.reduce((sum, row) => sum + Number(row.absent_students || 0), 0),
+      periods: hiddenRows.reduce((sum, row) => sum + Number(row.periods || 0), 0),
+      absence_days: hiddenRows.reduce((sum, row) => sum + Number(row.absence_days || 0), 0),
+      absence_hours: round1(hiddenRows.reduce((sum, row) => sum + Number(row.absence_hours || 0), 0)),
+      without_reason: hiddenRows.reduce((sum, row) => sum + Number(row.without_reason || 0), 0),
+      needs_attention: hiddenRows.reduce((sum, row) => sum + Number(row.needs_attention || 0), 0),
+      chart_value: hiddenRows.reduce((sum, row) => sum + Number(row.chart_value || 0), 0),
+    });
+  }
+
+  let cursor = 0;
+  const segments = [];
+  const items = chartRows.map((row, index) => {
+    const color = CLASS_CHART_COLORS[index % CLASS_CHART_COLORS.length];
+    const nextCursor = index === chartRows.length - 1 ? 360 : cursor + (Number(row.chart_value || 0) / totalValue) * 360;
+    segments.push(`${color} ${formatAngle(cursor)}deg ${formatAngle(nextCursor)}deg`);
+    cursor = nextCursor;
+    return {
+      class_id: row.class_id,
+      class_name: row.class_name,
+      color,
+      percent: percentOf(row.chart_value, totalValue),
+      periods: row.periods,
+      absence_days: row.absence_days,
+      absence_hours: round1(row.absence_hours),
+      absence_hours_label: formatHoursShort(row.absence_hours),
+      absent_students: row.absent_students,
+      students_total: row.students_total,
+    };
+  });
+
+  return {
+    has_data: true,
+    gradient: `conic-gradient(${segments.join(', ')})`,
+    total_days: totalDays,
+    total_hours: round1(totalHoursRaw),
+    total_hours_label: formatHoursShort(totalHoursRaw),
+    basis_label: totalDays > 0 ? 'ученик-дней' : 'часов',
+    items,
+  };
+}
+
+function formatAngle(value) {
+  return round1(value).toFixed(1).replace(/\.0$/, '');
+}
+
+function round1(value) {
+  return Math.round(Number(value || 0) * 10) / 10;
+}
+
+function formatHoursShort(value) {
+  const rounded = round1(value);
+  if (!rounded) return '0 ч.';
+  const text = Number.isInteger(rounded)
+    ? String(rounded)
+    : String(rounded).replace('.', ',');
+  return `${text} ч.`;
 }
 
 function truncateText(value, maxLength) {
@@ -1063,6 +1180,7 @@ function createDailyBucket(date) {
     absentStudents: new Set(),
     periodIds: new Set(),
     absenceDays: new Set(),
+    absenceHours: 0,
     withoutReason: new Set(),
     needsAttention: new Set(),
   };

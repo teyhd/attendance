@@ -115,12 +115,39 @@
     <div class="grid lg:grid-cols-2 gap-4">
       <div class="bg-white shadow rounded-lg p-4">
         <h2 class="text-base font-semibold text-gray-900">Классы</h2>
+        {{#if analytics.class_chart.has_data}}
+          <div class="mt-4 grid gap-4 md:grid-cols-2 md:items-center">
+            <div class="flex items-center justify-center">
+              <div class="relative h-44 w-44 rounded-full shadow-inner" style="background: {{analytics.class_chart.gradient}};" role="img" aria-label="Распределение отсутствий по классам">
+                <div class="absolute inset-7 rounded-full bg-white flex flex-col items-center justify-center text-center">
+                  <div class="text-2xl font-semibold text-gray-900">{{analytics.class_chart.total_days}}</div>
+                  <div class="text-xs text-gray-500">{{analytics.class_chart.basis_label}}</div>
+                  <div class="mt-1 text-sm font-medium text-gray-700">{{analytics.class_chart.total_hours_label}}</div>
+                </div>
+              </div>
+            </div>
+            <div class="space-y-2">
+              {{#each analytics.class_chart.items}}
+                <div class="flex items-start justify-between gap-3 text-sm">
+                  <div class="min-w-0 flex items-center gap-2">
+                    <span class="mt-1 h-2.5 w-2.5 shrink-0 rounded-full" style="background-color: {{color}};"></span>
+                    <div class="min-w-0">
+                      <div class="truncate font-medium text-gray-900">{{class_name}}</div>
+                      <div class="text-xs text-gray-500">{{absence_days}} дн. · {{absence_hours_label}}</div>
+                    </div>
+                  </div>
+                  <div class="shrink-0 font-medium text-gray-900">{{percent}}%</div>
+                </div>
+              {{/each}}
+            </div>
+          </div>
+        {{/if}}
         <div class="mt-4 space-y-3">
           {{#each analytics.classes}}
             <div>
               <div class="flex items-center justify-between gap-2 text-sm">
                 <a href="/attendance?class={{class_id}}&date={{../analytics.period.to}}&filter=attention" class="font-medium text-gray-900 hover:text-indigo-700">{{class_name}}</a>
-                <span class="text-gray-500">{{absent_students}}/{{students_total}} · {{absence_days}} дн.</span>
+                <span class="text-gray-500">{{absent_students}}/{{students_total}} · {{absence_days}} дн. · {{absence_hours_label}}</span>
               </div>
               <div class="mt-1 h-2 rounded-full bg-gray-100 overflow-hidden">
                 <div class="h-2 rounded-full bg-sky-600" style="width: {{bar_width}}%;"></div>
@@ -206,15 +233,15 @@
 
   button.addEventListener('click', () => {
     const lines = [
-      row(['Раздел', 'Класс', 'Ученик', 'Период', 'Дни', 'Периоды', 'Без причины', 'Внимание', 'Последний контекст']),
+      row(['Раздел', 'Класс', 'Ученик', 'Период', 'Дни', 'Часы', 'Периоды', 'Без причины', 'Внимание', 'Последний контекст']),
     ];
 
     (data.classes || []).forEach((item) => {
-      lines.push(row(['Класс', item.class_name, '', '', item.absence_days, item.periods, item.without_reason, item.needs_attention, '']));
+      lines.push(row(['Класс', item.class_name, '', '', item.absence_days, item.absence_hours, item.periods, item.without_reason, item.needs_attention, '']));
     });
 
     (data.risk_students || []).forEach((item) => {
-      lines.push(row(['Ученик риска', item.class_name, item.student_name, item.last_period_label || '', item.absence_days, item.periods, item.without_reason, item.needs_attention, item.last_comment || item.last_reason || '']));
+      lines.push(row(['Ученик риска', item.class_name, item.student_name, item.last_period_label || '', item.absence_days, '', item.periods, item.without_reason, item.needs_attention, item.last_comment || item.last_reason || '']));
     });
 
     const blob = new Blob([`\uFEFF${lines.join('\n')}`], { type: 'text/csv;charset=utf-8' });

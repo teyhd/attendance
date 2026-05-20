@@ -74,6 +74,20 @@ export function percentOf(value, total) {
   return Math.round((Number(value || 0) / Number(total)) * 100);
 }
 
+export function hoursWithinRange(startsAt, endsAt, range) {
+  if (!endsAt) return 0;
+  const startMs = parseDateTimeMs(startsAt);
+  const endMs = parseDateTimeMs(endsAt);
+  const rangeStartMs = parseDateTimeMs(range?.start_at);
+  const rangeEndMs = parseDateTimeMs(range?.end_at);
+  if (![startMs, endMs, rangeStartMs, rangeEndMs].every(Number.isFinite)) return 0;
+
+  const from = Math.max(startMs, rangeStartMs);
+  const to = Math.min(endMs, rangeEndMs);
+  if (to <= from) return 0;
+  return (to - from) / 3_600_000;
+}
+
 export function compareClassNames(left, right) {
   const a = classNameParts(left);
   const b = classNameParts(right);
@@ -94,6 +108,20 @@ function classNameParts(value) {
     number: match ? Number(match[1]) : Number.MAX_SAFE_INTEGER,
     suffix: match?.[2] || '',
   };
+}
+
+function parseDateTimeMs(value) {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/);
+  if (!match) return Number.NaN;
+  const [, year, month, day, hour = '0', minute = '0', second = '0'] = match;
+  return Date.UTC(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+    Number(second),
+  );
 }
 
 function addDays(dateText, amount) {

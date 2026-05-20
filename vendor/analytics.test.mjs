@@ -5,6 +5,7 @@ import {
   buildMonthRange,
   compareClassNames,
   expandDateRangeWithinMonth,
+  hoursWithinRange,
   normalizeAnalyticsMonth,
 } from './analytics.mjs';
 
@@ -51,4 +52,17 @@ test('compareClassNames sorts classes in natural school order', () => {
     classes.toSorted(compareClassNames),
     ['1', '2', '5-1', '5-2', '8-2', '8-АРТ', '10', '11', 'ДШК'],
   );
+});
+
+test('hoursWithinRange counts period hours clipped to selected month', () => {
+  const range = buildMonthRange('2026-05');
+  assert.equal(
+    hoursWithinRange('2026-05-10 08:00:00', '2026-05-10 12:30:00', range),
+    4.5,
+  );
+  assert.equal(
+    hoursWithinRange('2026-04-30 18:00:00', '2026-05-01 12:00:00', range),
+    12,
+  );
+  assert.equal(hoursWithinRange('2026-05-10 08:00:00', null, range), 0);
 });
