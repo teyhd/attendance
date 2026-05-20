@@ -743,6 +743,7 @@ function buildMonthlyAnalytics({ range, classes, selectedClass, students, period
 
     if (!riskBucket.last_starts_at || String(period.starts_at) >= riskBucket.last_starts_at) {
       riskBucket.last_starts_at = String(period.starts_at || '');
+      riskBucket.last_ends_at = String(period.ends_at || '');
       riskBucket.last_reason = period.reason_name || period.reason_code || '';
       riskBucket.last_comment = period.comment || '';
     }
@@ -851,6 +852,10 @@ function buildMonthlyAnalytics({ range, classes, selectedClass, students, period
       last_comment_short: truncateText(bucket.last_comment || '', 120),
       has_long_comment: String(bucket.last_comment || '').length > 120,
       last_starts_at: bucket.last_starts_at || '',
+      last_ends_at: bucket.last_ends_at || '',
+      last_period_date: formatCompactPeriodDate(bucket.last_starts_at || '', bucket.last_ends_at || ''),
+      last_period_time: formatCompactPeriodTime(bucket.last_starts_at || '', bucket.last_ends_at || ''),
+      last_period_label: formatCompactPeriodLabel(bucket.last_starts_at || '', bucket.last_ends_at || ''),
     }))
     .sort((a, b) => (
       b.needs_attention - a.needs_attention ||
@@ -1016,6 +1021,42 @@ function dailyHeatTitle(row) {
   return parts.join(' · ');
 }
 
+function formatCompactPeriodLabel(startsAt, endsAt) {
+  const date = formatCompactPeriodDate(startsAt, endsAt);
+  const time = formatCompactPeriodTime(startsAt, endsAt);
+  return [date, time].filter(Boolean).join(' ');
+}
+
+function formatCompactPeriodDate(startsAt, endsAt) {
+  const start = dateTimeParts(startsAt);
+  if (!start) return '';
+  const end = dateTimeParts(endsAt);
+  if (!end || start.date === end.date) return start.dateLabel;
+  if (start.year === end.year) return `${start.shortDate}-${end.shortDate}.${end.year}`;
+  return `${start.dateLabel}-${end.dateLabel}`;
+}
+
+function formatCompactPeriodTime(startsAt, endsAt) {
+  const start = dateTimeParts(startsAt);
+  if (!start) return '';
+  const end = dateTimeParts(endsAt);
+  if (!end) return `с ${start.time}`;
+  return `${start.time}-${end.time}`;
+}
+
+function dateTimeParts(value) {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+  if (!match) return null;
+  const [, year, month, day, hour, minute] = match;
+  return {
+    year,
+    date: `${year}-${month}-${day}`,
+    shortDate: `${day}.${month}`,
+    dateLabel: `${day}.${month}.${year}`,
+    time: `${hour}:${minute}`,
+  };
+}
+
 function createDailyBucket(date) {
   return {
     date,
@@ -1078,6 +1119,7 @@ function ensureRiskBucket(map, period, studentById) {
       last_reason: '',
       last_comment: '',
       last_starts_at: '',
+      last_ends_at: '',
     });
   }
   return map.get(studentId);

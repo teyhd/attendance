@@ -147,6 +147,7 @@
                 <tr class="border-b">
                   <th class="py-2 pr-3 text-left font-medium">Ученик</th>
                   <th class="py-2 pr-3 text-left font-medium">Класс</th>
+                  <th class="py-2 pr-3 text-left font-medium">Период</th>
                   <th class="py-2 pr-3 text-right font-medium">Дни</th>
                   <th class="py-2 pr-3 text-right font-medium">Внимание</th>
                   <th class="py-2 text-left font-medium">Последний контекст</th>
@@ -157,6 +158,14 @@
                   <tr>
                     <td class="py-2 pr-3 font-medium text-gray-900">{{student_name}}</td>
                     <td class="py-2 pr-3 text-gray-600">{{class_name}}</td>
+                    <td class="py-2 pr-3 whitespace-nowrap text-gray-700">
+                      {{#if last_period_date}}
+                        <div class="font-medium text-gray-900">{{last_period_date}}</div>
+                        <div class="text-xs text-gray-500">{{last_period_time}}</div>
+                      {{else}}
+                        <span class="text-gray-400">—</span>
+                      {{/if}}
+                    </td>
                     <td class="py-2 pr-3 text-right text-gray-900">{{absence_days}}</td>
                     <td class="py-2 pr-3 text-right text-red-700">{{needs_attention}}</td>
                     <td class="py-2 text-gray-600">
@@ -197,15 +206,15 @@
 
   button.addEventListener('click', () => {
     const lines = [
-      row(['Раздел', 'Класс', 'Ученик', 'Дни', 'Периоды', 'Без причины', 'Внимание', 'Последний контекст']),
+      row(['Раздел', 'Класс', 'Ученик', 'Период', 'Дни', 'Периоды', 'Без причины', 'Внимание', 'Последний контекст']),
     ];
 
     (data.classes || []).forEach((item) => {
-      lines.push(row(['Класс', item.class_name, '', item.absence_days, item.periods, item.without_reason, item.needs_attention, '']));
+      lines.push(row(['Класс', item.class_name, '', '', item.absence_days, item.periods, item.without_reason, item.needs_attention, '']));
     });
 
     (data.risk_students || []).forEach((item) => {
-      lines.push(row(['Ученик риска', item.class_name, item.student_name, item.absence_days, item.periods, item.without_reason, item.needs_attention, item.last_comment || item.last_reason || '']));
+      lines.push(row(['Ученик риска', item.class_name, item.student_name, item.last_period_label || '', item.absence_days, item.periods, item.without_reason, item.needs_attention, item.last_comment || item.last_reason || '']));
     });
 
     const blob = new Blob([`\uFEFF${lines.join('\n')}`], { type: 'text/csv;charset=utf-8' });
