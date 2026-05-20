@@ -64,5 +64,5 @@ test('hoursWithinRange counts period hours clipped to selected month', () => {
     hoursWithinRange('2026-04-30 18:00:00', '2026-05-01 12:00:00', range),
     12,
   );
-  assert.equal(hoursWithinRange('2026-05-10 08:00:00', null, range), 0);
+  assert.equal(Math.round(hoursWithinRange('2026-05-10 08:00:00', null, range) * 10) / 10, 16);
 });

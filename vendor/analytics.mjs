@@ -75,9 +75,8 @@ export function percentOf(value, total) {
 }
 
 export function hoursWithinRange(startsAt, endsAt, range) {
-  if (!endsAt) return 0;
   const startMs = parseDateTimeMs(startsAt);
-  const endMs = parseDateTimeMs(endsAt);
+  const endMs = parseDateTimeMs(endsAt || endOfStartDay(startsAt));
   const rangeStartMs = parseDateTimeMs(range?.start_at);
   const rangeEndMs = parseDateTimeMs(range?.end_at);
   if (![startMs, endMs, rangeStartMs, rangeEndMs].every(Number.isFinite)) return 0;
@@ -122,6 +121,11 @@ function parseDateTimeMs(value) {
     Number(minute),
     Number(second),
   );
+}
+
+function endOfStartDay(value) {
+  const date = dateOnly(value);
+  return date ? `${date} 23:59:59` : '';
 }
 
 function addDays(dateText, amount) {
