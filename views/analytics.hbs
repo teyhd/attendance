@@ -51,7 +51,7 @@
     </div>
   {{else}}
     {{#if analytics.quality.has_issues}}
-      <div class="bg-white shadow rounded-lg p-4">
+      <div class="bg-white shadow rounded-lg p-4 min-w-0">
         <h2 class="text-base font-semibold text-gray-900">Качество данных</h2>
         <div class="mt-3 grid sm:grid-cols-3 gap-2">
           {{#each analytics.quality.issues}}
@@ -138,11 +138,11 @@
         {{/if}}
       </div>
 
-      <div class="bg-white shadow rounded-lg p-4">
+      <div class="bg-white shadow rounded-lg p-4 min-w-0">
         <h2 class="text-base font-semibold text-gray-900">Требуют внимания</h2>
         {{#if analytics.risk_students}}
-          <div class="mt-3 overflow-x-auto">
-            <table class="min-w-full text-sm">
+          <div class="mt-3 max-w-full overflow-x-auto">
+            <table class="min-w-[640px] w-full text-sm">
               <thead class="text-xs text-gray-500">
                 <tr class="border-b">
                   <th class="py-2 pr-3 text-left font-medium">Ученик</th>
