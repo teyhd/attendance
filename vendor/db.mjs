@@ -787,7 +787,10 @@ function buildMonthlyAnalytics({ range, classes, selectedClass, students, period
   const maxDailyDays = Math.max(0, ...dailyRows.map((row) => row.absence_days));
   for (const row of dailyRows) {
     row.bar_width = maxDailyDays ? percentOf(row.absence_days, maxDailyDays) : 0;
+    row.heat_style = dailyHeatStyle(row, maxDailyDays);
+    row.heat_title = dailyHeatTitle(row);
   }
+  const dailyCalendar = buildDailyCalendar(range, dailyRows);
   const dailyActiveRows = dailyRows.filter((row) => (
     row.absence_days > 0 ||
     row.absence_periods > 0 ||
@@ -901,6 +904,8 @@ function buildMonthlyAnalytics({ range, classes, selectedClass, students, period
     },
     daily: dailyRows,
     daily_active: dailyActiveRows,
+    daily_calendar: dailyCalendar,
+    daily_calendar_weekdays: ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'],
     hidden_zero_days: dailyRows.length - dailyActiveRows.length,
     reasons: reasonRows,
     classes: classRows,
@@ -949,6 +954,66 @@ function truncateText(value, maxLength) {
   const text = String(value || '').trim();
   if (text.length <= maxLength) return text;
   return `${text.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
+function buildDailyCalendar(range, dailyRows) {
+  const firstDay = new Date(Date.UTC(Number(range.month.slice(0, 4)), Number(range.month.slice(5, 7)) - 1, 1)).getUTCDay();
+  const leadingDays = (firstDay + 6) % 7;
+  const slots = Array.from({ length: leadingDays }, (_, index) => ({
+    is_empty: true,
+    key: `leading-${index}`,
+  }));
+
+  for (const row of dailyRows) {
+    slots.push({
+      ...row,
+      is_empty: false,
+      key: row.date,
+    });
+  }
+
+  const trailingDays = (7 - (slots.length % 7)) % 7;
+  for (let index = 0; index < trailingDays; index += 1) {
+    slots.push({
+      is_empty: true,
+      key: `trailing-${index}`,
+    });
+  }
+
+  return slots;
+}
+
+function dailyHeatStyle(row, maxDailyDays) {
+  if (Number(row.needs_attention || 0) > 0) {
+    return 'background-color:#fee2e2;border-color:#fecaca;color:#991b1b;';
+  }
+  if (Number(row.without_reason || 0) > 0) {
+    return 'background-color:#fef3c7;border-color:#fde68a;color:#92400e;';
+  }
+  if (Number(row.absence_days || 0) <= 0) {
+    return 'background-color:#f8fafc;border-color:#e2e8f0;color:#94a3b8;';
+  }
+
+  const ratio = maxDailyDays ? Number(row.absence_days || 0) / maxDailyDays : 0;
+  if (ratio >= 0.67) {
+    return 'background-color:#4f46e5;border-color:#4f46e5;color:#ffffff;';
+  }
+  if (ratio >= 0.34) {
+    return 'background-color:#c7d2fe;border-color:#a5b4fc;color:#3730a3;';
+  }
+  return 'background-color:#e0e7ff;border-color:#c7d2fe;color:#3730a3;';
+}
+
+function dailyHeatTitle(row) {
+  const parts = [
+    row.date,
+    `ученик-дней: ${Number(row.absence_days || 0)}`,
+    `учеников: ${Number(row.absent_students || 0)}`,
+    `периодов: ${Number(row.absence_periods || 0)}`,
+  ];
+  if (Number(row.without_reason || 0) > 0) parts.push(`без причины: ${Number(row.without_reason || 0)}`);
+  if (Number(row.needs_attention || 0) > 0) parts.push(`внимание: ${Number(row.needs_attention || 0)}`);
+  return parts.join(' · ');
 }
 
 function createDailyBucket(date) {
