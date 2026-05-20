@@ -13,8 +13,12 @@ import {
   isOtherReasonCode,
   isWithoutReasonCode,
 } from './absence-reasons.mjs';
+import { buildLearningAnalytics } from './learning-analytics.mjs';
+import { buildRiskWorklist } from './risk-worklist.mjs';
 
 const FAR_FUTURE = '9999-12-31 23:59:59';
+const SCHOOL_DAY_FALLBACK_START = '09:00:00';
+const SCHOOL_DAY_FALLBACK_END = '19:00:00';
 const CLASS_CHART_COLORS = [
   '#2563eb',
   '#059669',
@@ -586,6 +590,92 @@ export async function getAttendanceSummary({ classId, date } = {}) {
   };
 }
 
+export async function getTodayAbsenceOverview({ date, now } = {}) {
+  const selectedDate = normalizeDateOnly(date || todayDate());
+  const nowSql = normalizeDateTime(now || sqlNow(), { field: 'now', required: true });
+  const dayStart = `${selectedDate} 00:00:00`;
+  const dayEnd = `${selectedDate} 23:59:59`;
+
+  const [studentCountRows, absenceRows] = await Promise.all([
+    usr.query(
+      `SELECT CAST(kaf AS CHAR) AS class_id, COUNT(*) AS students_total
+         FROM sso.users
+        WHERE type = 1 AND status = 1 AND kaf IS NOT NULL
+        GROUP BY kaf`,
+    ),
+    usr.query(
+      `${absenceSelectSql()}
+        WHERE p.deleted_at IS NULL
+          AND u.type = 1
+          AND u.status = 1
+          AND COALESCE(p.ends_at, ?) >= ?
+          AND p.starts_at <= ?
+        ORDER BY k.name, u.name, p.starts_at, p.id`,
+      [FAR_FUTURE, dayStart, dayEnd],
+    ),
+  ]);
+
+  const studentsByClass = new Map(
+    studentCountRows[0].map((row) => [String(row.class_id), Number(row.students_total || 0)]),
+  );
+  const classBuckets = new Map();
+
+  for (const absence of absenceRows[0].map(mapAbsencePeriod)) {
+    const classId = String(absence.class_id || '');
+    const studentId = String(absence.student_id || '');
+    if (!classId || !studentId) continue;
+
+    const classBucket = ensureTodayClassBucket(classBuckets, absence, studentsByClass);
+    if (!classBucket.studentBuckets.has(studentId)) {
+      classBucket.studentBuckets.set(studentId, {
+        student_id: studentId,
+        student_name: absence.student_name,
+        periods: [],
+      });
+    }
+    classBucket.studentBuckets.get(studentId).periods.push(absence);
+  }
+
+  const classes = Array.from(classBuckets.values()).map((classBucket) => {
+    const students = Array.from(classBucket.studentBuckets.values())
+      .map((studentBucket) => buildTodayStudentRow(studentBucket, selectedDate, nowSql))
+      .sort(compareTodayStudentRows);
+    const absentNow = students.filter((student) => student.is_now).length;
+    const withoutReason = students.filter((student) => student.without_reason).length;
+    const needsAttention = students.filter((student) => student.needs_attention).length;
+
+    return {
+      id: classBucket.class_id,
+      name: classBucket.class_name,
+      class_id: classBucket.class_id,
+      class_name: classBucket.class_name,
+      students_total: classBucket.students_total,
+      absent_today: students.length,
+      absent_now: absentNow,
+      without_reason: withoutReason,
+      needs_attention: needsAttention,
+      href: attendanceHref({ classId: classBucket.class_id, date: selectedDate }),
+      summary_label: `Класс ${classBucket.class_name} · ${students.length} сегодня · ${absentNow} сейчас`,
+      students,
+    };
+  }).sort((a, b) => compareClassNames(a.class_name, b.class_name));
+
+  return {
+    date: selectedDate,
+    date_label: formatDateLabel(selectedDate),
+    now: nowSql,
+    has_absences: classes.length > 0,
+    totals: {
+      classes_with_absences: classes.length,
+      absent_students_today: classes.reduce((sum, row) => sum + row.absent_today, 0),
+      absent_students_now: classes.reduce((sum, row) => sum + row.absent_now, 0),
+      without_reason: classes.reduce((sum, row) => sum + row.without_reason, 0),
+      needs_attention: classes.reduce((sum, row) => sum + row.needs_attention, 0),
+    },
+    classes,
+  };
+}
+
 export async function getStudentContext(studentId, { days = 30 } = {}) {
   const safeDays = Math.max(1, Math.min(365, Number(days) || 30));
   const student = await getStudentById(studentId);
@@ -646,24 +736,193 @@ export async function getClassAbsenceStats(classId, { days = 30 } = {}) {
   }]));
 }
 
-export async function getMonthlyAttendanceAnalytics({ month, classId } = {}) {
+export async function getMonthlyAttendanceAnalytics({ month, classId, risk, reason, q, sort } = {}) {
   const selectedMonth = normalizeAnalyticsMonth(month);
   const range = buildMonthRange(selectedMonth);
   const classes = await getClasses();
   const selectedClass = normalizeAnalyticsClass(classes, classId);
   const classFilter = selectedClass.id === 'all' ? null : selectedClass.id;
-  const [students, periods] = await Promise.all([
+  const [students, periods, scheduleRows, publishedSchoolDays, activeWeekdays] = await Promise.all([
     getMonthlyAnalyticsStudents(classFilter),
     getMonthlyAnalyticsPeriods(range, classFilter),
+    getPublishedScheduleRows(range, classFilter),
+    getPublishedScheduleDays(range),
+    getActiveScheduleWeekdays(),
   ]);
 
-  return buildMonthlyAnalytics({
+  const analytics = buildMonthlyAnalytics({
     range,
     classes,
     selectedClass,
     students,
     periods,
   });
+  analytics.learning = buildLearningAnalytics({
+    range,
+    students,
+    periods,
+    scheduleRows,
+    publishedSchoolDays,
+    activeWeekdays,
+  });
+  const worklist = buildRiskWorklist({
+    range,
+    periods,
+    learning: analytics.learning,
+    filters: { risk, reason, q, sort },
+  });
+  analytics.risk = worklist;
+  analytics.risk_students = worklist.items;
+  analytics.risk_students_total = worklist.total_count;
+  analytics.risk_students_filtered = worklist.filtered_count;
+  analytics.risk_filter_options = worklist.filter_options;
+  analytics.risk_sort_options = worklist.sort_options;
+  analytics.risk_reason_options = worklist.reason_options;
+  analytics.risk_filters = worklist.filters;
+  return analytics;
+}
+
+export async function getStudentLearningAnalytics(studentId, { month } = {}) {
+  const student = await getStudentById(studentId);
+  if (!student) {
+    throw new ValidationError('РЈС‡РµРЅРёРє РЅРµ РЅР°Р№РґРµРЅ', 404);
+  }
+
+  const selectedMonth = normalizeAnalyticsMonth(month);
+  const range = buildMonthRange(selectedMonth);
+  const [classStudents, periods, scheduleRows, publishedSchoolDays, activeWeekdays] = await Promise.all([
+    getMonthlyAnalyticsStudents(student.classId),
+    getMonthlyAnalyticsPeriods(range, student.classId, student.id),
+    getPublishedScheduleRows(range, student.classId),
+    getPublishedScheduleDays(range),
+    getActiveScheduleWeekdays(),
+  ]);
+  const students = classStudents.filter((item) => String(item.student_id) === String(student.id));
+  const learning = buildLearningAnalytics({
+    range,
+    students,
+    periods,
+    scheduleRows,
+    publishedSchoolDays,
+    activeWeekdays,
+    includeLessons: true,
+  });
+  const selectedStudent = students[0] || {
+    student_id: String(student.id),
+    student_name: student.name,
+    class_id: String(student.classId),
+    class_name: '',
+  };
+
+  return {
+    month: range.month,
+    month_label: range.month_label,
+    student_id: selectedStudent.student_id,
+    student_name: selectedStudent.student_name,
+    class_id: selectedStudent.class_id,
+    class_name: selectedStudent.class_name,
+    period: {
+      from: range.start_date,
+      to: range.end_date,
+      days_count: range.days_count,
+    },
+    ...learning,
+  };
+}
+
+export async function getStudentMonthlyAnalytics(studentId, { month } = {}) {
+  const student = await getStudentById(studentId);
+  if (!student) {
+    throw new ValidationError('Ученик не найден', 404);
+  }
+
+  const selectedMonth = normalizeAnalyticsMonth(month);
+  const range = buildMonthRange(selectedMonth);
+  const [periods, learning, reasons, classes] = await Promise.all([
+    listAbsencePeriods({
+      studentId,
+      from: range.start_at,
+      to: range.end_at,
+      limit: 500,
+    }),
+    getStudentLearningAnalytics(studentId, { month: selectedMonth }),
+    getAbsenceReasons(),
+    getClasses(),
+  ]);
+  const classItem = classes.find((item) => String(item.id) === String(student.classId));
+  const absenceDayKeys = new Set();
+  let withoutReason = 0;
+  let needsAttention = 0;
+  let needsClarification = 0;
+
+  for (const period of periods) {
+    for (const day of expandDateRangeWithinMonth(period.starts_at, period.ends_at || period.starts_at, range)) {
+      absenceDayKeys.add(`${period.student_id}|${day}`);
+    }
+    if (period.is_without_reason) withoutReason += 1;
+    if (period.needs_attention) needsAttention += 1;
+    if (period.confirmation_status === 'needs_clarification') needsClarification += 1;
+  }
+
+  return {
+    month: range.month,
+    month_label: range.month_label,
+    period: {
+      from: range.start_date,
+      to: range.end_date,
+      days_count: range.days_count,
+    },
+    student: {
+      id: String(student.id),
+      name: student.name || '',
+      class_id: String(student.classId || ''),
+      class_name: classItem?.name || '',
+      href: `/attendance?class=${encodeURIComponent(student.classId || '')}&student=${encodeURIComponent(student.id)}&analyticsMonth=${encodeURIComponent(range.month)}#learning-analytics`,
+    },
+    kpi: {
+      periods: periods.length,
+      absence_days: absenceDayKeys.size,
+      without_reason: withoutReason,
+      needs_attention: needsAttention,
+      needs_clarification: needsClarification,
+      missed_lessons: Number(learning.missed_lessons_total || 0),
+      data_gaps: Number(learning.data_gaps_total || 0),
+    },
+    periods,
+    learning,
+    reason_options: reasons.map((item) => ({
+      code: item.code,
+      name: item.name,
+      default_confirmation_status: item.defaultConfirmationStatus,
+      requires_attention: item.requiresAttention,
+    })),
+  };
+}
+
+export async function getSchoolDayBounds(date) {
+  const selectedDate = normalizeDateOnly(date || todayDate());
+  const weekday = weekdayFromDate(selectedDate);
+  const [rows] = await usr.query(
+    `SELECT
+        TIME_FORMAT(MIN(start_time), '%H:%i:%s') AS start_time,
+        TIME_FORMAT(MAX(end_time), '%H:%i:%s') AS end_time
+       FROM school_local.schedule_time_slots
+      WHERE is_active = 1
+        AND day_of_week = ?`,
+    [weekday],
+  );
+
+  const row = rows[0] || {};
+  const startTime = normalizeClockTime(row.start_time) || SCHOOL_DAY_FALLBACK_START;
+  let endTime = normalizeClockTime(row.end_time) || SCHOOL_DAY_FALLBACK_END;
+  if (compareClockTimes(endTime, SCHOOL_DAY_FALLBACK_END) > 0) {
+    endTime = SCHOOL_DAY_FALLBACK_END;
+  }
+  if (compareClockTimes(startTime, endTime) >= 0) {
+    return schoolDayBoundsPayload(selectedDate, weekday, SCHOOL_DAY_FALLBACK_START, SCHOOL_DAY_FALLBACK_END, false);
+  }
+
+  return schoolDayBoundsPayload(selectedDate, weekday, startTime, endTime, Boolean(row.start_time && row.end_time));
 }
 
 async function getMonthlyAnalyticsStudents(classId) {
@@ -694,7 +953,7 @@ async function getMonthlyAnalyticsStudents(classId) {
   return rows;
 }
 
-async function getMonthlyAnalyticsPeriods(range, classId) {
+async function getMonthlyAnalyticsPeriods(range, classId, studentId = null) {
   const where = [
     'p.deleted_at IS NULL',
     'p.starts_at <= ?',
@@ -707,6 +966,10 @@ async function getMonthlyAnalyticsPeriods(range, classId) {
   if (classId) {
     where.push('p.class_id = ?');
     params.push(classId);
+  }
+  if (studentId) {
+    where.push('p.student_id = ?');
+    params.push(studentId);
   }
 
   const [rows] = await usr.query(
@@ -740,6 +1003,98 @@ async function getMonthlyAnalyticsPeriods(range, classId) {
     params,
   );
   return rows;
+}
+
+async function getPublishedScheduleRows(range, classId) {
+  const lessonDateSql = 'DATE(DATE_ADD(w.week_start, INTERVAL (ts.day_of_week - 1) DAY))';
+  const where = [
+    `${lessonDateSql} BETWEEN ? AND ?`,
+  ];
+  const params = [range.start_date, range.end_date];
+  if (classId) {
+    where.push('(e.class_id = ? OR su.kaf = ?)');
+    params.push(classId, classId);
+  }
+
+  const [rows] = await usr.query(
+    `SELECT
+        CAST(e.id AS CHAR) AS entry_id,
+        CAST(w.id AS CHAR) AS week_id,
+        CAST(v.id AS CHAR) AS week_version_id,
+        DATE_FORMAT(w.week_start, '%Y-%m-%d') AS week_start,
+        DATE_FORMAT(${lessonDateSql}, '%Y-%m-%d') AS lesson_date,
+        ts.day_of_week,
+        CAST(ts.id AS CHAR) AS slot_id,
+        ts.slot_number,
+        TIME_FORMAT(ts.start_time, '%H:%i:%s') AS start_time,
+        TIME_FORMAT(ts.end_time, '%H:%i:%s') AS end_time,
+        CAST(e.class_id AS CHAR) AS class_id,
+        k.name AS class_name,
+        CAST(e.student_id AS CHAR) AS student_id,
+        CAST(e.subject_id AS CHAR) AS subject_id,
+        COALESCE(NULLIF(e.custom_subject_name, ''), s.name, '') AS subject_name,
+        st.name AS subject_type,
+        CAST(e.teacher_id AS CHAR) AS teacher_id,
+        COALESCE(NULLIF(t.display_name_custom, ''), NULLIF(t.nickname, ''), NULLIF(t.msgnickname, ''), t.name) AS teacher_name,
+        CAST(e.room_id AS CHAR) AS room_id,
+        r.name AS room_name,
+        e.activity_type,
+        COALESCE(at.slot_part, 'FULL') AS slot_part,
+        e.is_paid,
+        CAST(e.lesson_type_id AS CHAR) AS lesson_type_id
+       FROM school_local.schedule_entries e
+       JOIN school_local.schedule_week_versions v
+         ON v.id = e.week_version_id
+        AND v.state = 'published'
+       JOIN school_local.schedule_weeks w ON w.id = v.week_id
+       JOIN school_local.schedule_publications p
+         ON p.week_id = v.week_id
+        AND p.published_version_id = v.id
+        AND p.is_current = 1
+       JOIN school_local.schedule_time_slots ts
+         ON ts.id = e.slot_id
+        AND ts.is_active = 1
+       LEFT JOIN sso.users su ON su.id = e.student_id
+       LEFT JOIN sso.kaf_name k ON k.id = e.class_id
+       LEFT JOIN school_local.info_subjects s ON s.id = e.subject_id
+       LEFT JOIN school_local.info_subjects_types st ON st.id = s.type
+       LEFT JOIN sso.users t ON t.id = e.teacher_id
+       LEFT JOIN school_local.info_rooms r ON r.id = e.room_id
+       LEFT JOIN school_local.activity_types at ON at.code = e.activity_type
+      WHERE ${where.join(' AND ')}
+      ORDER BY lesson_date, ts.slot_number, e.class_id, e.student_id, subject_name`,
+    params,
+  );
+  return rows;
+}
+
+async function getPublishedScheduleDays(range) {
+  const lessonDateSql = 'DATE(DATE_ADD(w.week_start, INTERVAL (ts.day_of_week - 1) DAY))';
+  const [rows] = await usr.query(
+    `SELECT DISTINCT DATE_FORMAT(${lessonDateSql}, '%Y-%m-%d') AS date
+       FROM school_local.schedule_publications p
+       JOIN school_local.schedule_week_versions v
+         ON v.id = p.published_version_id
+        AND v.week_id = p.week_id
+        AND v.state = 'published'
+       JOIN school_local.schedule_weeks w ON w.id = p.week_id
+       JOIN school_local.schedule_time_slots ts ON ts.is_active = 1
+      WHERE p.is_current = 1
+        AND ${lessonDateSql} BETWEEN ? AND ?
+      ORDER BY date`,
+    [range.start_date, range.end_date],
+  );
+  return rows.map((row) => row.date).filter(Boolean);
+}
+
+async function getActiveScheduleWeekdays() {
+  const [rows] = await usr.query(
+    `SELECT DISTINCT day_of_week
+       FROM school_local.schedule_time_slots
+      WHERE is_active = 1
+      ORDER BY day_of_week`,
+  );
+  return rows.map((row) => Number(row.day_of_week)).filter((day) => day >= 1 && day <= 7);
 }
 
 function buildMonthlyAnalytics({ range, classes, selectedClass, students, periods }) {
@@ -1239,7 +1594,7 @@ function richDailyHeatTitle(row) {
 
 function dailyHeatTitle(row) {
   const parts = [
-    row.date,
+    row.date_label || formatDateLabel(row.date),
     `ученик-дней: ${Number(row.absence_days || 0)}`,
     `учеников: ${Number(row.absent_students || 0)}`,
     `периодов: ${Number(row.absence_periods || 0)}`,
@@ -1260,7 +1615,6 @@ function formatCompactPeriodDate(startsAt, endsAt) {
   if (!start) return '';
   const end = dateTimeParts(endsAt);
   if (!end || start.date === end.date) return start.dateLabel;
-  if (start.year === end.year) return `${start.shortDate}-${end.shortDate}.${end.year}`;
   return `${start.dateLabel}-${end.dateLabel}`;
 }
 
@@ -1573,6 +1927,105 @@ function mapAbsencePeriod(row) {
   };
 }
 
+function ensureTodayClassBucket(map, absence, studentsByClass) {
+  const classId = String(absence.class_id || '');
+  if (!map.has(classId)) {
+    map.set(classId, {
+      class_id: classId,
+      class_name: absence.class_name || '',
+      students_total: Number(studentsByClass.get(classId) || 0),
+      studentBuckets: new Map(),
+    });
+  }
+  return map.get(classId);
+}
+
+function buildTodayStudentRow(studentBucket, date, nowSql) {
+  const periods = [...studentBucket.periods].sort((left, right) => compareTodayPeriods(left, right, nowSql));
+  const selected = periods[0];
+  const status = todayPeriodStatus(selected, nowSql);
+  const extraPeriods = Math.max(0, periods.length - 1);
+  const withoutReason = periods.some((period) => isWithoutReasonCode(period.reason_code));
+  const needsAttention = periods.some((period) => period.attention_status === 'needs_attention');
+
+  return {
+    student_id: selected.student_id,
+    student_name: selected.student_name || studentBucket.student_name || '',
+    class_id: selected.class_id,
+    class_name: selected.class_name,
+    reason_name: selected.reason_name,
+    reason_code: selected.reason_code,
+    period_label: selected.period_label,
+    status_label: status.label,
+    status_rank: status.rank,
+    is_now: status.code === 'now',
+    is_future_today: status.code === 'future',
+    is_completed_today: status.code === 'completed',
+    without_reason: withoutReason,
+    needs_attention: needsAttention,
+    periods_count: periods.length,
+    period_count_label: extraPeriods ? `+${extraPeriods}` : '',
+    href: attendanceHref({ classId: selected.class_id, studentId: selected.student_id, date }),
+    row_class: needsAttention
+      ? 'border-red-200 bg-red-50'
+      : withoutReason
+        ? 'border-amber-200 bg-amber-50'
+        : 'border-gray-200 bg-white',
+    status_class: status.className,
+    reason_class: needsAttention
+      ? 'bg-red-100 text-red-800'
+      : withoutReason
+        ? 'bg-amber-100 text-amber-800'
+        : 'bg-slate-100 text-slate-700',
+  };
+}
+
+function compareTodayStudentRows(left, right) {
+  return (
+    left.status_rank - right.status_rank ||
+    Number(right.needs_attention) - Number(left.needs_attention) ||
+    Number(right.without_reason) - Number(left.without_reason) ||
+    left.student_name.localeCompare(right.student_name, 'ru')
+  );
+}
+
+function compareTodayPeriods(left, right, nowSql) {
+  const leftStatus = todayPeriodStatus(left, nowSql);
+  const rightStatus = todayPeriodStatus(right, nowSql);
+  if (leftStatus.rank !== rightStatus.rank) return leftStatus.rank - rightStatus.rank;
+
+  if (leftStatus.code === 'future') {
+    return String(left.starts_at).localeCompare(String(right.starts_at)) || String(left.id).localeCompare(String(right.id));
+  }
+  if (leftStatus.code === 'completed') {
+    return String(right.ends_at || right.starts_at).localeCompare(String(left.ends_at || left.starts_at))
+      || String(right.starts_at).localeCompare(String(left.starts_at))
+      || String(left.id).localeCompare(String(right.id));
+  }
+  return String(left.starts_at).localeCompare(String(right.starts_at)) || String(left.id).localeCompare(String(right.id));
+}
+
+function todayPeriodStatus(period, nowSql) {
+  const startsAt = String(period?.starts_at || '');
+  const endsAt = String(period?.ends_at || FAR_FUTURE);
+  if (startsAt <= nowSql && endsAt >= nowSql) {
+    return { code: 'now', label: 'сейчас', rank: 0, className: 'bg-indigo-100 text-indigo-800' };
+  }
+  if (startsAt > nowSql) {
+    return { code: 'future', label: 'позже сегодня', rank: 1, className: 'bg-sky-100 text-sky-800' };
+  }
+  return { code: 'completed', label: 'уже завершено', rank: 2, className: 'bg-gray-100 text-gray-700' };
+}
+
+function attendanceHref({ classId, studentId, date }) {
+  const params = new URLSearchParams();
+  if (classId) params.set('class', classId);
+  if (studentId) params.set('student', studentId);
+  if (date) params.set('date', date);
+  const query = params.toString();
+  return query ? `/attendance?${query}` : '/attendance';
+}
+
 function toPositiveInt(value, field) {
   const number = Number(value);
   if (!Number.isInteger(number) || number <= 0) {
@@ -1676,6 +2129,52 @@ function todayDate() {
   const now = new Date();
   const pad = (n) => String(n).padStart(2, '0');
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+function schoolDayBoundsPayload(date, weekday, startTime, endTime, fromSchedule) {
+  const startsAt = `${date} ${startTime}`;
+  const endsAt = `${date} ${endTime}`;
+  return {
+    date,
+    weekday,
+    start_time: startTime,
+    end_time: endTime,
+    start_label: startTime.slice(0, 5),
+    end_label: endTime.slice(0, 5),
+    starts_at: startsAt,
+    ends_at: endsAt,
+    start_input: toDateTimeLocal(startsAt),
+    end_input: toDateTimeLocal(endsAt),
+    from_schedule: Boolean(fromSchedule),
+  };
+}
+
+function weekdayFromDate(value) {
+  const [year, month, day] = String(value).split('-').map(Number);
+  const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+  return weekday === 0 ? 7 : weekday;
+}
+
+function normalizeClockTime(value) {
+  const match = String(value || '').match(/^(\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if (!match) return '';
+  const [, hourText, minuteText, secondText = '00'] = match;
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  const second = Number(secondText);
+  if (hour > 23 || minute > 59 || second > 59) return '';
+  return `${hourText}:${minuteText}:${secondText}`;
+}
+
+function compareClockTimes(left, right) {
+  return clockTimeSeconds(left) - clockTimeSeconds(right);
+}
+
+function clockTimeSeconds(value) {
+  const normalized = normalizeClockTime(value);
+  if (!normalized) return 0;
+  const [hour, minute, second] = normalized.split(':').map(Number);
+  return hour * 3600 + minute * 60 + second;
 }
 
 function daysAgoDateTime(days) {

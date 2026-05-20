@@ -4,6 +4,7 @@
     body { background: #fff !important; }
     header, main { box-shadow: none !important; }
   }
+  #student-analytics-dialog::backdrop { background: rgba(15, 23, 42, 0.45); }
 </style>
 
 <section class="space-y-4">
@@ -27,19 +28,106 @@
             {{/each}}
           </select>
         </label>
+        <input type="hidden" name="risk" value="{{analytics.risk_filters.risk}}" />
+        <input type="hidden" name="reason" value="{{analytics.risk_filters.reason}}" />
+        <input type="hidden" name="q" value="{{analytics.risk_filters.q}}" />
+        <input type="hidden" name="sort" value="{{analytics.risk_filters.sort}}" />
         <button type="submit" class="px-4 py-2 bg-gray-900 text-white rounded hover:bg-gray-800">Показать</button>
         <button type="button" onclick="window.print()" class="px-4 py-2 border rounded bg-white text-gray-700 hover:bg-gray-50">Печать</button>
         <button type="button" data-export-analytics class="px-4 py-2 border rounded bg-white text-gray-700 hover:bg-gray-50">CSV</button>
       </form>
     </div>
 
+    {{#if todayOverview}}
+      <section id="today-overview" data-testid="today-overview-full" class="rounded-lg border border-slate-200 bg-slate-50 p-3">
+        <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h2 class="text-base font-semibold text-gray-900">Кто отсутствует сегодня</h2>
+            <div class="mt-1 text-sm text-gray-500">{{todayOverview.date_label}}</div>
+          </div>
+          <div class="grid grid-cols-2 gap-2 text-center sm:grid-cols-5">
+            <div class="rounded border border-white bg-white px-3 py-2">
+              <div class="text-lg font-semibold text-gray-900">{{todayOverview.totals.classes_with_absences}}</div>
+              <div class="text-xs text-gray-500">классов</div>
+            </div>
+            <div class="rounded border border-white bg-white px-3 py-2">
+              <div class="text-lg font-semibold text-indigo-700">{{todayOverview.totals.absent_students_now}}</div>
+              <div class="text-xs text-gray-500">сейчас</div>
+            </div>
+            <div class="rounded border border-white bg-white px-3 py-2">
+              <div class="text-lg font-semibold text-gray-900">{{todayOverview.totals.absent_students_today}}</div>
+              <div class="text-xs text-gray-500">за день</div>
+            </div>
+            <div class="rounded border border-white bg-white px-3 py-2">
+              <div class="text-lg font-semibold text-amber-700">{{todayOverview.totals.without_reason}}</div>
+              <div class="text-xs text-gray-500">без причины</div>
+            </div>
+            <div class="rounded border border-white bg-white px-3 py-2">
+              <div class="text-lg font-semibold text-red-700">{{todayOverview.totals.needs_attention}}</div>
+              <div class="text-xs text-gray-500">внимание</div>
+            </div>
+          </div>
+        </div>
+
+        {{#if todayOverview.has_absences}}
+          <div class="mt-4 grid gap-3 lg:grid-cols-2">
+            {{#each todayOverview.classes}}
+              <article class="min-w-0 rounded-lg border border-white bg-white p-3 shadow-sm">
+                <div class="flex items-start justify-between gap-3">
+                  <div class="min-w-0">
+                    <a href="{{href}}" class="truncate text-base font-semibold text-gray-900 hover:text-indigo-700">Класс {{class_name}}</a>
+                    <div class="mt-1 text-sm text-gray-500">{{absent_today}} за день · {{absent_now}} сейчас · из {{students_total}}</div>
+                  </div>
+                  <div class="shrink-0 text-right text-xs text-gray-500">
+                    {{#if without_reason}}<div class="text-amber-700">без причины {{without_reason}}</div>{{/if}}
+                    {{#if needs_attention}}<div class="text-red-700">внимание {{needs_attention}}</div>{{/if}}
+                  </div>
+                </div>
+
+                <div class="mt-3 space-y-2">
+                  {{#each students}}
+                    <a href="{{href}}" class="block min-w-0 rounded-md border px-3 py-2 {{row_class}} hover:border-indigo-300">
+                      <div class="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                        <div class="min-w-0">
+                          <div class="truncate font-medium text-gray-900">{{student_name}}</div>
+                          <div class="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
+                            <span class="rounded-full px-2 py-0.5 {{status_class}}">{{status_label}}</span>
+                            <span class="rounded-full px-2 py-0.5 {{reason_class}}">{{reason_name}}</span>
+                            {{#if period_count_label}}<span class="rounded-full bg-slate-100 px-2 py-0.5 text-slate-700">{{period_count_label}}</span>{{/if}}
+                          </div>
+                        </div>
+                        <div class="min-w-0 text-sm text-gray-600 sm:max-w-[13rem] sm:text-right">
+                          <div class="truncate" title="{{period_label}}">{{period_label}}</div>
+                        </div>
+                      </div>
+                    </a>
+                  {{/each}}
+                </div>
+              </article>
+            {{/each}}
+          </div>
+        {{else}}
+          <div class="mt-3 text-sm text-gray-500">Сегодня активных отметок об отсутствии нет.</div>
+        {{/if}}
+      </section>
+    {{/if}}
+
     <div class="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
       {{#each kpiCards}}
-        <div class="border-l-4 {{border_class}} border rounded bg-white p-3">
-          <div class="text-xs text-gray-500">{{label}}</div>
-          <div class="mt-1 text-2xl font-semibold text-gray-900">{{value}}</div>
-          <div class="mt-1 text-xs text-gray-500">{{hint}}</div>
-        </div>
+        {{#if href}}
+          <a href="{{href}}" data-kpi-card data-target-id="{{target_id}}" class="block border-l-4 {{border_class}} border rounded bg-white p-3 transition hover:-translate-y-0.5 hover:shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2">
+            <div class="text-xs text-gray-500">{{label}}</div>
+            <div class="mt-1 text-2xl font-semibold text-gray-900">{{value}}</div>
+            <div class="mt-1 text-xs text-gray-500">{{hint}}</div>
+            <div class="mt-2 text-xs font-medium text-indigo-700">{{action_label}}</div>
+          </a>
+        {{else}}
+          <div class="border-l-4 {{border_class}} border rounded bg-white p-3">
+            <div class="text-xs text-gray-500">{{label}}</div>
+            <div class="mt-1 text-2xl font-semibold text-gray-900">{{value}}</div>
+            <div class="mt-1 text-xs text-gray-500">{{hint}}</div>
+          </div>
+        {{/if}}
       {{/each}}
     </div>
   </div>
@@ -51,7 +139,7 @@
     </div>
   {{else}}
     {{#if analytics.quality.has_issues}}
-      <div class="bg-white shadow rounded-lg p-4 min-w-0">
+      <div id="data-quality" class="bg-white shadow rounded-lg p-4 min-w-0">
         <h2 class="text-base font-semibold text-gray-900">Качество данных</h2>
         <div class="mt-3 grid sm:grid-cols-3 gap-2">
           {{#each analytics.quality.issues}}
@@ -64,8 +152,136 @@
       </div>
     {{/if}}
 
+    <div id="learning-analytics" class="bg-white shadow rounded-lg p-4 space-y-4">
+      <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 class="text-base font-semibold text-gray-900">Пропущенные уроки</h2>
+          <div class="mt-1 text-sm text-gray-500">По опубликованному расписанию, пересечение больше 15 минут</div>
+        </div>
+        <div class="grid grid-cols-2 gap-2 text-center sm:grid-cols-4">
+          <div class="border rounded px-3 py-2">
+            <div class="text-lg font-semibold text-gray-900">{{analytics.learning.missed_lessons_total}}</div>
+            <div class="text-xs text-gray-500">уроков</div>
+          </div>
+          <div class="border rounded px-3 py-2">
+            <div class="text-lg font-semibold text-gray-900">{{analytics.learning.students_with_missed_lessons}}</div>
+            <div class="text-xs text-gray-500">учеников</div>
+          </div>
+          <div class="border rounded px-3 py-2">
+            <div class="text-lg font-semibold text-gray-900">{{analytics.learning.subjects_total}}</div>
+            <div class="text-xs text-gray-500">предметов</div>
+          </div>
+          <div class="border rounded px-3 py-2">
+            <div class="text-lg font-semibold {{#if analytics.learning.uncovered_absence_periods}}text-red-700{{else}}text-emerald-700{{/if}}">{{analytics.learning.coverage_percent}}%</div>
+            <div class="text-xs text-gray-500">покрытие</div>
+          </div>
+        </div>
+      </div>
+
+      {{#if analytics.learning.data_gaps_total}}
+        <div class="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          Отметки без опубликованного расписания: {{analytics.learning.uncovered_absence_periods}}. Дней-пробелов: {{analytics.learning.data_gaps_total}}.
+        </div>
+      {{/if}}
+
+      <div class="grid gap-4 xl:grid-cols-2">
+        <div>
+          <h3 class="text-sm font-semibold text-gray-900">Предметы</h3>
+          {{#if analytics.learning.subjects}}
+            <div class="mt-3 space-y-3">
+              {{#each analytics.learning.subjects}}
+                <div>
+                  <div class="flex items-center justify-between gap-2 text-sm">
+                    <span class="font-medium text-gray-900">{{subject_name}}</span>
+                    <span class="text-gray-500">{{missed_lessons}} · {{students}} уч.</span>
+                  </div>
+                  <div class="mt-1 h-2 rounded-full bg-gray-100 overflow-hidden">
+                    <div class="h-2 rounded-full bg-indigo-600" style="width: {{bar_width}}%;"></div>
+                  </div>
+                </div>
+              {{/each}}
+            </div>
+          {{else}}
+            <p class="mt-2 text-sm text-gray-500">Пропущенных уроков по предметам нет.</p>
+          {{/if}}
+        </div>
+
+        <div>
+          <h3 class="text-sm font-semibold text-gray-900">Ученики</h3>
+          {{#if analytics.learning.students}}
+            <div class="mt-3 overflow-x-auto">
+              <table class="min-w-full text-sm">
+                <thead class="text-xs text-gray-500">
+                  <tr class="border-b">
+                    <th class="py-2 pr-3 text-left font-medium">Ученик</th>
+                    <th class="py-2 pr-3 text-left font-medium">Класс</th>
+                    <th class="py-2 pr-3 text-right font-medium">Уроки</th>
+                    <th class="py-2 pr-3 text-right font-medium">Предм.</th>
+                    <th class="py-2 text-right font-medium">Без расп.</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                  {{#each analytics.learning.students}}
+                    <tr>
+                      <td class="py-2 pr-3 font-medium text-gray-900"><a href="{{href}}" class="hover:text-indigo-700">{{student_name}}</a></td>
+                      <td class="py-2 pr-3 text-gray-600">{{class_name}}</td>
+                      <td class="py-2 pr-3 text-right text-gray-900">{{missed_lessons}}</td>
+                      <td class="py-2 pr-3 text-right text-gray-700">{{subjects}}</td>
+                      <td class="py-2 text-right {{#if data_gaps}}text-red-700{{else}}text-gray-500{{/if}}">{{data_gaps}}</td>
+                    </tr>
+                  {{/each}}
+                </tbody>
+              </table>
+            </div>
+          {{else}}
+            <p class="mt-2 text-sm text-gray-500">Учеников с пропущенными уроками нет.</p>
+          {{/if}}
+        </div>
+      </div>
+
+      <div class="grid gap-4 xl:grid-cols-2">
+        <div>
+          <h3 class="text-sm font-semibold text-gray-900">Классы</h3>
+          {{#if analytics.learning.classes}}
+            <div class="mt-3 space-y-3">
+              {{#each analytics.learning.classes}}
+                <div>
+                  <div class="flex items-center justify-between gap-2 text-sm">
+                    <span class="font-medium text-gray-900">{{class_name}}</span>
+                    <span class="text-gray-500">{{missed_lessons}} · {{students}} уч. · {{subjects}} предм.</span>
+                  </div>
+                  <div class="mt-1 h-2 rounded-full bg-gray-100 overflow-hidden">
+                    <div class="h-2 rounded-full bg-sky-600" style="width: {{bar_width}}%;"></div>
+                  </div>
+                </div>
+              {{/each}}
+            </div>
+          {{else}}
+            <p class="mt-2 text-sm text-gray-500">Классов с пропущенными уроками нет.</p>
+          {{/if}}
+        </div>
+
+        <div>
+          <h3 class="text-sm font-semibold text-gray-900">Дни</h3>
+          <div class="mt-3 grid sm:grid-cols-2 xl:grid-cols-3 gap-2">
+            {{#each analytics.learning.daily}}
+              {{#if missed_lessons}}
+                <div class="flex items-center gap-2 text-sm">
+                  <div class="w-16 text-gray-500">{{date_label}}</div>
+                  <div class="flex-1 h-2 rounded-full bg-gray-100 overflow-hidden">
+                    <div class="h-2 rounded-full bg-indigo-600" style="width: {{bar_width}}%;"></div>
+                  </div>
+                  <div class="w-8 text-right font-medium text-gray-900">{{missed_lessons}}</div>
+                </div>
+              {{/if}}
+            {{/each}}
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="grid lg:grid-cols-3 gap-4">
-      <div class="lg:col-span-2 bg-white shadow rounded-lg p-4">
+      <div id="absence-calendar" class="lg:col-span-2 bg-white shadow rounded-lg p-4">
         <div class="flex items-center justify-between gap-3">
           <h2 class="text-base font-semibold text-gray-900">Календарь отсутствий</h2>
           <span class="text-sm text-gray-500">ученик-день</span>
@@ -132,7 +348,7 @@
         </div>
       </div>
 
-      <div class="bg-white shadow rounded-lg p-4">
+      <div id="reasons-breakdown" class="bg-white shadow rounded-lg p-4">
         <h2 class="text-base font-semibold text-gray-900">Причины</h2>
         <div class="mt-4 space-y-3">
           {{#each analytics.reasons}}
@@ -150,8 +366,8 @@
       </div>
     </div>
 
-    <div class="grid lg:grid-cols-2 gap-4">
-      <div class="bg-white shadow rounded-lg p-4">
+    <div class="space-y-4">
+      <div id="classes-breakdown" class="bg-white shadow rounded-lg p-4">
         <h2 class="text-base font-semibold text-gray-900">Классы</h2>
         {{#if analytics.class_chart.has_data}}
           <div class="mt-4 grid gap-4 md:grid-cols-2 md:items-center">
@@ -203,59 +419,98 @@
         {{/if}}
       </div>
 
-      <div class="bg-white shadow rounded-lg p-3 min-w-0">
-        <h2 class="text-base font-semibold text-gray-900">Требуют внимания</h2>
+      <div id="risk-students" class="bg-white shadow rounded-lg p-4 min-w-0">
+        <div class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <h2 class="text-base font-semibold text-gray-900">Требуют внимания</h2>
+            <div class="mt-1 text-sm text-gray-500">{{analytics.risk_students_filtered}} из {{analytics.risk_students_total}}</div>
+          </div>
+          <form method="get" action="/attendance/analytics" class="no-print grid gap-2 sm:grid-cols-2 lg:grid-cols-5 lg:items-end">
+            <input type="hidden" name="month" value="{{analytics.month}}" />
+            <input type="hidden" name="class" value="{{analytics.class_id}}" />
+            <label class="text-sm text-gray-700">
+              <span class="block mb-1">Сигнал</span>
+              <select name="risk" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
+                {{#each analytics.risk_filter_options}}
+                  <option value="{{id}}" {{#if selected}}selected{{/if}}>{{name}}</option>
+                {{/each}}
+              </select>
+            </label>
+            <label class="text-sm text-gray-700">
+              <span class="block mb-1">Причина</span>
+              <select name="reason" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
+                <option value="">Все причины</option>
+                {{#each analytics.risk_reason_options}}
+                  <option value="{{code}}" {{#if selected}}selected{{/if}}>{{name}} ({{count}})</option>
+                {{/each}}
+              </select>
+            </label>
+            <label class="text-sm text-gray-700">
+              <span class="block mb-1">Поиск</span>
+              <input name="q" value="{{analytics.risk_filters.q}}" type="search" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500" />
+            </label>
+            <label class="text-sm text-gray-700">
+              <span class="block mb-1">Сортировка</span>
+              <select name="sort" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
+                {{#each analytics.risk_sort_options}}
+                  <option value="{{id}}" {{#if selected}}selected{{/if}}>{{name}}</option>
+                {{/each}}
+              </select>
+            </label>
+            <button type="submit" class="px-4 py-2 bg-gray-900 text-white rounded hover:bg-gray-800">Показать</button>
+          </form>
+        </div>
+
         {{#if analytics.risk_students}}
-          <div class="mt-2 max-w-full overflow-hidden">
-            <table class="w-full table-fixed text-[13px]">
-              <colgroup>
-                <col class="w-[28%]">
-                <col class="w-[8%]">
-                <col class="w-[22%]">
-                <col class="w-[7%]">
-                <col class="w-[9%]">
-                <col class="w-[26%]">
-              </colgroup>
-              <thead class="text-[11px] text-gray-500">
+          <div class="mt-4 overflow-x-auto">
+            <table class="min-w-full text-sm">
+              <thead class="text-xs text-gray-500">
                 <tr class="border-b">
-                  <th class="py-1.5 pr-2 text-left font-medium">Ученик</th>
-                  <th class="py-1.5 pr-2 text-left font-medium">Кл.</th>
-                  <th class="py-1.5 pr-2 text-left font-medium">Период</th>
-                  <th class="py-1.5 pr-2 text-right font-medium">Дн.</th>
-                  <th class="py-1.5 pr-2 text-right font-medium" title="Требуют внимания">Вним.</th>
-                  <th class="py-1.5 text-left font-medium">Контекст</th>
+                  <th class="py-2 pr-3 text-left font-medium">Ученик</th>
+                  <th class="py-2 pr-3 text-left font-medium">Класс</th>
+                  <th class="py-2 pr-3 text-left font-medium">Период</th>
+                  <th class="py-2 pr-3 text-right font-medium">Дни</th>
+                  <th class="py-2 pr-3 text-right font-medium">Уроки</th>
+                  <th class="py-2 pr-3 text-right font-medium">Без расп.</th>
+                  <th class="py-2 pr-3 text-right font-medium">Вним.</th>
+                  <th class="py-2 pr-3 text-left font-medium">Причина</th>
+                  <th class="py-2 text-left font-medium">Статус</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-gray-100">
                 {{#each analytics.risk_students}}
-                  <tr>
-                    <td class="py-1.5 pr-2 align-top font-medium text-gray-900">
-                      <div class="truncate" title="{{student_name}}">{{student_name}}</div>
+                  <tr class="cursor-pointer hover:bg-indigo-50" data-student-analytics-row data-student-id="{{student_id}}">
+                    <td class="py-2 pr-3 align-top font-medium text-gray-900">
+                      <button type="button" class="text-left hover:text-indigo-700" data-student-analytics-open data-student-id="{{student_id}}">{{student_name}}</button>
+                      <div class="mt-1 text-xs text-gray-500">периодов: {{periods}}</div>
                     </td>
-                    <td class="py-1.5 pr-2 align-top text-gray-600">
-                      <div class="truncate" title="{{class_name}}">{{class_name}}</div>
-                    </td>
-                    <td class="py-1.5 pr-2 align-top text-gray-700">
+                    <td class="py-2 pr-3 align-top text-gray-600">{{class_name}}</td>
+                    <td class="py-2 pr-3 align-top text-gray-700">
                       {{#if last_period_date}}
-                        <div class="truncate font-medium text-gray-900">{{last_period_date}}</div>
-                        <div class="truncate text-[11px] leading-tight text-gray-500">{{last_period_time}}</div>
+                        <div class="font-medium text-gray-900">{{last_period_date}}</div>
+                        <div class="text-xs leading-tight text-gray-500">{{last_period_time}}</div>
                       {{else}}
                         <span class="text-gray-400">—</span>
                       {{/if}}
                     </td>
-                    <td class="py-1.5 pr-2 align-top text-right text-gray-900">{{absence_days}}</td>
-                    <td class="py-1.5 pr-2 align-top text-right text-red-700">{{needs_attention}}</td>
-                    <td class="py-1.5 align-top text-gray-600">
-                      <div class="truncate font-medium text-gray-800" title="{{last_reason}}">{{last_reason}}</div>
+                    <td class="py-2 pr-3 align-top text-right text-gray-900">{{absence_days}}</td>
+                    <td class="py-2 pr-3 align-top text-right {{#if missed_lessons}}text-indigo-700{{else}}text-gray-500{{/if}}">{{missed_lessons}}</td>
+                    <td class="py-2 pr-3 align-top text-right {{#if data_gaps}}text-red-700{{else}}text-gray-500{{/if}}">{{data_gaps}}</td>
+                    <td class="py-2 pr-3 align-top text-right {{#if needs_attention}}text-red-700{{else}}text-gray-500{{/if}}">{{needs_attention}}</td>
+                    <td class="py-2 pr-3 align-top text-gray-700">
+                      <div class="font-medium text-gray-900">{{last_reason}}</div>
                       {{#if last_comment_short}}
-                        <div class="truncate text-[11px] leading-tight text-gray-500" title="{{last_comment}}">{{last_comment_short}}</div>
-                        {{#if has_long_comment}}
-                          <details class="mt-0.5 max-w-full text-[11px] text-gray-500">
-                            <summary class="cursor-pointer select-none truncate text-indigo-700">полностью</summary>
-                            <div class="mt-1 break-words">{{last_comment}}</div>
-                          </details>
-                        {{/if}}
+                        <div class="mt-1 max-w-[18rem] truncate text-xs text-gray-500" title="{{last_comment}}">{{last_comment_short}}</div>
                       {{/if}}
+                    </td>
+                    <td class="py-2 align-top">
+                      <div class="flex flex-wrap gap-1">
+                        {{#if has_attention}}<span class="rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-800">внимание</span>{{/if}}
+                        {{#if has_missing_reason}}<span class="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-800">без причины</span>{{/if}}
+                        {{#if has_clarification}}<span class="rounded-full bg-yellow-100 px-2 py-0.5 text-xs text-yellow-800">уточнить</span>{{/if}}
+                        {{#if has_schedule_gap}}<span class="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-700">нет расписания</span>{{/if}}
+                        {{#if has_missed_lessons}}<span class="rounded-full bg-indigo-50 px-2 py-0.5 text-xs text-indigo-700">уроки</span>{{/if}}
+                      </div>
                     </td>
                   </tr>
                 {{/each}}
@@ -263,12 +518,31 @@
             </table>
           </div>
         {{else}}
-          <div class="mt-3 text-sm text-gray-500">Открытых рисков нет.</div>
+          <div class="mt-4 rounded border border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">По текущим фильтрам учеников нет.</div>
         {{/if}}
       </div>
     </div>
   {{/unless}}
 </section>
+
+<dialog id="student-analytics-dialog" class="w-[calc(100vw-2rem)] max-w-6xl rounded-lg p-0 text-left shadow-lg" data-can-manage="{{#if canManage}}1{{else}}0{{/if}}">
+  <div class="max-h-[90vh] overflow-hidden rounded-lg bg-white">
+    <div class="flex items-start justify-between gap-3 border-b border-gray-200 p-4">
+      <div>
+        <div class="text-xs font-medium uppercase text-gray-500">Ученик</div>
+        <h2 class="mt-1 text-lg font-semibold text-gray-900" data-student-modal-title>Аналитика</h2>
+        <div class="mt-1 text-sm text-gray-500" data-student-modal-subtitle></div>
+      </div>
+      <button type="button" class="rounded border border-gray-200 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50" data-student-modal-close>Закрыть</button>
+    </div>
+    <div class="border-b border-gray-200 px-4 pt-3">
+      <div class="flex flex-wrap gap-2" data-student-modal-tabs></div>
+    </div>
+    <div class="max-h-[68vh] overflow-y-auto p-4" data-student-modal-body>
+      <div class="text-sm text-gray-500">Загрузка...</div>
+    </div>
+  </div>
+</dialog>
 
 <script id="analytics-data" type="application/json">{{{json analytics}}}</script>
 <script>
@@ -302,6 +576,383 @@
     link.click();
     URL.revokeObjectURL(link.href);
     link.remove();
+  });
+})();
+
+(() => {
+  const highlightClasses = ['ring-2', 'ring-indigo-300', 'bg-indigo-50/30'];
+  let activeTarget = null;
+  let highlightTimer = null;
+
+  function clearHighlight() {
+    if (highlightTimer) window.clearTimeout(highlightTimer);
+    highlightTimer = null;
+    if (!activeTarget) return;
+    activeTarget.classList.remove(...highlightClasses);
+    activeTarget = null;
+  }
+
+  function highlightTarget(target) {
+    clearHighlight();
+    activeTarget = target;
+    activeTarget.classList.add(...highlightClasses);
+    highlightTimer = window.setTimeout(clearHighlight, 1500);
+  }
+
+  document.querySelectorAll('a[data-kpi-card][href^="#"]').forEach((link) => {
+    link.addEventListener('click', (event) => {
+      const targetId = link.getAttribute('href').slice(1);
+      const target = document.getElementById(targetId);
+      if (!target) return;
+
+      event.preventDefault();
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      highlightTarget(target);
+      window.history.replaceState(null, '', `#${targetId}`);
+    });
+  });
+
+  if (window.location.hash) {
+    const target = document.getElementById(window.location.hash.slice(1));
+    if (target) window.setTimeout(() => highlightTarget(target), 250);
+  }
+})();
+
+(() => {
+  const source = document.getElementById('analytics-data');
+  const dialog = document.getElementById('student-analytics-dialog');
+  if (!source || !dialog) return;
+
+  const analytics = JSON.parse(source.textContent || '{}');
+  const title = dialog.querySelector('[data-student-modal-title]');
+  const subtitle = dialog.querySelector('[data-student-modal-subtitle]');
+  const tabs = dialog.querySelector('[data-student-modal-tabs]');
+  const body = dialog.querySelector('[data-student-modal-body]');
+  const closeButton = dialog.querySelector('[data-student-modal-close]');
+  const canManagePage = dialog.dataset.canManage === '1';
+  const state = { payload: null, tab: 'overview' };
+
+  const tabItems = [
+    ['overview', 'Обзор'],
+    ['lessons', 'Уроки'],
+    ['periods', 'Отметки'],
+    ['days', 'Дни'],
+  ];
+
+  const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[char]));
+  const attr = escapeHtml;
+  const number = (value) => Number(value || 0);
+  const status = (message, tone = 'gray') => `<div class="mb-3 rounded border px-3 py-2 text-sm ${tone === 'red' ? 'border-red-200 bg-red-50 text-red-800' : 'border-green-200 bg-green-50 text-green-800'}" data-modal-status>${escapeHtml(message)}</div>`;
+
+  function openDialog() {
+    if (typeof dialog.showModal === 'function' && !dialog.open) dialog.showModal();
+    else dialog.setAttribute('open', '');
+  }
+
+  async function openStudent(studentId) {
+    state.payload = null;
+    state.tab = 'overview';
+    title.textContent = 'Аналитика';
+    subtitle.textContent = '';
+    tabs.innerHTML = '';
+    body.innerHTML = '<div class="text-sm text-gray-500">Загрузка...</div>';
+    openDialog();
+
+    try {
+      const response = await fetch(`/api/attendance/students/${encodeURIComponent(studentId)}/analytics?month=${encodeURIComponent(analytics.month || '')}`, {
+        headers: { Accept: 'application/json' },
+      });
+      if (!response.ok) throw new Error('Не удалось загрузить аналитику ученика');
+      state.payload = await response.json();
+      render();
+    } catch (err) {
+      body.innerHTML = `<div class="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">${escapeHtml(err.message || err)}</div>`;
+    }
+  }
+
+  function render(message = '') {
+    const payload = state.payload;
+    if (!payload) return;
+    const canManage = Boolean(payload.can_manage) && canManagePage;
+    title.textContent = payload.student?.name || 'Ученик';
+    subtitle.textContent = `${payload.month_label || payload.month || ''}${payload.student?.class_name ? ` · ${payload.student.class_name}` : ''}`;
+    tabs.innerHTML = tabItems.map(([id, label]) => `
+      <button type="button" data-student-tab="${id}" class="rounded-t border border-b-0 px-3 py-2 text-sm ${state.tab === id ? 'bg-white font-semibold text-gray-900' : 'bg-gray-50 text-gray-600 hover:bg-white'}">${label}</button>
+    `).join('');
+    body.innerHTML = `${message ? status(message) : ''}${renderActiveTab(payload, canManage)}`;
+  }
+
+  function renderActiveTab(payload, canManage) {
+    if (state.tab === 'lessons') return renderLessons(payload);
+    if (state.tab === 'periods') return renderPeriods(payload, canManage);
+    if (state.tab === 'days') return renderDays(payload);
+    return renderOverview(payload);
+  }
+
+  function renderOverview(payload) {
+    const kpi = payload.kpi || {};
+    const learning = payload.learning || {};
+    return `
+      <div class="grid grid-cols-2 gap-2 lg:grid-cols-6">
+        ${summaryCard('Периодов', kpi.periods)}
+        ${summaryCard('Дней', kpi.absence_days)}
+        ${summaryCard('Уроков', kpi.missed_lessons)}
+        ${summaryCard('Без расписания', kpi.data_gaps, number(kpi.data_gaps) ? 'red' : 'gray')}
+        ${summaryCard('Внимание', kpi.needs_attention, number(kpi.needs_attention) ? 'red' : 'gray')}
+        ${summaryCard('Без причины', kpi.without_reason, number(kpi.without_reason) ? 'amber' : 'gray')}
+      </div>
+      ${learning.data_gaps_total ? `<div class="mt-3 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Есть дни без опубликованного расписания: ${escapeHtml(learning.data_gaps_total)}.</div>` : ''}
+      <div class="mt-4 grid gap-4 lg:grid-cols-2">
+        <div>
+          <h3 class="text-sm font-semibold text-gray-900">Предметы</h3>
+          ${renderSubjects(learning.subjects || [])}
+        </div>
+        <div>
+          <h3 class="text-sm font-semibold text-gray-900">Последние отметки</h3>
+          ${renderCompactPeriods(payload.periods || [])}
+        </div>
+      </div>
+      <div class="mt-4">
+        <a class="inline-flex rounded border border-indigo-200 px-3 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-50" href="${attr(payload.student?.href || '#')}">Открыть карточку ученика</a>
+      </div>
+    `;
+  }
+
+  function renderLessons(payload) {
+    const lessons = payload.learning?.lessons || [];
+    if (!lessons.length) return '<div class="rounded border border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">Пропущенных уроков по опубликованному расписанию нет.</div>';
+    return `
+      <div class="overflow-x-auto">
+        <table class="min-w-full text-sm">
+          <thead class="text-xs text-gray-500">
+            <tr class="border-b">
+              <th class="py-2 pr-3 text-left font-medium">Дата</th>
+              <th class="py-2 pr-3 text-left font-medium">Урок</th>
+              <th class="py-2 pr-3 text-left font-medium">Время</th>
+              <th class="py-2 pr-3 text-left font-medium">Предмет</th>
+              <th class="py-2 pr-3 text-left font-medium">Учитель</th>
+              <th class="py-2 pr-3 text-left font-medium">Каб.</th>
+              <th class="py-2 text-left font-medium">Причина</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100">
+            ${lessons.map((lesson) => `
+              <tr>
+                <td class="py-2 pr-3 align-top text-gray-900">${escapeHtml(lesson.date_label)}</td>
+                <td class="py-2 pr-3 align-top text-gray-900">${escapeHtml(lesson.lesson_number)}</td>
+                <td class="py-2 pr-3 align-top text-gray-700">${escapeHtml(lesson.time_label)}</td>
+                <td class="py-2 pr-3 align-top">
+                  <div class="font-medium text-gray-900">${escapeHtml(lesson.subject_name)}</div>
+                  ${lesson.subject_type ? `<div class="text-xs text-gray-500">${escapeHtml(lesson.subject_type)}</div>` : ''}
+                  ${lesson.has_conflict ? `<div class="text-xs text-amber-700">Конфликт: ${escapeHtml(lesson.conflict_subjects)}</div>` : ''}
+                </td>
+                <td class="py-2 pr-3 align-top text-gray-700">${escapeHtml(lesson.teacher_name)}</td>
+                <td class="py-2 pr-3 align-top text-gray-700">${escapeHtml(lesson.room_name)}</td>
+                <td class="py-2 align-top text-gray-700">
+                  <div class="font-medium text-gray-900">${escapeHtml(lesson.reason_name)}</div>
+                  ${lesson.comment ? `<div class="text-xs text-gray-500">${escapeHtml(lesson.comment)}</div>` : ''}
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  function renderPeriods(payload, canManage) {
+    const periods = payload.periods || [];
+    if (!periods.length) return '<div class="rounded border border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">Отметок за месяц нет.</div>';
+    return `
+      <div class="space-y-3">
+        ${periods.map((period) => `
+          <div class="rounded border border-gray-200 p-3">
+            <div class="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <div class="font-medium text-gray-900">${escapeHtml(period.period_label)}</div>
+                <div class="mt-1 flex flex-wrap gap-1 text-xs">
+                  <span class="rounded-full bg-gray-100 px-2 py-0.5 text-gray-700">${escapeHtml(period.reason_name)}</span>
+                  <span class="rounded-full bg-blue-50 px-2 py-0.5 text-blue-700">${escapeHtml(period.confirmation_label)}</span>
+                  <span class="rounded-full ${period.needs_attention ? 'bg-red-100 text-red-800' : 'bg-green-50 text-green-700'} px-2 py-0.5">${escapeHtml(period.attention_label)}</span>
+                </div>
+                ${period.comment ? `<div class="mt-1 text-sm text-gray-600">${escapeHtml(period.comment)}</div>` : ''}
+              </div>
+              ${canManage && period.needs_attention ? `<form data-resolve-absence="${attr(period.id)}"><button type="submit" class="rounded bg-green-50 px-3 py-1.5 text-sm text-green-700 hover:bg-green-100">Закрыть внимание</button></form>` : ''}
+            </div>
+            ${canManage ? renderEditForm(period, payload.reason_options || []) : ''}
+          </div>
+        `).join('')}
+      </div>
+    `;
+  }
+
+  function renderEditForm(period, reasons) {
+    return `
+      <details class="mt-3">
+        <summary class="cursor-pointer select-none text-sm font-medium text-indigo-700">Изменить</summary>
+        <form class="mt-3 space-y-3 rounded border border-gray-100 bg-gray-50 p-3" data-edit-absence="${attr(period.id)}">
+          <input type="hidden" name="studentId" value="${attr(period.student_id)}" />
+          <input type="hidden" name="classId" value="${attr(period.class_id)}" />
+          <div class="grid gap-2 md:grid-cols-2">
+            <label class="text-sm text-gray-700">
+              <span class="mb-1 block">Начало</span>
+              <input name="from" type="datetime-local" value="${attr(period.starts_at_input)}" required class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500" />
+            </label>
+            <label class="text-sm text-gray-700">
+              <span class="mb-1 block">Окончание</span>
+              <input name="to" type="datetime-local" value="${attr(period.ends_at_input)}" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500" />
+            </label>
+          </div>
+          <div class="grid gap-2 md:grid-cols-3">
+            <label class="text-sm text-gray-700">
+              <span class="mb-1 block">Причина</span>
+              <select name="reason" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
+                ${reasons.map((reason) => `<option value="${attr(reason.code)}" ${reason.code === period.reason_code ? 'selected' : ''}>${escapeHtml(reason.name)}</option>`).join('')}
+              </select>
+            </label>
+            <label class="text-sm text-gray-700">
+              <span class="mb-1 block">Подтверждение</span>
+              <select name="confirmationStatus" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
+                ${option('confirmed', 'Подтверждено', period.confirmation_status)}
+                ${option('reported', 'Со слов', period.confirmation_status)}
+                ${option('needs_clarification', 'Уточнить', period.confirmation_status)}
+                ${option('system_conflict', 'Конфликт', period.confirmation_status)}
+              </select>
+            </label>
+            <label class="text-sm text-gray-700">
+              <span class="mb-1 block">Внимание</span>
+              <select name="attentionStatus" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
+                ${option('normal', 'Обычная', period.attention_status)}
+                ${option('needs_attention', 'Требует внимания', period.attention_status)}
+                ${option('resolved', 'Закрыто', period.attention_status)}
+              </select>
+            </label>
+          </div>
+          <label class="text-sm text-gray-700">
+            <span class="mb-1 block">Комментарий</span>
+            <textarea name="comment" rows="2" maxlength="1000" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">${escapeHtml(period.comment)}</textarea>
+          </label>
+          <button type="submit" class="rounded bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700">Сохранить</button>
+        </form>
+      </details>
+    `;
+  }
+
+  function renderDays(payload) {
+    const days = (payload.learning?.daily || []).filter((day) => number(day.missed_lessons) || number(day.data_gaps));
+    if (!days.length) return '<div class="rounded border border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">Дней с пропущенными уроками или пробелами расписания нет.</div>';
+    return `<div class="grid gap-2 md:grid-cols-2">${days.map((day) => `
+      <div class="rounded border border-gray-200 p-3 text-sm">
+        <div class="flex items-center justify-between gap-2">
+          <span class="font-medium text-gray-900">${escapeHtml(day.date_label)}</span>
+          <span class="text-gray-500">${escapeHtml(day.missed_lessons)} уроков</span>
+        </div>
+        ${day.data_gaps ? `<div class="mt-1 text-xs text-red-700">Без расписания: ${escapeHtml(day.data_gaps)}</div>` : ''}
+      </div>
+    `).join('')}</div>`;
+  }
+
+  function renderSubjects(subjects) {
+    if (!subjects.length) return '<div class="mt-2 text-sm text-gray-500">Предметной разбивки нет.</div>';
+    return `<div class="mt-3 space-y-3">${subjects.map((subject) => `
+      <div>
+        <div class="flex items-center justify-between gap-2 text-sm">
+          <span class="font-medium text-gray-900">${escapeHtml(subject.subject_name)}</span>
+          <span class="text-gray-500">${escapeHtml(subject.missed_lessons)}</span>
+        </div>
+        <div class="mt-1 h-2 overflow-hidden rounded-full bg-gray-100">
+          <div class="h-2 rounded-full bg-indigo-600" style="width:${number(subject.bar_width)}%;"></div>
+        </div>
+      </div>
+    `).join('')}</div>`;
+  }
+
+  function renderCompactPeriods(periods) {
+    if (!periods.length) return '<div class="mt-2 text-sm text-gray-500">Отметок нет.</div>';
+    return `<div class="mt-3 space-y-2">${periods.slice(0, 5).map((period) => `
+      <div class="rounded border border-gray-200 p-2 text-sm">
+        <div class="font-medium text-gray-900">${escapeHtml(period.period_label)}</div>
+        <div class="text-xs text-gray-500">${escapeHtml(period.reason_name)}${period.comment ? ` · ${escapeHtml(period.comment)}` : ''}</div>
+      </div>
+    `).join('')}</div>`;
+  }
+
+  function summaryCard(label, value, tone = 'gray') {
+    const toneClass = tone === 'red' ? 'text-red-700' : tone === 'amber' ? 'text-amber-700' : 'text-gray-900';
+    return `<div class="rounded border border-gray-200 p-3"><div class="text-xs text-gray-500">${escapeHtml(label)}</div><div class="mt-1 text-2xl font-semibold ${toneClass}">${escapeHtml(value ?? 0)}</div></div>`;
+  }
+
+  function option(value, label, selected) {
+    return `<option value="${attr(value)}" ${value === selected ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+  }
+
+  function setInlineError(message) {
+    const node = body.querySelector('[data-modal-status]');
+    if (node) node.remove();
+    body.insertAdjacentHTML('afterbegin', status(message, 'red'));
+  }
+
+  document.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-student-analytics-open]');
+    if (button) {
+      event.preventDefault();
+      openStudent(button.dataset.studentId);
+      return;
+    }
+    const row = event.target.closest('[data-student-analytics-row]');
+    if (row && !event.target.closest('a, button, input, select, textarea, summary')) {
+      openStudent(row.dataset.studentId);
+    }
+  });
+
+  dialog.addEventListener('click', (event) => {
+    if (event.target === dialog) dialog.close();
+    if (event.target.closest('[data-student-modal-close]')) dialog.close();
+    const tab = event.target.closest('[data-student-tab]');
+    if (tab) {
+      state.tab = tab.dataset.studentTab;
+      render();
+    }
+  });
+
+  dialog.addEventListener('submit', async (event) => {
+    const resolveForm = event.target.closest('[data-resolve-absence]');
+    const editForm = event.target.closest('[data-edit-absence]');
+    if (!resolveForm && !editForm) return;
+    event.preventDefault();
+
+    try {
+      if (resolveForm) {
+        const id = resolveForm.dataset.resolveAbsence;
+        const response = await fetch(`/api/attendance/absences/${encodeURIComponent(id)}/resolve`, {
+          method: 'POST',
+          headers: { Accept: 'application/json' },
+        });
+        if (!response.ok) throw new Error('Не удалось закрыть внимание');
+      } else {
+        const id = editForm.dataset.editAbsence;
+        const payload = Object.fromEntries(new FormData(editForm).entries());
+        const response = await fetch(`/api/attendance/absences/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({}));
+          throw new Error(error.message || 'Не удалось сохранить отметку');
+        }
+      }
+      render('Сохранено. Обновляю отчет...');
+      setTimeout(() => window.location.reload(), 700);
+    } catch (err) {
+      setInlineError(err.message || String(err));
+    }
   });
 })();
 </script>
