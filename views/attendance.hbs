@@ -228,17 +228,20 @@
         </section>
 
         {{#if canManage}}
-          <section class="border rounded p-3 space-y-3">
-            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-              <h3 class="font-semibold text-gray-900">Новая отметка</h3>
-              <div class="flex flex-wrap gap-2">
-                <button type="button" data-fill="today" class="px-3 py-1.5 text-sm bg-gray-100 text-gray-800 rounded hover:bg-gray-200">Сегодня</button>
-                <button type="button" data-fill="day-end" class="px-3 py-1.5 text-sm bg-gray-100 text-gray-800 rounded hover:bg-gray-200">До конца дня</button>
-                <button type="button" data-fill="lesson" class="px-3 py-1.5 text-sm bg-gray-100 text-gray-800 rounded hover:bg-gray-200">Один урок</button>
+          <section class="overflow-hidden rounded-lg border border-indigo-100 bg-white">
+            <div class="flex flex-col gap-3 border-b border-indigo-100 bg-indigo-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div class="min-w-0">
+                <h3 class="font-semibold text-gray-900">Новая отметка</h3>
+                <div class="mt-0.5 truncate text-sm text-gray-600">{{selectedChild.name}}</div>
+              </div>
+              <div class="grid grid-cols-3 gap-1 rounded-lg border border-gray-200 bg-white p-1 shadow-sm">
+                <button type="button" data-fill="today" class="rounded-md px-3 py-2 text-sm font-medium text-gray-700 hover:bg-indigo-50 hover:text-indigo-700">Сегодня</button>
+                <button type="button" data-fill="day-end" class="rounded-md px-3 py-2 text-sm font-medium text-gray-700 hover:bg-indigo-50 hover:text-indigo-700">До конца дня</button>
+                <button type="button" data-fill="lesson" class="rounded-md px-3 py-2 text-sm font-medium text-gray-700 hover:bg-indigo-50 hover:text-indigo-700">Один урок</button>
               </div>
             </div>
 
-            <form id="new-absence-form" method="post" action="/attendance" class="space-y-3">
+            <form id="new-absence-form" method="post" action="/attendance" class="space-y-4 p-4">
               <input type="hidden" name="childId" value="{{selectedChild.id}}" />
               <input type="hidden" name="classId" value="{{selectedChild.classId}}" />
               <input type="hidden" name="date" value="{{selectedDate}}" />
@@ -246,33 +249,36 @@
               <input type="hidden" name="q" value="{{q}}" />
               <input type="hidden" name="source" value="mentor" />
 
-              <div class="grid md:grid-cols-2 gap-3">
-                <label class="text-sm font-medium text-gray-700">
-                  <span class="block mb-1">Начало</span>
-                  <input id="absence-from" name="from" type="datetime-local" value="{{defaultFrom}}" required class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500" />
+              <div class="grid gap-3 md:grid-cols-2">
+                <label class="block">
+                  <span class="mb-1 block text-xs font-semibold uppercase text-gray-500">Начало</span>
+                  <input id="absence-from" name="from" type="datetime-local" value="{{defaultFrom}}" required class="h-11 w-full rounded border border-gray-300 bg-white px-3 text-base text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500" />
                 </label>
-                <label class="text-sm font-medium text-gray-700">
-                  <span class="block mb-1">Окончание</span>
-                  <input id="absence-to" name="to" type="datetime-local" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500" />
+                <label class="block">
+                  <span class="mb-1 block text-xs font-semibold uppercase text-gray-500">Окончание</span>
+                  <input id="absence-to" name="to" type="datetime-local" class="h-11 w-full rounded border border-gray-300 bg-white px-3 text-base text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500" />
                 </label>
               </div>
 
-              <div class="grid md:grid-cols-[220px_1fr] gap-3">
-                <label class="text-sm font-medium text-gray-700">
-                  <span class="block mb-1">Причина</span>
-                  <select id="reason" name="reason" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
+              <div class="grid gap-3 md:grid-cols-[240px_1fr]">
+                <label class="block">
+                  <span class="mb-1 block text-xs font-semibold uppercase text-gray-500">Причина</span>
+                  <select id="reason" name="reason" class="h-11 w-full rounded border border-gray-300 bg-white px-3 text-base font-medium text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500">
                     {{#each reasons}}
                       <option value="{{code}}">{{name}}</option>
                     {{/each}}
                   </select>
                 </label>
-                <label class="text-sm font-medium text-gray-700">
-                  <span class="block mb-1">Комментарий</span>
-                  <textarea id="comment" name="comment" rows="2" maxlength="1000" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500"></textarea>
+                <label class="block">
+                  <span class="mb-1 block text-xs font-semibold uppercase text-gray-500">Комментарий</span>
+                  <textarea id="comment" name="comment" rows="2" maxlength="1000" class="min-h-[4.5rem] w-full rounded border border-gray-300 bg-white px-3 py-2 text-base text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500"></textarea>
                 </label>
               </div>
 
-              <button type="submit" class="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700">Сохранить</button>
+              <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div data-reason-note class="hidden rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"></div>
+                <button type="submit" class="h-11 w-full rounded bg-indigo-600 px-6 text-base font-semibold text-white shadow-sm hover:bg-indigo-700 focus:ring-2 focus:ring-indigo-500 sm:w-auto">Сохранить</button>
+              </div>
             </form>
           </section>
         {{/if}}
@@ -401,12 +407,22 @@
     if (!reasonSelect || !commentField) return;
 
     const reason = reasonSelect.value;
+    const note = form.querySelector('[data-reason-note]');
     commentField.required = reason === 'other';
     commentField.placeholder = reason === 'without_reason'
       ? 'Что нужно уточнить'
       : reason === 'other'
         ? 'Опишите причину'
         : 'Комментарий';
+    if (note) {
+      const message = reason === 'without_reason'
+        ? 'Отметка попадет в «Требуют внимания».'
+        : reason === 'other'
+          ? 'Комментарий обязателен.'
+          : '';
+      note.textContent = message;
+      note.classList.toggle('hidden', !message);
+    }
 
     if (!syncStatuses) return;
     const confirmationSelect = form.querySelector('select[name="confirmationStatus"]');
@@ -433,6 +449,20 @@
   if (!fromInput || !toInput) return;
   const form = document.getElementById('new-absence-form');
   const selectedDate = form?.querySelector('input[name="date"]')?.value || '';
+  const quickButtons = Array.from(document.querySelectorAll('[data-fill]'));
+
+  const setActivePreset = (preset) => {
+    quickButtons.forEach((button) => {
+      const active = button.dataset.fill === preset;
+      button.classList.toggle('bg-indigo-600', active);
+      button.classList.toggle('text-white', active);
+      button.classList.toggle('shadow-sm', active);
+      button.classList.toggle('text-gray-700', !active);
+      button.classList.toggle('hover:bg-indigo-50', !active);
+      button.classList.toggle('hover:text-indigo-700', !active);
+      button.classList.toggle('hover:bg-indigo-700', active);
+    });
+  };
 
   const pad = (n) => String(n).padStart(2, '0');
   const format = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -447,12 +477,14 @@
     const base = parts ? new Date(parts[0], parts[1], parts[2]) : new Date();
     fromInput.value = format(new Date(base.getFullYear(), base.getMonth(), base.getDate(), 8, 0));
     toInput.value = format(new Date(base.getFullYear(), base.getMonth(), base.getDate(), 23, 59));
+    setActivePreset('today');
   };
 
   const setDayEnd = () => {
     const base = fromInput.value ? new Date(fromInput.value) : new Date();
     fromInput.value = format(base);
     toInput.value = format(new Date(base.getFullYear(), base.getMonth(), base.getDate(), 23, 59));
+    setActivePreset('day-end');
   };
 
   const setOneLesson = () => {
@@ -460,10 +492,13 @@
     const end = new Date(base.getTime() + 45 * 60 * 1000);
     fromInput.value = format(base);
     toInput.value = format(end);
+    setActivePreset('lesson');
   };
 
   document.querySelector('[data-fill="today"]')?.addEventListener('click', setToday);
   document.querySelector('[data-fill="day-end"]')?.addEventListener('click', setDayEnd);
   document.querySelector('[data-fill="lesson"]')?.addEventListener('click', setOneLesson);
+  fromInput.addEventListener('input', () => setActivePreset(''));
+  toInput.addEventListener('input', () => setActivePreset(''));
 })();
 </script>
