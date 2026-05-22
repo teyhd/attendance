@@ -13,7 +13,13 @@ import {
   isOtherReasonCode,
   isWithoutReasonCode,
 } from './absence-reasons.mjs';
+import {
+  PRESENCE_EVENT_TYPES,
+  canCancelPresenceEvent,
+  resolvePresenceToggle,
+} from './presence.mjs';
 import { buildLearningAnalytics } from './learning-analytics.mjs';
+import { buildLateAnalytics } from './late-analytics.mjs';
 import { buildRiskWorklist } from './risk-worklist.mjs';
 
 const FAR_FUTURE = '9999-12-31 23:59:59';
@@ -158,6 +164,37 @@ export async function ensureAttendanceSchema() {
   `);
 
   await usr.query(`
+    CREATE TABLE IF NOT EXISTS attendance.presence_events (
+      id INT NOT NULL AUTO_INCREMENT,
+      student_id INT NOT NULL,
+      class_id INT NOT NULL,
+      event_type VARCHAR(16) NOT NULL,
+      occurred_at DATETIME NOT NULL,
+      attendance_date DATE NOT NULL,
+      actor_id INT NULL,
+      source VARCHAR(32) NOT NULL DEFAULT 'tablet',
+      cancelled_at TIMESTAMP NULL DEFAULT NULL,
+      cancelled_by INT NULL,
+      idempotency_key VARCHAR(64) NULL,
+      created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      KEY idx_presence_date_class (attendance_date, class_id),
+      KEY idx_presence_student_day_time (student_id, attendance_date, occurred_at),
+      UNIQUE KEY idx_presence_idempotency (idempotency_key),
+      CONSTRAINT fk_presence_student
+        FOREIGN KEY (student_id) REFERENCES sso.users (id)
+        ON UPDATE CASCADE ON DELETE RESTRICT,
+      CONSTRAINT fk_presence_class
+        FOREIGN KEY (class_id) REFERENCES sso.kaf_name (id)
+        ON UPDATE CASCADE ON DELETE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+  `);
+  await ensureIndex('attendance', 'presence_events', 'idx_presence_date_class', 'attendance_date, class_id');
+  await ensureIndex('attendance', 'presence_events', 'idx_presence_student_day_time', 'student_id, attendance_date, occurred_at');
+  await ensureUniqueIndex('attendance', 'presence_events', 'idx_presence_idempotency', 'idempotency_key');
+
+  await usr.query(`
     INSERT INTO attendance.absence_reasons
       (code, name, is_excused, requires_attention, default_confirmation_status, sort_order, active)
     VALUES
@@ -243,6 +280,19 @@ async function ensureIndex(schema, table, indexName, columnsSql) {
   }
 }
 
+async function ensureUniqueIndex(schema, table, indexName, columnsSql) {
+  const [rows] = await usr.query(
+    `SELECT INDEX_NAME
+       FROM information_schema.STATISTICS
+      WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND INDEX_NAME = ?
+      LIMIT 1`,
+    [schema, table, indexName],
+  );
+  if (!rows.length) {
+    await usr.query(`ALTER TABLE ${schema}.${table} ADD UNIQUE KEY ${indexName} (${columnsSql})`);
+  }
+}
+
 export async function getClasses() {
   const [rows] = await usr.query(
     `SELECT CAST(id AS CHAR) AS id, name
@@ -305,6 +355,181 @@ export async function getStudentById(id) {
     [id],
   );
   return rows[0] || null;
+}
+
+export async function getPresenceBoard({ date } = {}) {
+  const selectedDate = normalizeDateOnly(date || todayDate());
+  const [classes, students, events] = await Promise.all([
+    getClasses(),
+    getPresenceStudents(),
+    listPresenceEventsForDate(selectedDate),
+  ]);
+  const latestByStudent = latestPresenceEventMap(events);
+  const classBuckets = new Map(classes.map((classItem) => [
+    String(classItem.id),
+    {
+      ...classItem,
+      anchor: `presence-class-${classItem.id}`,
+      students: [],
+    },
+  ]));
+
+  for (const student of students) {
+    const classBucket = classBuckets.get(String(student.classId));
+    if (!classBucket) continue;
+    const latestEvent = latestByStudent.get(String(student.id)) || null;
+    classBucket.students.push({
+      ...student,
+      state: presenceStateFromEvent(latestEvent),
+    });
+  }
+
+  const boardClasses = [...classBuckets.values()].filter((classItem) => classItem.students.length > 0);
+  const totals = boardClasses.reduce((acc, classItem) => {
+    acc.classes += 1;
+    acc.students += classItem.students.length;
+    acc.present += classItem.students.filter((student) => student.state.is_present).length;
+    return acc;
+  }, { classes: 0, students: 0, present: 0 });
+
+  return {
+    date: selectedDate,
+    date_label: formatDateLabel(selectedDate),
+    classes: boardClasses,
+    totals,
+  };
+}
+
+export async function togglePresenceEvent({ studentId, classId, actorId, idempotencyKey } = {}) {
+  const student = await assertPresenceStudent(studentId, classId);
+  const nowSql = sqlNow();
+  const attendanceDate = dateOnlyFromSql(nowSql);
+  const normalizedIdempotencyKey = normalizeIdempotencyKey(idempotencyKey);
+  const conn = await usr.getConnection();
+  let lockAcquired = false;
+
+  try {
+    await conn.beginTransaction();
+    lockAcquired = await acquirePresenceLock(conn, student.id, attendanceDate);
+    if (!lockAcquired) {
+      throw new ValidationError('Повторите нажатие через секунду', 409);
+    }
+
+    if (normalizedIdempotencyKey) {
+      const existing = await getPresenceEventByIdempotencyKey(conn, normalizedIdempotencyKey);
+      if (existing) {
+        await conn.commit();
+        return {
+          event: existing,
+          state: presenceStateFromEvent(existing),
+          duplicate: true,
+        };
+      }
+    }
+
+    const latestEvent = await getLatestPresenceEventForUpdate(conn, student.id, attendanceDate);
+    const decision = resolvePresenceToggle({ latestEvent, now: nowSql });
+    if (!decision.shouldInsert) {
+      await conn.commit();
+      return {
+        event: latestEvent,
+        state: presenceStateFromEvent(latestEvent),
+        duplicate: true,
+      };
+    }
+
+    const [result] = await conn.query(
+      `INSERT INTO attendance.presence_events
+        (student_id, class_id, event_type, occurred_at, attendance_date, actor_id, source, idempotency_key)
+       VALUES (?, ?, ?, ?, ?, ?, 'tablet', ?)`,
+      [
+        student.id,
+        student.classId,
+        decision.eventType,
+        nowSql,
+        attendanceDate,
+        actorId || null,
+        normalizedIdempotencyKey,
+      ],
+    );
+    const event = await getPresenceEventById(conn, result.insertId);
+    await conn.commit();
+    return {
+      event,
+      state: presenceStateFromEvent(event),
+      duplicate: false,
+    };
+  } catch (err) {
+    await conn.rollback();
+    if (isDuplicateKeyError(err) && normalizedIdempotencyKey) {
+      const event = await getPresenceEventByIdempotencyKey(usr, normalizedIdempotencyKey);
+      if (event) {
+        return {
+          event,
+          state: presenceStateFromEvent(event),
+          duplicate: true,
+        };
+      }
+    }
+    throw err;
+  } finally {
+    if (lockAcquired) {
+      await releasePresenceLock(conn, student.id, attendanceDate);
+    }
+    conn.release();
+  }
+}
+
+export async function cancelPresenceEvent(eventId, actorId) {
+  const id = toPositiveInt(eventId, 'eventId');
+  const conn = await usr.getConnection();
+  let lockAcquired = false;
+  let lockStudentId = '';
+  let lockDate = '';
+
+  try {
+    await conn.beginTransaction();
+    const event = await getActivePresenceEventByIdForUpdate(conn, id);
+    if (!event) {
+      await conn.commit();
+      return null;
+    }
+
+    lockStudentId = event.student_id;
+    lockDate = event.attendance_date;
+    lockAcquired = await acquirePresenceLock(conn, lockStudentId, lockDate);
+    if (!lockAcquired) {
+      throw new ValidationError('Повторите отмену через секунду', 409);
+    }
+
+    const latestEvent = await getLatestPresenceEventForUpdate(conn, lockStudentId, lockDate);
+    if (!canCancelPresenceEvent(event, latestEvent)) {
+      throw new ValidationError('Можно отменить только последнюю отметку ученика', 409);
+    }
+
+    await conn.query(
+      `UPDATE attendance.presence_events
+          SET cancelled_at = CURRENT_TIMESTAMP,
+              cancelled_by = ?,
+              updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND cancelled_at IS NULL`,
+      [actorId || null, id],
+    );
+    const newLatestEvent = await getLatestPresenceEventForUpdate(conn, lockStudentId, lockDate);
+    await conn.commit();
+    return {
+      event,
+      state: presenceStateFromEvent(newLatestEvent),
+    };
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    if (lockAcquired) {
+      await releasePresenceLock(conn, lockStudentId, lockDate);
+    }
+    conn.release();
+  }
 }
 
 export async function getAbsenceReasons({ includeInactive = false } = {}) {
@@ -590,6 +815,48 @@ export async function getAttendanceSummary({ classId, date } = {}) {
   };
 }
 
+async function getPresenceStudents() {
+  const [rows] = await usr.query(
+    `SELECT
+        CAST(u.id AS CHAR) AS id,
+        COALESCE(NULLIF(u.display_name_custom, ''), NULLIF(u.nickname, ''), NULLIF(u.msgnickname, ''), u.name) AS name,
+        CAST(u.kaf AS CHAR) AS classId,
+        k.name AS className
+       FROM sso.users u
+       JOIN sso.kaf_name k ON k.id = u.kaf
+      WHERE u.type = 1
+        AND u.status = 1
+        AND u.kaf > 0
+        AND k.type = 1
+      ORDER BY
+        CASE WHEN NULLIF(REGEXP_SUBSTR(k.name, '^[0-9]+'), '') IS NULL THEN 1 ELSE 0 END,
+        CAST(NULLIF(REGEXP_SUBSTR(k.name, '^[0-9]+'), '') AS UNSIGNED),
+        k.name,
+        COALESCE(NULLIF(u.display_name_custom, ''), NULLIF(u.nickname, ''), NULLIF(u.msgnickname, ''), u.name),
+        u.id`,
+  );
+  return rows;
+}
+
+async function listPresenceEventsForDate(date) {
+  const [rows] = await usr.query(
+    `${presenceEventSelectSql()}
+      WHERE e.attendance_date = ?
+        AND e.cancelled_at IS NULL
+      ORDER BY e.student_id, e.occurred_at, e.id`,
+    [date],
+  );
+  return rows.map(mapPresenceEvent);
+}
+
+function latestPresenceEventMap(events) {
+  const map = new Map();
+  for (const event of events || []) {
+    map.set(String(event.student_id), event);
+  }
+  return map;
+}
+
 export async function getTodayAbsenceOverview({ date, now } = {}) {
   const selectedDate = normalizeDateOnly(date || todayDate());
   const nowSql = normalizeDateTime(now || sqlNow(), { field: 'now', required: true });
@@ -742,12 +1009,13 @@ export async function getMonthlyAttendanceAnalytics({ month, classId, risk, reas
   const classes = await getClasses();
   const selectedClass = normalizeAnalyticsClass(classes, classId);
   const classFilter = selectedClass.id === 'all' ? null : selectedClass.id;
-  const [students, periods, scheduleRows, publishedSchoolDays, activeWeekdays] = await Promise.all([
+  const [students, periods, scheduleRows, publishedSchoolDays, activeWeekdays, arrivals] = await Promise.all([
     getMonthlyAnalyticsStudents(classFilter),
     getMonthlyAnalyticsPeriods(range, classFilter),
     getPublishedScheduleRows(range, classFilter),
     getPublishedScheduleDays(range),
     getActiveScheduleWeekdays(),
+    getMonthlyFirstPresenceArrivals(range, classFilter),
   ]);
 
   const analytics = buildMonthlyAnalytics({
@@ -765,10 +1033,20 @@ export async function getMonthlyAttendanceAnalytics({ month, classId, risk, reas
     publishedSchoolDays,
     activeWeekdays,
   });
+  analytics.lateness = buildLateAnalytics({
+    range,
+    students,
+    arrivals,
+    scheduleRows,
+    publishedSchoolDays,
+    activeWeekdays,
+  });
+  analytics.has_activity = Boolean(analytics.has_data || analytics.learning?.has_data || analytics.lateness?.has_activity);
   const worklist = buildRiskWorklist({
     range,
     periods,
     learning: analytics.learning,
+    lateness: analytics.lateness,
     filters: { risk, reason, q, sort },
   });
   analytics.risk = worklist;
@@ -785,7 +1063,7 @@ export async function getMonthlyAttendanceAnalytics({ month, classId, risk, reas
 export async function getStudentLearningAnalytics(studentId, { month } = {}) {
   const student = await getStudentById(studentId);
   if (!student) {
-    throw new ValidationError('РЈС‡РµРЅРёРє РЅРµ РЅР°Р№РґРµРЅ', 404);
+    throw new ValidationError('Ученик не найден', 404);
   }
 
   const selectedMonth = normalizeAnalyticsMonth(month);
@@ -830,6 +1108,34 @@ export async function getStudentLearningAnalytics(studentId, { month } = {}) {
   };
 }
 
+export async function getStudentLatenessAnalytics(studentId, { month } = {}) {
+  const student = await getStudentById(studentId);
+  if (!student) {
+    throw new ValidationError('Ученик не найден', 404);
+  }
+
+  const selectedMonth = normalizeAnalyticsMonth(month);
+  const range = buildMonthRange(selectedMonth);
+  const [classStudents, scheduleRows, publishedSchoolDays, activeWeekdays, arrivals] = await Promise.all([
+    getMonthlyAnalyticsStudents(student.classId),
+    getPublishedScheduleRows(range, student.classId),
+    getPublishedScheduleDays(range),
+    getActiveScheduleWeekdays(),
+    getMonthlyFirstPresenceArrivals(range, student.classId, student.id),
+  ]);
+  const students = classStudents.filter((item) => String(item.student_id) === String(student.id));
+
+  return buildLateAnalytics({
+    range,
+    students,
+    arrivals,
+    scheduleRows,
+    publishedSchoolDays,
+    activeWeekdays,
+    includeEvents: true,
+  });
+}
+
 export async function getStudentMonthlyAnalytics(studentId, { month } = {}) {
   const student = await getStudentById(studentId);
   if (!student) {
@@ -838,7 +1144,7 @@ export async function getStudentMonthlyAnalytics(studentId, { month } = {}) {
 
   const selectedMonth = normalizeAnalyticsMonth(month);
   const range = buildMonthRange(selectedMonth);
-  const [periods, learning, reasons, classes] = await Promise.all([
+  const [periods, learning, lateness, reasons, classes] = await Promise.all([
     listAbsencePeriods({
       studentId,
       from: range.start_at,
@@ -846,6 +1152,7 @@ export async function getStudentMonthlyAnalytics(studentId, { month } = {}) {
       limit: 500,
     }),
     getStudentLearningAnalytics(studentId, { month: selectedMonth }),
+    getStudentLatenessAnalytics(studentId, { month: selectedMonth }),
     getAbsenceReasons(),
     getClasses(),
   ]);
@@ -887,9 +1194,13 @@ export async function getStudentMonthlyAnalytics(studentId, { month } = {}) {
       needs_clarification: needsClarification,
       missed_lessons: Number(learning.missed_lessons_total || 0),
       data_gaps: Number(learning.data_gaps_total || 0),
+      late_days: Number(lateness.late_days_total || 0),
+      late_minutes: Number(lateness.total_late_minutes || 0),
+      late_missed_lessons: Number(lateness.missed_lessons_total || 0),
     },
     periods,
     learning,
+    lateness,
     reason_options: reasons.map((item) => ({
       code: item.code,
       name: item.name,
@@ -1000,6 +1311,54 @@ async function getMonthlyAnalyticsPeriods(range, classId, studentId = null) {
        JOIN sso.kaf_name k ON k.id = p.class_id
       WHERE ${where.join(' AND ')}
       ORDER BY p.starts_at, p.id`,
+    params,
+  );
+  return rows;
+}
+
+async function getMonthlyFirstPresenceArrivals(range, classId, studentId = null) {
+  const where = [
+    'e.event_type = ?',
+    'e.cancelled_at IS NULL',
+    'e.attendance_date BETWEEN ? AND ?',
+    'u.type = 1',
+    'u.status = 1',
+    'k.type = 1',
+  ];
+  const params = [PRESENCE_EVENT_TYPES.ARRIVAL, range.start_date, range.end_date];
+  if (classId) {
+    where.push('e.class_id = ?');
+    params.push(classId);
+  }
+  if (studentId) {
+    where.push('e.student_id = ?');
+    params.push(studentId);
+  }
+
+  const [rows] = await usr.query(
+    `SELECT *
+       FROM (
+         SELECT
+           CAST(e.id AS CHAR) AS id,
+           CAST(e.student_id AS CHAR) AS student_id,
+           CAST(e.class_id AS CHAR) AS class_id,
+           '${PRESENCE_EVENT_TYPES.ARRIVAL}' AS event_type,
+           DATE_FORMAT(e.attendance_date, '%Y-%m-%d') AS attendance_date,
+           DATE_FORMAT(e.occurred_at, '%Y-%m-%d %H:%i:%s') AS arrival_at,
+           DATE_FORMAT(e.occurred_at, '%Y-%m-%d %H:%i:%s') AS occurred_at,
+           COALESCE(NULLIF(u.display_name_custom, ''), NULLIF(u.nickname, ''), NULLIF(u.msgnickname, ''), u.name) AS student_name,
+           k.name AS class_name,
+           ROW_NUMBER() OVER (
+             PARTITION BY e.student_id, e.attendance_date
+             ORDER BY e.occurred_at, e.id
+           ) AS row_num
+          FROM attendance.presence_events e
+          JOIN sso.users u ON u.id = e.student_id
+          JOIN sso.kaf_name k ON k.id = e.class_id
+         WHERE ${where.join(' AND ')}
+       ) first_arrivals
+      WHERE row_num = 1
+      ORDER BY attendance_date, arrival_at, student_name`,
     params,
   );
   return rows;
@@ -2117,6 +2476,177 @@ function toEventPayload(absence) {
     resolved_at: absence.resolved_at,
     resolved_by: absence.resolved_by,
   };
+}
+
+async function assertPresenceStudent(studentId, classId) {
+  const normalizedStudentId = toPositiveInt(studentId, 'studentId');
+  const normalizedClassId = toPositiveInt(classId, 'classId');
+  const student = await getStudentById(normalizedStudentId);
+  if (!student) {
+    throw new ValidationError('Ученик не найден');
+  }
+  if (String(student.classId) !== String(normalizedClassId)) {
+    throw new ValidationError('Класс не совпадает с классом ученика');
+  }
+  return {
+    id: normalizedStudentId,
+    classId: normalizedClassId,
+    name: student.name || '',
+  };
+}
+
+async function acquirePresenceLock(conn, studentId, date) {
+  const [rows] = await conn.query('SELECT GET_LOCK(?, 3) AS locked', [presenceLockName(studentId, date)]);
+  return Number(rows[0]?.locked || 0) === 1;
+}
+
+async function releasePresenceLock(conn, studentId, date) {
+  if (!studentId || !date) return;
+  try {
+    await conn.query('DO RELEASE_LOCK(?)', [presenceLockName(studentId, date)]);
+  } catch {
+    // The connection is about to be released; losing the lock release error is safer than hiding the real request error.
+  }
+}
+
+function presenceLockName(studentId, date) {
+  return `attendance:presence:${studentId}:${date}`;
+}
+
+async function getPresenceEventById(conn, id) {
+  const [rows] = await conn.query(
+    `${presenceEventSelectSql()}
+      WHERE e.id = ?
+      LIMIT 1`,
+    [id],
+  );
+  return rows[0] ? mapPresenceEvent(rows[0]) : null;
+}
+
+async function getActivePresenceEventByIdForUpdate(conn, id) {
+  const [rows] = await conn.query(
+    `${presenceEventSelectSql()}
+      WHERE e.id = ?
+        AND e.cancelled_at IS NULL
+      LIMIT 1
+      FOR UPDATE`,
+    [id],
+  );
+  return rows[0] ? mapPresenceEvent(rows[0]) : null;
+}
+
+async function getPresenceEventByIdempotencyKey(conn, idempotencyKey) {
+  if (!idempotencyKey) return null;
+  const [rows] = await conn.query(
+    `${presenceEventSelectSql()}
+      WHERE e.idempotency_key = ?
+      LIMIT 1`,
+    [idempotencyKey],
+  );
+  return rows[0] ? mapPresenceEvent(rows[0]) : null;
+}
+
+async function getLatestPresenceEventForUpdate(conn, studentId, date) {
+  const [rows] = await conn.query(
+    `${presenceEventSelectSql()}
+      WHERE e.student_id = ?
+        AND e.attendance_date = ?
+        AND e.cancelled_at IS NULL
+      ORDER BY e.occurred_at DESC, e.id DESC
+      LIMIT 1
+      FOR UPDATE`,
+    [studentId, date],
+  );
+  return rows[0] ? mapPresenceEvent(rows[0]) : null;
+}
+
+function presenceEventSelectSql() {
+  return `
+    SELECT
+      CAST(e.id AS CHAR) AS id,
+      CAST(e.student_id AS CHAR) AS student_id,
+      CAST(e.class_id AS CHAR) AS class_id,
+      e.event_type,
+      DATE_FORMAT(e.occurred_at, '%Y-%m-%d %H:%i:%s') AS occurred_at,
+      DATE_FORMAT(e.attendance_date, '%Y-%m-%d') AS attendance_date,
+      CAST(e.actor_id AS CHAR) AS actor_id,
+      e.source,
+      DATE_FORMAT(e.cancelled_at, '%Y-%m-%d %H:%i:%s') AS cancelled_at,
+      CAST(e.cancelled_by AS CHAR) AS cancelled_by,
+      e.idempotency_key,
+      DATE_FORMAT(e.created_at, '%Y-%m-%d %H:%i:%s') AS created_at,
+      DATE_FORMAT(e.updated_at, '%Y-%m-%d %H:%i:%s') AS updated_at,
+      COALESCE(NULLIF(u.display_name_custom, ''), NULLIF(u.nickname, ''), NULLIF(u.msgnickname, ''), u.name) AS student_name,
+      k.name AS class_name
+    FROM attendance.presence_events e
+    LEFT JOIN sso.users u ON u.id = e.student_id
+    LEFT JOIN sso.kaf_name k ON k.id = e.class_id
+  `;
+}
+
+function mapPresenceEvent(row) {
+  const eventType = row.event_type === PRESENCE_EVENT_TYPES.DEPARTURE
+    ? PRESENCE_EVENT_TYPES.DEPARTURE
+    : PRESENCE_EVENT_TYPES.ARRIVAL;
+  const occurredAt = row.occurred_at || '';
+  return {
+    id: row.id,
+    student_id: row.student_id,
+    class_id: row.class_id,
+    student_name: row.student_name || '',
+    class_name: row.class_name || '',
+    event_type: eventType,
+    event_label: presenceEventTypeLabel(eventType),
+    occurred_at: occurredAt,
+    occurred_time: occurredAt.slice(11, 16),
+    attendance_date: row.attendance_date || dateOnlyFromSql(occurredAt),
+    actor_id: row.actor_id,
+    source: row.source || 'tablet',
+    cancelled_at: row.cancelled_at || '',
+    cancelled_by: row.cancelled_by,
+    idempotency_key: row.idempotency_key || '',
+    created_at: row.created_at || '',
+    updated_at: row.updated_at || '',
+  };
+}
+
+function presenceStateFromEvent(latestEvent) {
+  const hasEvent = Boolean(latestEvent?.id);
+  const isPresent = latestEvent?.event_type === PRESENCE_EVENT_TYPES.ARRIVAL;
+  const statusWord = hasEvent ? presenceEventTypeLabel(latestEvent.event_type) : 'Нет отметки';
+  return {
+    has_event: hasEvent,
+    is_present: isPresent,
+    last_event_id: latestEvent?.id || '',
+    last_event_type: latestEvent?.event_type || '',
+    status_word: statusWord,
+    status_time: latestEvent?.occurred_time || '',
+    status_label: hasEvent ? `${statusWord} ${latestEvent.occurred_time}` : statusWord,
+    next_event_type: isPresent ? PRESENCE_EVENT_TYPES.DEPARTURE : PRESENCE_EVENT_TYPES.ARRIVAL,
+    next_action_label: isPresent ? 'Ушел' : 'Пришел',
+  };
+}
+
+function presenceEventTypeLabel(eventType) {
+  return eventType === PRESENCE_EVENT_TYPES.DEPARTURE ? 'Ушел' : 'Пришел';
+}
+
+function normalizeIdempotencyKey(value) {
+  const key = String(value || '').trim();
+  if (!key) return null;
+  if (key.length > 64) {
+    throw new ValidationError('Слишком длинный ключ запроса');
+  }
+  return key;
+}
+
+function isDuplicateKeyError(err) {
+  return err?.code === 'ER_DUP_ENTRY' || Number(err?.errno || 0) === 1062;
+}
+
+function dateOnlyFromSql(value) {
+  const match = String(value || '').match(/^(\d{4}-\d{2}-\d{2})/);
+  return match ? match[1] : todayDate();
 }
 
 function sqlNow() {

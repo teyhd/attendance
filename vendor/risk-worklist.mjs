@@ -1,8 +1,8 @@
 import { expandDateRangeWithinMonth } from './analytics.mjs';
 import { isWithoutReasonCode } from './absence-reasons.mjs';
 
-const RISK_FILTERS = new Set(['all', 'attention', 'missing_reason', 'clarification', 'schedule_gap', 'missed_lessons']);
-const RISK_SORTS = new Set(['priority', 'latest', 'days', 'lessons', 'name']);
+const RISK_FILTERS = new Set(['all', 'attention', 'missing_reason', 'clarification', 'schedule_gap', 'missed_lessons', 'late']);
+const RISK_SORTS = new Set(['priority', 'latest', 'days', 'lessons', 'late', 'late_minutes', 'name']);
 
 export function normalizeRiskWorklistFilters(filters = {}) {
   const risk = RISK_FILTERS.has(String(filters.risk || '').trim())
@@ -19,7 +19,7 @@ export function normalizeRiskWorklistFilters(filters = {}) {
   };
 }
 
-export function buildRiskWorklist({ range, periods = [], learning = {}, filters = {} } = {}) {
+export function buildRiskWorklist({ range, periods = [], learning = {}, lateness = {}, filters = {} } = {}) {
   const normalized = normalizeRiskWorklistFilters(filters);
   const buckets = new Map();
   const reasonBuckets = new Map();
@@ -73,6 +73,29 @@ export function buildRiskWorklist({ range, periods = [], learning = {}, filters 
     bucket.data_gaps = Number(row.data_gaps || 0);
   }
 
+  for (const row of lateness?.students || []) {
+    const bucket = ensureBucket(buckets, {
+      student_id: row.student_id,
+      student_name: row.student_name,
+      class_id: row.class_id,
+      class_name: row.class_name,
+    }, range);
+    bucket.late_days = Number(row.late_days || 0);
+    bucket.late_arrival_days = Number(row.arrival_days || 0);
+    bucket.late_percent = Number(row.late_percent || 0);
+    bucket.late_minutes = Number(row.total_late_minutes || 0);
+    bucket.late_missed_lessons = Number(row.missed_lessons || 0);
+    bucket.late_subjects = Number(row.subjects || 0);
+    bucket.late_data_gaps = Number(row.data_gaps || 0);
+    bucket.last_late_at = row.last_late_at || '';
+    bucket.last_late_date = row.last_late_date || '';
+    bucket.last_late_time = row.last_late_time || '';
+    bucket.last_late_label = row.last_late_label || '';
+    if (!bucket.student_href || bucket.periods === 0) {
+      bucket.student_href = `/attendance?class=${encodeURIComponent(bucket.class_id)}&student=${encodeURIComponent(bucket.student_id)}&analyticsMonth=${encodeURIComponent(range?.month || '')}#lateness-analytics`;
+    }
+  }
+
   const allRows = Array.from(buckets.values())
     .map((bucket) => finalizeBucket(bucket, range))
     .filter((row) => row.has_signal);
@@ -121,6 +144,13 @@ function ensureBucket(map, item, range) {
       subjects: 0,
       learning_days: 0,
       data_gaps: 0,
+      late_days: 0,
+      late_arrival_days: 0,
+      late_percent: 0,
+      late_minutes: 0,
+      late_missed_lessons: 0,
+      late_subjects: 0,
+      late_data_gaps: 0,
       reason_codes: new Set(),
       last_absence_id: '',
       last_starts_at: '',
@@ -130,6 +160,10 @@ function ensureBucket(map, item, range) {
       last_comment: '',
       last_confirmation_status: '',
       last_attention_status: '',
+      last_late_at: '',
+      last_late_date: '',
+      last_late_time: '',
+      last_late_label: '',
       student_href: `/attendance?class=${encodeURIComponent(classId)}&student=${encodeURIComponent(studentId)}&analyticsMonth=${encodeURIComponent(range?.month || '')}#learning-analytics`,
     });
   }
@@ -140,19 +174,25 @@ function finalizeBucket(bucket, range) {
   const hasAttention = bucket.needs_attention > 0;
   const hasMissingReason = bucket.without_reason > 0;
   const hasClarification = bucket.needs_clarification > 0;
-  const hasScheduleGap = bucket.data_gaps > 0;
+  const totalDataGaps = bucket.data_gaps + bucket.late_data_gaps;
+  const hasScheduleGap = totalDataGaps > 0;
   const hasMissedLessons = bucket.missed_lessons > 0;
+  const hasLate = bucket.late_days > 0;
   const priorityScore = (
     (hasAttention ? 1000 : 0) +
     (hasMissingReason ? 600 : 0) +
     (hasClarification ? 450 : 0) +
     (hasScheduleGap ? 320 : 0) +
+    (hasLate ? 260 : 0) +
     (hasMissedLessons ? 220 : 0) +
     bucket.needs_attention * 40 +
     bucket.without_reason * 25 +
     bucket.needs_clarification * 20 +
-    bucket.data_gaps * 12 +
+    totalDataGaps * 12 +
+    bucket.late_days * 15 +
+    bucket.late_missed_lessons * 10 +
     bucket.missed_lessons * 8 +
+    Math.round(bucket.late_minutes / 5) +
     bucket.absence_days_set.size
   );
 
@@ -169,7 +209,14 @@ function finalizeBucket(bucket, range) {
     missed_lessons: bucket.missed_lessons,
     subjects: bucket.subjects,
     learning_days: bucket.learning_days,
-    data_gaps: bucket.data_gaps,
+    data_gaps: totalDataGaps,
+    late_days: bucket.late_days,
+    late_arrival_days: bucket.late_arrival_days,
+    late_percent: bucket.late_percent,
+    late_minutes: bucket.late_minutes,
+    late_missed_lessons: bucket.late_missed_lessons,
+    late_subjects: bucket.late_subjects,
+    late_data_gaps: bucket.late_data_gaps,
     last_absence_id: bucket.last_absence_id,
     last_reason: bucket.last_reason,
     last_reason_code: bucket.last_reason_code,
@@ -183,13 +230,18 @@ function finalizeBucket(bucket, range) {
     last_period_label: formatCompactPeriodLabel(bucket.last_starts_at, bucket.last_ends_at),
     last_confirmation_status: bucket.last_confirmation_status,
     last_attention_status: bucket.last_attention_status,
+    last_late_at: bucket.last_late_at,
+    last_late_date: bucket.last_late_date,
+    last_late_time: bucket.last_late_time,
+    last_late_label: bucket.last_late_label,
     reason_codes: Array.from(bucket.reason_codes),
     has_attention: hasAttention,
     has_missing_reason: hasMissingReason,
     has_clarification: hasClarification,
     has_schedule_gap: hasScheduleGap,
     has_missed_lessons: hasMissedLessons,
-    has_signal: hasAttention || hasMissingReason || hasClarification || hasScheduleGap || hasMissedLessons,
+    has_late: hasLate,
+    has_signal: hasAttention || hasMissingReason || hasClarification || hasScheduleGap || hasMissedLessons || hasLate,
     priority_score: priorityScore,
     student_href: bucket.student_href || `/attendance?class=${encodeURIComponent(bucket.class_id)}&student=${encodeURIComponent(bucket.student_id)}&analyticsMonth=${encodeURIComponent(range?.month || '')}#learning-analytics`,
   };
@@ -202,6 +254,7 @@ function riskMatches(row, risk) {
     case 'clarification': return row.has_clarification;
     case 'schedule_gap': return row.has_schedule_gap;
     case 'missed_lessons': return row.has_missed_lessons;
+    case 'late': return row.has_late;
     default: return row.has_signal;
   }
 }
@@ -215,6 +268,7 @@ function searchMatches(row, query) {
     row.last_reason,
     row.last_comment,
     row.last_period_label,
+    row.last_late_label,
   ].some((value) => String(value || '').toLowerCase().includes(q));
 }
 
@@ -226,6 +280,10 @@ function compareRiskRows(a, b, sort) {
       return b.absence_days - a.absence_days || compareDescText(a.last_starts_at, b.last_starts_at) || compareByName(a, b);
     case 'lessons':
       return b.missed_lessons - a.missed_lessons || b.data_gaps - a.data_gaps || compareByName(a, b);
+    case 'late':
+      return b.late_days - a.late_days || b.late_minutes - a.late_minutes || compareDescText(a.last_late_at, b.last_late_at) || compareByName(a, b);
+    case 'late_minutes':
+      return b.late_minutes - a.late_minutes || b.late_days - a.late_days || compareByName(a, b);
     case 'name':
       return compareByName(a, b);
     default:
@@ -249,6 +307,7 @@ function riskFilterOptions(selected) {
     ['clarification', 'Уточнить'],
     ['schedule_gap', 'Без расписания'],
     ['missed_lessons', 'Пропущенные уроки'],
+    ['late', 'Опоздания'],
   ].map(([id, name]) => ({ id, name, selected: id === selected }));
 }
 
@@ -258,6 +317,8 @@ function riskSortOptions(selected) {
     ['latest', 'Последний период'],
     ['days', 'Дни'],
     ['lessons', 'Уроки'],
+    ['late', 'Опоздания'],
+    ['late_minutes', 'Минуты опозданий'],
     ['name', 'Имя'],
   ].map(([id, name]) => ({ id, name, selected: id === selected }));
 }

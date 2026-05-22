@@ -144,12 +144,10 @@ app.get('/', (req, res) => {
 app.get('/attendance', requirePageAuth, asyncHandler(async (req, res) => {
   const baseClasses = await db.getClasses();
   const mentorClassIds = await db.getMentorClassIds(req.authUser?.id);
-  const todayOverview = orderTodayOverviewByPreference(await db.getTodayAbsenceOverview(), mentorClassIds);
   const classes = orderClassesByPreference(baseClasses, mentorClassIds);
   const selectedClass = resolveSelectedClass(classes, req.query.class);
   const selectedDate = normalizeDateInput(req.query.date) || formatDateInput(new Date());
   const schoolDay = await db.getSchoolDayBounds(selectedDate);
-  const requestedAnalyticsMonth = normalizeMonthInput(req.query.analyticsMonth) || formatMonthInput(new Date());
   const activeFilter = normalizeAttendanceFilter(req.query.filter);
   const q = String(req.query.q || '').trim();
   const allClassChildren = selectedClass ? await db.getStudentsByClass(selectedClass) : [];
@@ -223,7 +221,6 @@ app.get('/attendance', requirePageAuth, asyncHandler(async (req, res) => {
       date: selectedDate,
       filter: activeFilter,
       q,
-      analyticsMonth: requestedAnalyticsMonth,
     }),
   }));
 
@@ -237,9 +234,6 @@ app.get('/attendance', requirePageAuth, asyncHandler(async (req, res) => {
   const futureAbsences = currentAbsences.filter((absence) => isFutureAbsence(absence, nowSql));
   const studentContext = selectedStudentId
     ? await db.getStudentContext(selectedStudentId, { days: 30 })
-    : null;
-  const studentLearning = selectedStudentId
-    ? await db.getStudentLearningAnalytics(selectedStudentId, { month: requestedAnalyticsMonth })
     : null;
   const reasons = await db.getAbsenceReasons();
 
@@ -259,14 +253,11 @@ app.get('/attendance', requirePageAuth, asyncHandler(async (req, res) => {
     classCurrentAbsences,
     classFutureAbsences,
     classDayAbsences,
-    todayOverview,
     summary,
     studentContext,
-    studentLearning,
     selectedClass,
     selectedDate,
     schoolDay,
-    analyticsMonth: studentLearning?.month || requestedAnalyticsMonth,
     activeFilter,
     q,
     reasons,
@@ -275,7 +266,6 @@ app.get('/attendance', requirePageAuth, asyncHandler(async (req, res) => {
       classId: selectedClass,
       date: selectedDate,
       q,
-      analyticsMonth: studentLearning?.month || requestedAnalyticsMonth,
     }),
     success: req.query.success,
     error: req.query.error,
@@ -286,7 +276,6 @@ app.get('/attendance', requirePageAuth, asyncHandler(async (req, res) => {
 app.get('/attendance/analytics', requirePageAuth, asyncHandler(async (req, res) => {
   const mentorClassIds = await db.getMentorClassIds(req.authUser?.id);
   const classId = req.query.class || mentorClassIds[0] || undefined;
-  const todayOverview = orderTodayOverviewByPreference(await db.getTodayAbsenceOverview(), mentorClassIds);
   const analytics = await db.getMonthlyAttendanceAnalytics({
     month: req.query.month,
     classId,
@@ -302,10 +291,21 @@ app.get('/attendance/analytics', requirePageAuth, asyncHandler(async (req, res) 
     currentUser: req.authUser,
     activePage: 'analytics',
     analytics,
-    todayOverview,
     classOptions: orderClassesByPreference(analytics.available_classes, mentorClassIds),
     kpiCards: buildAnalyticsKpiCards(analytics),
     canManage,
+  });
+}));
+
+app.get('/attendance/presence', requirePageAuth, requirePermission('manage_presence'), asyncHandler(async (req, res) => {
+  const selectedDate = formatDateInput(new Date());
+  const board = await db.getPresenceBoard({ date: selectedDate });
+
+  res.render('presence', {
+    title: 'Приход / уход',
+    currentUser: req.authUser,
+    activePage: 'presence',
+    board,
   });
 }));
 
@@ -468,6 +468,35 @@ app.post('/api/attendance/absences', requireApiAuth, requirePermission('mark_abs
   }
 }));
 
+app.post('/api/attendance/presence/toggle', requireApiAuth, requirePermission('manage_presence'), asyncHandler(async (req, res) => {
+  try {
+    const result = await db.togglePresenceEvent(presenceInputFromBody(req.body, req.authUser));
+    res.status(result.duplicate ? 200 : 201).json({
+      event: toPublicPresenceEvent(result.event),
+      state: result.state,
+      duplicate: Boolean(result.duplicate),
+    });
+  } catch (err) {
+    sendApiError(res, err);
+  }
+}));
+
+app.post('/api/attendance/presence/events/:id/cancel', requireApiAuth, requirePermission('manage_presence'), asyncHandler(async (req, res) => {
+  try {
+    const result = await db.cancelPresenceEvent(req.params.id, req.authUser?.id);
+    if (!result) {
+      return res.status(404).json({ error: 'not_found' });
+    }
+    return res.json({
+      cancelled: true,
+      event: toPublicPresenceEvent(result.event),
+      state: result.state,
+    });
+  } catch (err) {
+    return sendApiError(res, err);
+  }
+}));
+
 app.patch('/api/attendance/absences/:id', requireApiAuth, requirePermission('mark_absence'), asyncHandler(async (req, res) => {
   try {
     const absence = await db.updateAbsencePeriod(req.params.id, absenceInputFromBody(req.body, req.authUser));
@@ -552,6 +581,15 @@ function absenceInputFromBody(body, user) {
   };
 }
 
+function presenceInputFromBody(body, user) {
+  return {
+    studentId: body.studentId ?? body.student_id,
+    classId: body.classId ?? body.class_id,
+    idempotencyKey: body.idempotencyKey ?? body.idempotency_key,
+    actorId: user?.id || null,
+  };
+}
+
 function toPublicAbsence(absence) {
   return {
     id: absence.id,
@@ -580,16 +618,36 @@ function toPublicAbsence(absence) {
   };
 }
 
+function toPublicPresenceEvent(event) {
+  if (!event) return null;
+  return {
+    id: event.id,
+    student_id: Number(event.student_id),
+    class_id: Number(event.class_id),
+    student_name: event.student_name || '',
+    class_name: event.class_name || '',
+    event_type: event.event_type,
+    event_label: event.event_label,
+    occurred_at: event.occurred_at,
+    occurred_time: event.occurred_time,
+    attendance_date: event.attendance_date,
+    actor_id: event.actor_id ? Number(event.actor_id) : null,
+    source: event.source,
+    cancelled_at: event.cancelled_at || null,
+    cancelled_by: event.cancelled_by ? Number(event.cancelled_by) : null,
+    created_at: event.created_at,
+    updated_at: event.updated_at,
+  };
+}
+
 function buildAnalyticsKpiCards(analytics) {
   const kpi = analytics.kpi || {};
   const learning = analytics.learning || {};
-  const totalPeriods = Number(kpi.absence_periods || 0);
+  const lateness = analytics.lateness || {};
   const withoutReason = Number(kpi.without_reason || 0);
-  const withReason = Math.max(0, totalPeriods - withoutReason);
   const needsAttention = Number(kpi.needs_attention || 0);
-  const hasPeriods = totalPeriods > 0;
-  const hasData = Boolean(analytics.has_data);
-  const hasQualityTarget = hasData && Boolean(analytics.quality?.has_issues);
+  const hasAbsenceData = Boolean(analytics.has_data);
+  const hasQualityTarget = hasAbsenceData && Boolean(analytics.quality?.has_issues);
   const target = (condition, id, actionLabel) => (condition
     ? { href: `#${id}`, target_id: id, action_label: actionLabel }
     : {});
@@ -598,74 +656,44 @@ function buildAnalyticsKpiCards(analytics) {
     {
       label: 'Ученики с отсутствиями',
       value: `${Number(kpi.students_with_absences || 0)} / ${Number(kpi.students_total || 0)}`,
-      hint: 'активные ученики за месяц',
+      hint: 'за выбранный месяц',
       border_class: 'border-sky-500',
-      ...target(hasData, 'risk-students', 'Смотреть учеников'),
+      ...target(hasAbsenceData, 'risk-students', 'Смотреть учеников'),
     },
     {
       label: 'Пропущено уроков',
       value: Number(learning.missed_lessons_total || 0),
-      hint: 'по опубликованному расписанию',
+      hint: 'по расписанию',
       border_class: 'border-indigo-500',
-      ...target(hasData, 'learning-analytics', 'Смотреть уроки'),
+      ...target(Boolean(learning.has_data), 'learning-analytics', 'Смотреть уроки'),
     },
     {
-      label: 'Предметов',
-      value: Number(learning.subjects_total || 0),
-      hint: 'предметы с пропущенными уроками',
-      border_class: 'border-sky-500',
-      ...target(hasData, 'learning-analytics', 'Смотреть предметы'),
-    },
-    {
-      label: 'Покрытие расписанием',
-      value: `${Number(learning.coverage_percent ?? 100)}%`,
-      hint: 'отметок с опубликованными днями',
-      border_class: Number(learning.uncovered_absence_periods || 0) ? 'border-amber-500' : 'border-emerald-500',
-      ...target(hasData, 'learning-analytics', 'Смотреть расписание'),
-    },
-    {
-      label: 'Без расписания',
-      value: Number(learning.uncovered_absence_periods || 0),
-      hint: 'отметок на дни без published schedule',
-      border_class: Number(learning.uncovered_absence_periods || 0) ? 'border-red-500' : 'border-emerald-500',
-      ...target(hasData, 'learning-analytics', 'Разобрать пробелы'),
+      label: 'Опоздания',
+      value: Number(lateness.late_days_total || 0),
+      hint: 'ученик-дней',
+      border_class: Number(lateness.late_days_total || 0) ? 'border-amber-500' : 'border-emerald-500',
+      ...target(Boolean(lateness.has_activity), 'lateness-analytics', 'Смотреть опоздания'),
     },
     {
       label: 'Дней отсутствия',
       value: Number(kpi.absence_days || 0),
-      hint: 'уникальные пары ученик-день',
+      hint: 'ученик-день',
       border_class: 'border-indigo-500',
-      ...target(hasData, 'absence-calendar', 'Смотреть календарь'),
+      ...target(hasAbsenceData, 'absence-calendar', 'Смотреть календарь'),
     },
     {
       label: 'Без причины',
       value: withoutReason,
       hint: 'записей с причиной "Без причины"',
       border_class: withoutReason ? 'border-amber-500' : 'border-emerald-500',
-      ...target(hasQualityTarget, 'data-quality', 'Разобрать качество'),
+      ...target(hasQualityTarget, 'data-quality', 'Разобрать'),
     },
     {
       label: 'Открытые вопросы',
       value: needsAttention,
       hint: needsAttention ? 'отметки, которые нужно разобрать' : 'нет отметок, требующих действия',
       border_class: needsAttention ? 'border-red-500' : 'border-emerald-500',
-      ...target(hasData, 'risk-students', 'Открыть список'),
-    },
-    {
-      label: 'Причины заполнены',
-      value: hasPeriods ? `${Number(kpi.with_reason_percent || 0)}%` : '—',
-      hint: hasPeriods ? `${withReason} из ${totalPeriods} отметок с понятной причиной` : 'нет отметок за месяц',
-      border_class: hasPeriods
-        ? (Number(kpi.with_reason_percent || 0) >= 90 ? 'border-emerald-500' : 'border-amber-500')
-        : 'border-slate-400',
-      ...target(hasQualityTarget, 'data-quality', 'Проверить качество'),
-    },
-    {
-      label: 'Периодов',
-      value: Number(kpi.absence_periods || 0),
-      hint: 'активные отметки в месяце',
-      border_class: 'border-slate-400',
-      ...target(hasData, 'classes-breakdown', 'Смотреть классы'),
+      ...target(hasAbsenceData, 'risk-students', 'Открыть список'),
     },
   ];
 }
@@ -726,11 +754,6 @@ function formatDisplayDateOnly(value) {
   return match ? `${match[3]}.${match[2]}.${match[1]}` : raw;
 }
 
-function formatMonthInput(date) {
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}`;
-}
-
 function formatSqlDateTime(date) {
   const pad = (n) => String(n).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
@@ -769,14 +792,6 @@ function normalizeDateInput(value) {
   return raw;
 }
 
-function normalizeMonthInput(value) {
-  const raw = String(value || '').trim();
-  const match = raw.match(/^(\d{4})-(\d{2})$/);
-  if (!match) return '';
-  const month = Number(match[2]);
-  return month >= 1 && month <= 12 ? raw : '';
-}
-
 function resolveSelectedClass(classes, requestedClass) {
   if (!classes.length) return '';
   const requested = String(requestedClass || '').trim();
@@ -797,14 +812,6 @@ function orderClassesByPreference(classes, preferredClassIds = []) {
     }))
     .sort((a, b) => Number(b.isMentorClass) - Number(a.isMentorClass) || a.originalIndex - b.originalIndex)
     .map(({ originalIndex, ...item }) => item);
-}
-
-function orderTodayOverviewByPreference(overview, preferredClassIds = []) {
-  if (!overview?.classes?.length) return overview;
-  return {
-    ...overview,
-    classes: orderClassesByPreference(overview.classes, preferredClassIds),
-  };
 }
 
 function normalizeAttendanceFilter(value) {

@@ -6,6 +6,7 @@ test('attendance permissions allow teachers to read only', () => {
   assert.deepEqual(attendancePermissions(2), {
     use_attendance: true,
     mark_absence: false,
+    manage_presence: false,
   });
 });
 
@@ -14,6 +15,7 @@ test('attendance permissions allow mentors tutors and admins to manage', () => {
     assert.deepEqual(attendancePermissions(roleID), {
       use_attendance: true,
       mark_absence: true,
+      manage_presence: roleID === 5,
     });
   }
 });
@@ -23,6 +25,7 @@ test('attendance permissions deny students, parents, guests, and unknown roles',
     assert.deepEqual(attendancePermissions(roleID), {
       use_attendance: false,
       mark_absence: false,
+      manage_presence: false,
     });
   }
 });

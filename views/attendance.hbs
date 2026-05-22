@@ -3,17 +3,11 @@
     <div class="flex flex-col xl:flex-row xl:items-end gap-3">
       <div class="flex-1">
         <h1 class="text-xl font-semibold text-gray-900">Посещаемость</h1>
-        <div class="mt-1 flex flex-wrap gap-2 text-sm text-gray-600">
-          <span>{{displayDate selectedDate}}</span>
-          {{#if currentUser}}
-            <span>·</span>
-            <span>{{currentUser.name}}</span>
-          {{/if}}
-        </div>
+        <div class="mt-1 text-sm text-gray-600">{{displayDate selectedDate}}</div>
       </div>
 
       {{#if success}}
-        <div class="rounded border border-green-200 bg-green-50 text-green-800 px-3 py-2 text-sm">
+        <div data-flash class="rounded border border-green-200 bg-green-50 text-green-800 px-3 py-2 text-sm">
           {{#if (eq success "created")}}Отметка сохранена.{{/if}}
           {{#if (eq success "updated")}}Отметка обновлена.{{/if}}
           {{#if (eq success "deleted")}}Отметка удалена.{{/if}}
@@ -21,7 +15,7 @@
         </div>
       {{/if}}
       {{#if error}}
-        <div class="rounded border border-red-200 bg-red-50 text-red-800 px-3 py-2 text-sm">{{error}}</div>
+        <div data-flash class="rounded border border-red-200 bg-red-50 text-red-800 px-3 py-2 text-sm">{{error}}</div>
       {{/if}}
 
       <form id="attendance-controls-form" method="get" action="/attendance" class="flex flex-col sm:flex-row gap-2 sm:items-end">
@@ -35,14 +29,13 @@
         </label>
         <label class="text-sm text-gray-700">
           <span class="block mb-1">Дата</span>
-          <input name="date" value="{{selectedDate}}" type="date" class="w-full sm:w-40 rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500" />
+          <input id="attendance-date" name="date" value="{{selectedDate}}" type="date" class="w-full sm:w-40 rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500" />
         </label>
         <label class="text-sm text-gray-700">
           <span class="block mb-1">Поиск</span>
           <input name="q" value="{{q}}" type="search" class="w-full sm:w-52 rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500" />
         </label>
         <input type="hidden" name="filter" value="{{activeFilter}}" />
-        <input type="hidden" name="analyticsMonth" value="{{analyticsMonth}}" />
         <button type="submit" class="px-4 py-2 bg-gray-900 text-white rounded hover:bg-gray-800">Показать</button>
       </form>
     </div>
@@ -54,60 +47,18 @@
           <div class="text-2xl font-semibold text-gray-900">{{summary.students_total}}</div>
         </div>
         <div class="border rounded p-3">
-          <div class="text-xs text-gray-500">Отсутствуют на дату</div>
+          <div class="text-xs text-gray-500">На дату</div>
           <div class="text-2xl font-semibold text-gray-900">{{summary.absent_students}}</div>
         </div>
         <div class="border rounded p-3">
-          <div class="text-xs text-gray-500">Без причины на дату</div>
+          <div class="text-xs text-gray-500">Без причины</div>
           <div class="text-2xl font-semibold text-amber-700">{{summary.without_reason_count}}</div>
         </div>
         <div class="border rounded p-3">
-          <div class="text-xs text-gray-500">Внимание на дату</div>
+          <div class="text-xs text-gray-500">Внимание</div>
           <div class="text-2xl font-semibold text-red-700">{{summary.needs_attention_count}}</div>
         </div>
       </div>
-    {{/if}}
-
-    {{#if todayOverview}}
-      <section data-testid="today-overview-compact" class="rounded-lg border border-slate-200 bg-slate-50 p-3">
-        <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <h2 class="text-base font-semibold text-gray-900">Сегодня отсутствуют</h2>
-            <div class="mt-1 text-sm text-gray-500">{{todayOverview.date_label}}</div>
-          </div>
-          <div class="grid grid-cols-4 gap-2 text-center">
-            <div>
-              <div class="text-lg font-semibold text-indigo-700">{{todayOverview.totals.absent_students_now}}</div>
-              <div class="text-[11px] text-gray-500">сейчас</div>
-            </div>
-            <div>
-              <div class="text-lg font-semibold text-gray-900">{{todayOverview.totals.absent_students_today}}</div>
-              <div class="text-[11px] text-gray-500">за день</div>
-            </div>
-            <div>
-              <div class="text-lg font-semibold text-amber-700">{{todayOverview.totals.without_reason}}</div>
-              <div class="text-[11px] text-gray-500">без причины</div>
-            </div>
-            <div>
-              <div class="text-lg font-semibold text-red-700">{{todayOverview.totals.needs_attention}}</div>
-              <div class="text-[11px] text-gray-500">внимание</div>
-            </div>
-          </div>
-        </div>
-        {{#if todayOverview.has_absences}}
-          <div class="mt-3 flex flex-wrap gap-2">
-            {{#each todayOverview.classes}}
-              <a href="{{href}}" class="inline-flex max-w-full items-center gap-2 rounded-md border border-white bg-white px-3 py-2 text-sm shadow-sm hover:border-indigo-300 hover:text-indigo-700">
-                <span class="truncate font-medium">{{summary_label}}</span>
-                {{#if without_reason}}<span class="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-800">без причины {{without_reason}}</span>{{/if}}
-                {{#if needs_attention}}<span class="shrink-0 rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-800">внимание {{needs_attention}}</span>{{/if}}
-              </a>
-            {{/each}}
-          </div>
-        {{else}}
-          <div class="mt-3 text-sm text-gray-500">Сегодня активных отметок об отсутствии нет.</div>
-        {{/if}}
-      </section>
     {{/if}}
 
     <div class="flex flex-wrap gap-2">
@@ -117,7 +68,7 @@
     </div>
   </div>
 
-  <div class="grid lg:grid-cols-[340px_1fr] gap-4">
+  <div class="grid lg:grid-cols-[320px_1fr] gap-4">
     <aside class="bg-white shadow rounded-lg p-4">
       <div class="flex items-center justify-between mb-3">
         <h2 class="text-base font-semibold">Ученики</h2>
@@ -163,12 +114,13 @@
     <div class="bg-white shadow rounded-lg p-4 space-y-4">
       {{#if selectedChild}}
         <div class="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-3">
-          <div>
+          <div class="min-w-0">
             <p class="text-sm text-gray-500">Класс {{#with (findById classes selectedChild.classId)}}{{name}}{{/with}}</p>
-            <h2 class="text-xl font-semibold text-gray-900">{{selectedChild.name}}</h2>
+            <h2 class="text-xl font-semibold text-gray-900 truncate">{{selectedChild.name}}</h2>
             {{#if studentContext.last_comment}}
               <p class="mt-1 text-sm text-gray-600">{{studentContext.last_comment}}</p>
             {{/if}}
+            <a href="/attendance/analytics?class={{selectedClass}}" class="mt-2 inline-flex text-sm font-medium text-indigo-700 hover:text-indigo-900">Аналитика класса</a>
           </div>
           <div class="grid grid-cols-3 gap-2 text-center">
             <div class="border rounded px-3 py-2">
@@ -186,365 +138,262 @@
           </div>
         </div>
 
-        {{#if studentLearning}}
-          <section id="learning-analytics" class="border rounded p-3 space-y-3">
-            <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-              <div>
-                <h3 class="font-semibold text-gray-900">Учебная аналитика</h3>
-                <div class="mt-1 text-sm text-gray-500">{{studentLearning.month_label}}</div>
+        <div data-attendance-tabs data-default-tab="{{#if canManage}}mark{{else}}active{{/if}}" class="space-y-4">
+          <div class="flex flex-wrap gap-2 border-b border-gray-200">
+            {{#if canManage}}
+              <button type="button" data-attendance-tab="mark" class="rounded-t border border-b-0 px-3 py-2 text-sm font-medium">Отметка</button>
+            {{/if}}
+            <button type="button" data-attendance-tab="active" class="rounded-t border border-b-0 px-3 py-2 text-sm font-medium">
+              Активные <span class="ml-1 text-xs text-gray-500">{{currentAbsences.length}}</span>
+            </button>
+            <button type="button" data-attendance-tab="history" class="rounded-t border border-b-0 px-3 py-2 text-sm font-medium">
+              История <span class="ml-1 text-xs text-gray-500">{{childAbsences.length}}</span>
+            </button>
+          </div>
+
+          {{#if canManage}}
+            <section data-attendance-panel="mark" class="overflow-hidden rounded-lg border border-indigo-100 bg-white">
+              <div class="flex flex-col gap-3 border-b border-indigo-100 bg-indigo-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <div class="min-w-0">
+                  <h3 class="font-semibold text-gray-900">Новая отметка</h3>
+                  <div class="mt-0.5 truncate text-sm text-gray-600">{{selectedChild.name}}</div>
+                </div>
+                <div class="grid grid-cols-3 gap-1 rounded-lg border border-gray-200 bg-white p-1 shadow-sm">
+                  <button type="button" data-fill="today" class="rounded-md px-3 py-2 text-sm font-medium text-gray-700 hover:bg-indigo-50 hover:text-indigo-700">Сегодня</button>
+                  <button type="button" data-fill="day-end" title="До {{schoolDay.end_label}}" class="rounded-md px-3 py-2 text-sm font-medium text-gray-700 hover:bg-indigo-50 hover:text-indigo-700">До конца дня</button>
+                  <button type="button" data-fill="lesson" class="rounded-md px-3 py-2 text-sm font-medium text-gray-700 hover:bg-indigo-50 hover:text-indigo-700">Один урок</button>
+                </div>
               </div>
-              <form method="get" action="/attendance" class="flex flex-col gap-2 sm:flex-row sm:items-end">
-                <input type="hidden" name="class" value="{{selectedClass}}" />
-                <input type="hidden" name="student" value="{{selectedStudentId}}" />
+
+              <form id="new-absence-form" method="post" action="/attendance" class="space-y-4 p-4" data-school-day-start="{{schoolDay.start_input}}" data-school-day-end="{{schoolDay.end_input}}">
+                <input type="hidden" name="childId" value="{{selectedChild.id}}" />
+                <input type="hidden" name="classId" value="{{selectedChild.classId}}" />
                 <input type="hidden" name="date" value="{{selectedDate}}" />
                 <input type="hidden" name="filter" value="{{activeFilter}}" />
                 <input type="hidden" name="q" value="{{q}}" />
-                <label class="text-sm text-gray-700">
-                  <span class="block mb-1">Месяц</span>
-                  <input name="analyticsMonth" value="{{studentLearning.month}}" type="month" class="w-full sm:w-40 rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500" />
-                </label>
-                <button type="submit" class="px-4 py-2 bg-gray-900 text-white rounded hover:bg-gray-800">Показать</button>
+                <input type="hidden" name="source" value="mentor" />
+
+                <div class="grid gap-3 md:grid-cols-2">
+                  <label class="block">
+                    <span class="mb-1 block text-xs font-semibold uppercase text-gray-500">Начало</span>
+                    <input id="absence-from" name="from" type="datetime-local" value="{{defaultFrom}}" required class="h-11 w-full rounded border border-gray-300 bg-white px-3 text-base text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500" />
+                  </label>
+                  <label class="block">
+                    <span class="mb-1 block text-xs font-semibold uppercase text-gray-500">Окончание</span>
+                    <input id="absence-to" name="to" type="datetime-local" class="h-11 w-full rounded border border-gray-300 bg-white px-3 text-base text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500" />
+                  </label>
+                </div>
+
+                <div class="grid gap-3 md:grid-cols-[240px_1fr]">
+                  <label class="block">
+                    <span class="mb-1 block text-xs font-semibold uppercase text-gray-500">Причина</span>
+                    <select id="reason" name="reason" class="h-11 w-full rounded border border-gray-300 bg-white px-3 text-base font-medium text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500">
+                      {{#each reasons}}
+                        <option value="{{code}}">{{name}}</option>
+                      {{/each}}
+                    </select>
+                  </label>
+                  <label class="block">
+                    <span class="mb-1 block text-xs font-semibold uppercase text-gray-500">Комментарий</span>
+                    <textarea id="comment" name="comment" rows="2" maxlength="1000" class="min-h-[4.5rem] w-full rounded border border-gray-300 bg-white px-3 py-2 text-base text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500"></textarea>
+                  </label>
+                </div>
+
+                <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div data-reason-note class="hidden rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"></div>
+                  <button type="submit" class="h-11 w-full rounded bg-indigo-600 px-6 text-base font-semibold text-white shadow-sm hover:bg-indigo-700 focus:ring-2 focus:ring-indigo-500 sm:w-auto">Сохранить</button>
+                </div>
               </form>
-            </div>
-
-            <div class="grid grid-cols-2 lg:grid-cols-5 gap-2">
-              <div class="border rounded p-3">
-                <div class="text-xs text-gray-500">Пропущено уроков</div>
-                <div class="text-2xl font-semibold text-gray-900">{{studentLearning.missed_lessons_total}}</div>
-              </div>
-              <div class="border rounded p-3">
-                <div class="text-xs text-gray-500">Предметов</div>
-                <div class="text-2xl font-semibold text-gray-900">{{studentLearning.subjects_total}}</div>
-              </div>
-              <div class="border rounded p-3">
-                <div class="text-xs text-gray-500">Дней с уроками</div>
-                <div class="text-2xl font-semibold text-gray-900">{{studentLearning.days_with_missed_lessons}}</div>
-              </div>
-              <div class="border rounded p-3">
-                <div class="text-xs text-gray-500">Покрытие</div>
-                <div class="text-2xl font-semibold text-gray-900">{{studentLearning.coverage_percent}}%</div>
-              </div>
-              <div class="border rounded p-3">
-                <div class="text-xs text-gray-500">Без расписания</div>
-                <div class="text-2xl font-semibold {{#if studentLearning.uncovered_absence_periods}}text-red-700{{else}}text-emerald-700{{/if}}">{{studentLearning.uncovered_absence_periods}}</div>
-              </div>
-            </div>
-
-            {{#if studentLearning.data_gaps_total}}
-              <div class="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-                Нет опубликованного расписания для части дней: {{studentLearning.data_gaps_total}}. Эти дни не превращаются в пропущенные уроки.
-              </div>
-            {{/if}}
-
-            {{#if studentLearning.subjects}}
-              <div class="grid gap-2 md:grid-cols-2">
-                {{#each studentLearning.subjects}}
-                  <div>
-                    <div class="flex items-center justify-between gap-2 text-sm">
-                      <span class="font-medium text-gray-900">{{subject_name}}</span>
-                      <span class="text-gray-500">{{missed_lessons}}</span>
-                    </div>
-                    <div class="mt-1 h-2 rounded-full bg-gray-100 overflow-hidden">
-                      <div class="h-2 rounded-full bg-indigo-600" style="width: {{bar_width}}%;"></div>
-                    </div>
-                  </div>
-                {{/each}}
-              </div>
-            {{/if}}
-
-            {{#if studentLearning.lessons}}
-              <div class="overflow-x-auto">
-                <table class="min-w-full text-sm">
-                  <thead class="text-xs text-gray-500">
-                    <tr class="border-b">
-                      <th class="py-2 pr-3 text-left font-medium">Дата</th>
-                      <th class="py-2 pr-3 text-left font-medium">Урок</th>
-                      <th class="py-2 pr-3 text-left font-medium">Время</th>
-                      <th class="py-2 pr-3 text-left font-medium">Предмет</th>
-                      <th class="py-2 pr-3 text-left font-medium">Учитель</th>
-                      <th class="py-2 pr-3 text-left font-medium">Каб.</th>
-                      <th class="py-2 text-left font-medium">Причина</th>
-                    </tr>
-                  </thead>
-                  <tbody class="divide-y divide-gray-100">
-                    {{#each studentLearning.lessons}}
-                      <tr>
-                        <td class="py-2 pr-3 align-top text-gray-900">{{date_label}}</td>
-                        <td class="py-2 pr-3 align-top text-gray-900">{{lesson_number}}</td>
-                        <td class="py-2 pr-3 align-top text-gray-700">{{time_label}}</td>
-                        <td class="py-2 pr-3 align-top">
-                          <div class="font-medium text-gray-900">{{subject_name}}</div>
-                          {{#if subject_type}}<div class="text-xs text-gray-500">{{subject_type}}</div>{{/if}}
-                          {{#if has_conflict}}<div class="text-xs text-amber-700">Конфликт: {{conflict_subjects}}</div>{{/if}}
-                        </td>
-                        <td class="py-2 pr-3 align-top text-gray-700">{{teacher_name}}</td>
-                        <td class="py-2 pr-3 align-top text-gray-700">{{room_name}}</td>
-                        <td class="py-2 align-top text-gray-700">
-                          <div class="font-medium text-gray-900">{{reason_name}}</div>
-                          {{#if comment}}<div class="text-xs text-gray-500">{{comment}}</div>{{/if}}
-                        </td>
-                      </tr>
-                    {{/each}}
-                  </tbody>
-                </table>
-              </div>
-            {{else}}
-              <p class="text-sm text-gray-500">За выбранный месяц пропущенных уроков по опубликованному расписанию нет.</p>
-            {{/if}}
-          </section>
-        {{/if}}
-
-        <section class="border rounded p-3">
-          <div class="flex items-center justify-between mb-2">
-            <h3 class="font-semibold text-gray-900">Сейчас</h3>
-            <span class="text-sm text-gray-500">{{activeNowAbsences.length}}</span>
-          </div>
-          {{#if activeNowAbsences.length}}
-            <div class="divide-y divide-gray-100">
-              {{#each activeNowAbsences}}
-                <div class="py-2 flex flex-col xl:flex-row xl:items-start xl:justify-between gap-2">
-                  <div>
-                    <div class="text-sm font-medium text-gray-900">{{period_label}}</div>
-                    <div class="mt-1 flex flex-wrap gap-1 text-xs">
-                      <span class="px-2 py-0.5 rounded-full bg-gray-100 text-gray-700">{{reason_name}}</span>
-                      <span class="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">{{confirmation_label}}</span>
-                      {{#if needs_attention}}
-                        <span class="px-2 py-0.5 rounded-full bg-red-100 text-red-800">{{attention_label}}</span>
-                      {{else}}
-                        <span class="px-2 py-0.5 rounded-full bg-green-50 text-green-700">{{attention_label}}</span>
-                      {{/if}}
-                    </div>
-                    {{#if comment}}
-                      <div class="text-xs text-gray-500 mt-1">{{comment}}</div>
-                    {{/if}}
-                  </div>
-                  {{#if (and ../canManage needs_attention)}}
-                    <form method="post" action="/attendance/{{id}}/resolve">
-                      <input type="hidden" name="childId" value="{{student_id}}" />
-                      <input type="hidden" name="classId" value="{{class_id}}" />
-                      <input type="hidden" name="date" value="{{../selectedDate}}" />
-                      <input type="hidden" name="filter" value="{{../activeFilter}}" />
-                      <input type="hidden" name="q" value="{{../q}}" />
-                      <input type="hidden" name="analyticsMonth" value="{{../analyticsMonth}}" />
-                      <button type="submit" class="px-3 py-1.5 text-sm bg-green-600 text-white rounded hover:bg-green-700">Закрыть вопрос</button>
-                    </form>
-                  {{/if}}
-                </div>
-              {{/each}}
-            </div>
-          {{else}}
-            <p class="text-sm text-gray-500">Сейчас активных отметок нет.</p>
+            </section>
           {{/if}}
-        </section>
 
-        <section class="border rounded p-3">
-          <div class="flex items-center justify-between mb-2">
-            <h3 class="font-semibold text-gray-900">Запланировано</h3>
-            <span class="text-sm text-gray-500">{{futureAbsences.length}}</span>
-          </div>
-          {{#if futureAbsences.length}}
-            <div class="divide-y divide-gray-100">
-              {{#each futureAbsences}}
-                <div class="py-2 flex flex-col xl:flex-row xl:items-start xl:justify-between gap-2">
+          <section data-attendance-panel="active" class="space-y-3 {{#if canManage}}hidden{{/if}}">
+            <div class="rounded border p-3">
+              <div class="flex items-center justify-between mb-2">
+                <h3 class="font-semibold text-gray-900">Активные</h3>
+                <span class="text-sm text-gray-500">{{currentAbsences.length}}</span>
+              </div>
+
+              {{#if currentAbsences.length}}
+                {{#if activeNowAbsences.length}}
                   <div>
-                    <div class="text-sm font-medium text-gray-900">{{period_label}}</div>
-                    <div class="mt-1 flex flex-wrap gap-1 text-xs">
-                      <span class="px-2 py-0.5 rounded-full bg-gray-100 text-gray-700">{{reason_name}}</span>
-                      <span class="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">{{confirmation_label}}</span>
-                      {{#if needs_attention}}
-                        <span class="px-2 py-0.5 rounded-full bg-red-100 text-red-800">{{attention_label}}</span>
-                      {{else}}
-                        <span class="px-2 py-0.5 rounded-full bg-green-50 text-green-700">{{attention_label}}</span>
-                      {{/if}}
-                    </div>
-                    {{#if comment}}
-                      <div class="text-xs text-gray-500 mt-1">{{comment}}</div>
-                    {{/if}}
-                  </div>
-                  {{#if (and ../canManage needs_attention)}}
-                    <form method="post" action="/attendance/{{id}}/resolve">
-                      <input type="hidden" name="childId" value="{{student_id}}" />
-                      <input type="hidden" name="classId" value="{{class_id}}" />
-                      <input type="hidden" name="date" value="{{../selectedDate}}" />
-                      <input type="hidden" name="filter" value="{{../activeFilter}}" />
-                      <input type="hidden" name="q" value="{{../q}}" />
-                      <input type="hidden" name="analyticsMonth" value="{{../analyticsMonth}}" />
-                      <button type="submit" class="px-3 py-1.5 text-sm bg-green-600 text-white rounded hover:bg-green-700">Закрыть вопрос</button>
-                    </form>
-                  {{/if}}
-                </div>
-              {{/each}}
-            </div>
-          {{else}}
-            <p class="text-sm text-gray-500">Будущих отметок нет.</p>
-          {{/if}}
-        </section>
-
-        {{#if canManage}}
-          <section class="overflow-hidden rounded-lg border border-indigo-100 bg-white">
-            <div class="flex flex-col gap-3 border-b border-indigo-100 bg-indigo-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-              <div class="min-w-0">
-                <h3 class="font-semibold text-gray-900">Новая отметка</h3>
-                <div class="mt-0.5 truncate text-sm text-gray-600">{{selectedChild.name}}</div>
-              </div>
-              <div class="grid grid-cols-3 gap-1 rounded-lg border border-gray-200 bg-white p-1 shadow-sm">
-                <button type="button" data-fill="today" class="rounded-md px-3 py-2 text-sm font-medium text-gray-700 hover:bg-indigo-50 hover:text-indigo-700">Сегодня</button>
-                <button type="button" data-fill="day-end" title="До {{schoolDay.end_label}}" class="rounded-md px-3 py-2 text-sm font-medium text-gray-700 hover:bg-indigo-50 hover:text-indigo-700">До конца дня</button>
-                <button type="button" data-fill="lesson" class="rounded-md px-3 py-2 text-sm font-medium text-gray-700 hover:bg-indigo-50 hover:text-indigo-700">Один урок</button>
-              </div>
-            </div>
-
-            <form id="new-absence-form" method="post" action="/attendance" class="space-y-4 p-4" data-school-day-start="{{schoolDay.start_input}}" data-school-day-end="{{schoolDay.end_input}}">
-              <input type="hidden" name="childId" value="{{selectedChild.id}}" />
-              <input type="hidden" name="classId" value="{{selectedChild.classId}}" />
-              <input type="hidden" name="date" value="{{selectedDate}}" />
-              <input type="hidden" name="filter" value="{{activeFilter}}" />
-              <input type="hidden" name="q" value="{{q}}" />
-              <input type="hidden" name="analyticsMonth" value="{{analyticsMonth}}" />
-              <input type="hidden" name="source" value="mentor" />
-
-              <div class="grid gap-3 md:grid-cols-2">
-                <label class="block">
-                  <span class="mb-1 block text-xs font-semibold uppercase text-gray-500">Начало</span>
-                  <input id="absence-from" name="from" type="datetime-local" value="{{defaultFrom}}" required class="h-11 w-full rounded border border-gray-300 bg-white px-3 text-base text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500" />
-                </label>
-                <label class="block">
-                  <span class="mb-1 block text-xs font-semibold uppercase text-gray-500">Окончание</span>
-                  <input id="absence-to" name="to" type="datetime-local" class="h-11 w-full rounded border border-gray-300 bg-white px-3 text-base text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500" />
-                </label>
-              </div>
-
-              <div class="grid gap-3 md:grid-cols-[240px_1fr]">
-                <label class="block">
-                  <span class="mb-1 block text-xs font-semibold uppercase text-gray-500">Причина</span>
-                  <select id="reason" name="reason" class="h-11 w-full rounded border border-gray-300 bg-white px-3 text-base font-medium text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500">
-                    {{#each reasons}}
-                      <option value="{{code}}">{{name}}</option>
-                    {{/each}}
-                  </select>
-                </label>
-                <label class="block">
-                  <span class="mb-1 block text-xs font-semibold uppercase text-gray-500">Комментарий</span>
-                  <textarea id="comment" name="comment" rows="2" maxlength="1000" class="min-h-[4.5rem] w-full rounded border border-gray-300 bg-white px-3 py-2 text-base text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500"></textarea>
-                </label>
-              </div>
-
-              <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div data-reason-note class="hidden rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"></div>
-                <button type="submit" class="h-11 w-full rounded bg-indigo-600 px-6 text-base font-semibold text-white shadow-sm hover:bg-indigo-700 focus:ring-2 focus:ring-indigo-500 sm:w-auto">Сохранить</button>
-              </div>
-            </form>
-          </section>
-        {{/if}}
-
-        <section class="border rounded p-3">
-          <div class="flex items-center justify-between mb-2">
-            <h3 class="font-semibold text-gray-900">История</h3>
-            <span class="text-sm text-gray-500">{{childAbsences.length}}</span>
-          </div>
-          {{#if childAbsences.length}}
-            <div class="divide-y divide-gray-100">
-              {{#each childAbsences}}
-                <div class="py-3">
-                  <div class="grid xl:grid-cols-[1fr_220px] gap-3">
-                    <div>
-                      <div class="text-sm font-medium text-gray-900">{{period_label}}</div>
-                      <div class="mt-1 flex flex-wrap gap-1 text-xs">
-                        <span class="px-2 py-0.5 rounded-full bg-gray-100 text-gray-700">{{reason_name}}</span>
-                        <span class="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">{{confirmation_label}}</span>
-                        <span class="px-2 py-0.5 rounded-full {{#if needs_attention}}bg-red-100 text-red-800{{else}}bg-green-50 text-green-700{{/if}}">{{attention_label}}</span>
-                      </div>
-                      {{#if comment}}
-                        <div class="text-sm text-gray-600 mt-1">{{comment}}</div>
-                      {{/if}}
-                    </div>
-                    {{#if ../canManage}}
-                      <div class="flex xl:justify-end gap-2">
-                        <details class="relative">
-                          <summary class="cursor-pointer select-none px-3 py-1.5 text-sm bg-gray-100 rounded hover:bg-gray-200">Изменить</summary>
-                          <div class="mt-2 xl:absolute xl:right-0 xl:z-10 w-full xl:w-[560px] bg-white border rounded shadow p-3">
-                            <form method="post" action="/attendance/{{id}}/update" class="space-y-3">
+                    <div class="mb-1 text-xs font-semibold uppercase text-gray-500">Сейчас</div>
+                    <div class="divide-y divide-gray-100">
+                      {{#each activeNowAbsences}}
+                        <div class="py-2 flex flex-col xl:flex-row xl:items-start xl:justify-between gap-2">
+                          <div>
+                            <div class="text-sm font-medium text-gray-900">{{period_label}}</div>
+                            <div class="mt-1 flex flex-wrap gap-1 text-xs">
+                              <span class="px-2 py-0.5 rounded-full bg-gray-100 text-gray-700">{{reason_name}}</span>
+                              <span class="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">{{confirmation_label}}</span>
+                              <span class="px-2 py-0.5 rounded-full {{#if needs_attention}}bg-red-100 text-red-800{{else}}bg-green-50 text-green-700{{/if}}">{{attention_label}}</span>
+                            </div>
+                            {{#if comment}}
+                              <div class="text-xs text-gray-500 mt-1">{{comment}}</div>
+                            {{/if}}
+                          </div>
+                          {{#if (and ../canManage needs_attention)}}
+                            <form method="post" action="/attendance/{{id}}/resolve">
                               <input type="hidden" name="childId" value="{{student_id}}" />
                               <input type="hidden" name="classId" value="{{class_id}}" />
                               <input type="hidden" name="date" value="{{../selectedDate}}" />
                               <input type="hidden" name="filter" value="{{../activeFilter}}" />
                               <input type="hidden" name="q" value="{{../q}}" />
-                              <input type="hidden" name="analyticsMonth" value="{{../analyticsMonth}}" />
-                              <div class="grid sm:grid-cols-2 gap-2">
-                                <label class="text-sm text-gray-700">
-                                  <span class="block mb-1">Начало</span>
-                                  <input name="from" type="datetime-local" value="{{starts_at_input}}" required class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500" />
-                                </label>
-                                <label class="text-sm text-gray-700">
-                                  <span class="block mb-1">Окончание</span>
-                                  <input name="to" type="datetime-local" value="{{ends_at_input}}" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500" />
-                                </label>
+                              <button type="submit" class="px-3 py-1.5 text-sm bg-green-600 text-white rounded hover:bg-green-700">Закрыть вопрос</button>
+                            </form>
+                          {{/if}}
+                        </div>
+                      {{/each}}
+                    </div>
+                  </div>
+                {{/if}}
+
+                {{#if futureAbsences.length}}
+                  <div class="{{#if activeNowAbsences.length}}mt-3 border-t border-gray-100 pt-3{{/if}}">
+                    <div class="mb-1 text-xs font-semibold uppercase text-gray-500">Запланировано</div>
+                    <div class="divide-y divide-gray-100">
+                      {{#each futureAbsences}}
+                        <div class="py-2 flex flex-col xl:flex-row xl:items-start xl:justify-between gap-2">
+                          <div>
+                            <div class="text-sm font-medium text-gray-900">{{period_label}}</div>
+                            <div class="mt-1 flex flex-wrap gap-1 text-xs">
+                              <span class="px-2 py-0.5 rounded-full bg-gray-100 text-gray-700">{{reason_name}}</span>
+                              <span class="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">{{confirmation_label}}</span>
+                              <span class="px-2 py-0.5 rounded-full {{#if needs_attention}}bg-red-100 text-red-800{{else}}bg-green-50 text-green-700{{/if}}">{{attention_label}}</span>
+                            </div>
+                            {{#if comment}}
+                              <div class="text-xs text-gray-500 mt-1">{{comment}}</div>
+                            {{/if}}
+                          </div>
+                          {{#if (and ../canManage needs_attention)}}
+                            <form method="post" action="/attendance/{{id}}/resolve">
+                              <input type="hidden" name="childId" value="{{student_id}}" />
+                              <input type="hidden" name="classId" value="{{class_id}}" />
+                              <input type="hidden" name="date" value="{{../selectedDate}}" />
+                              <input type="hidden" name="filter" value="{{../activeFilter}}" />
+                              <input type="hidden" name="q" value="{{../q}}" />
+                              <button type="submit" class="px-3 py-1.5 text-sm bg-green-600 text-white rounded hover:bg-green-700">Закрыть вопрос</button>
+                            </form>
+                          {{/if}}
+                        </div>
+                      {{/each}}
+                    </div>
+                  </div>
+                {{/if}}
+              {{else}}
+                <p class="text-sm text-gray-500">Активных и будущих отметок нет.</p>
+              {{/if}}
+            </div>
+          </section>
+
+          <section data-attendance-panel="history" class="hidden">
+            <div class="rounded border p-3">
+              <div class="flex items-center justify-between mb-2">
+                <h3 class="font-semibold text-gray-900">История</h3>
+                <span class="text-sm text-gray-500">{{childAbsences.length}}</span>
+              </div>
+              {{#if childAbsences.length}}
+                <div class="divide-y divide-gray-100">
+                  {{#each childAbsences}}
+                    <div class="py-3">
+                      <div class="grid xl:grid-cols-[1fr_220px] gap-3">
+                        <div class="min-w-0">
+                          <div class="text-sm font-medium text-gray-900">{{period_label}}</div>
+                          <div class="mt-1 flex flex-wrap gap-1 text-xs">
+                            <span class="px-2 py-0.5 rounded-full bg-gray-100 text-gray-700">{{reason_name}}</span>
+                            <span class="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">{{confirmation_label}}</span>
+                            <span class="px-2 py-0.5 rounded-full {{#if needs_attention}}bg-red-100 text-red-800{{else}}bg-green-50 text-green-700{{/if}}">{{attention_label}}</span>
+                          </div>
+                          {{#if comment}}
+                            <div class="text-sm text-gray-600 mt-1">{{comment}}</div>
+                          {{/if}}
+                        </div>
+                        {{#if ../canManage}}
+                          <div class="flex flex-wrap xl:justify-end gap-2">
+                            <details class="relative">
+                              <summary class="cursor-pointer select-none px-3 py-1.5 text-sm bg-gray-100 rounded hover:bg-gray-200">Изменить</summary>
+                              <div class="mt-2 xl:absolute xl:right-0 xl:z-10 w-full xl:w-[560px] bg-white border rounded shadow p-3">
+                                <form method="post" action="/attendance/{{id}}/update" class="space-y-3">
+                                  <input type="hidden" name="childId" value="{{student_id}}" />
+                                  <input type="hidden" name="classId" value="{{class_id}}" />
+                                  <input type="hidden" name="date" value="{{../selectedDate}}" />
+                                  <input type="hidden" name="filter" value="{{../activeFilter}}" />
+                                  <input type="hidden" name="q" value="{{../q}}" />
+                                  <div class="grid sm:grid-cols-2 gap-2">
+                                    <label class="text-sm text-gray-700">
+                                      <span class="block mb-1">Начало</span>
+                                      <input name="from" type="datetime-local" value="{{starts_at_input}}" required class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500" />
+                                    </label>
+                                    <label class="text-sm text-gray-700">
+                                      <span class="block mb-1">Окончание</span>
+                                      <input name="to" type="datetime-local" value="{{ends_at_input}}" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500" />
+                                    </label>
+                                  </div>
+                                  <div class="grid sm:grid-cols-3 gap-2">
+                                    <label class="text-sm text-gray-700">
+                                      <span class="block mb-1">Причина</span>
+                                      <select name="reason" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
+                                        {{#each ../reasons}}
+                                          <option value="{{code}}" {{#if (eq ../reason_code code)}}selected{{/if}}>{{name}}</option>
+                                        {{/each}}
+                                      </select>
+                                    </label>
+                                    <label class="text-sm text-gray-700">
+                                      <span class="block mb-1">Подтверждение</span>
+                                      <select name="confirmationStatus" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
+                                        <option value="confirmed" {{#if (eq confirmation_status "confirmed")}}selected{{/if}}>Подтверждено</option>
+                                        <option value="reported" {{#if (eq confirmation_status "reported")}}selected{{/if}}>Со слов</option>
+                                        <option value="needs_clarification" {{#if (eq confirmation_status "needs_clarification")}}selected{{/if}}>Уточнить</option>
+                                        <option value="system_conflict" {{#if (eq confirmation_status "system_conflict")}}selected{{/if}}>Конфликт</option>
+                                      </select>
+                                    </label>
+                                    <label class="text-sm text-gray-700">
+                                      <span class="block mb-1">Внимание</span>
+                                      <select name="attentionStatus" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
+                                        <option value="normal" {{#if (eq attention_status "normal")}}selected{{/if}}>Обычная</option>
+                                        <option value="needs_attention" {{#if (eq attention_status "needs_attention")}}selected{{/if}}>Требует внимания</option>
+                                        <option value="resolved" {{#if (eq attention_status "resolved")}}selected{{/if}}>Закрыто</option>
+                                      </select>
+                                    </label>
+                                  </div>
+                                  <label class="text-sm text-gray-700">
+                                    <span class="block mb-1">Комментарий</span>
+                                    <textarea name="comment" rows="2" maxlength="1000" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">{{comment}}</textarea>
+                                  </label>
+                                  <button type="submit" class="px-3 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700">Обновить</button>
+                                </form>
                               </div>
-                              <div class="grid sm:grid-cols-3 gap-2">
-                                <label class="text-sm text-gray-700">
-                                  <span class="block mb-1">Причина</span>
-                                  <select name="reason" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
-                                    {{#each ../reasons}}
-                                      <option value="{{code}}" {{#if (eq ../reason_code code)}}selected{{/if}}>{{name}}</option>
-                                    {{/each}}
-                                  </select>
-                                </label>
-                                <label class="text-sm text-gray-700">
-                                  <span class="block mb-1">Подтверждение</span>
-                                  <select name="confirmationStatus" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
-                                    <option value="confirmed" {{#if (eq confirmation_status "confirmed")}}selected{{/if}}>Подтверждено</option>
-                                    <option value="reported" {{#if (eq confirmation_status "reported")}}selected{{/if}}>Со слов</option>
-                                    <option value="needs_clarification" {{#if (eq confirmation_status "needs_clarification")}}selected{{/if}}>Уточнить</option>
-                                    <option value="system_conflict" {{#if (eq confirmation_status "system_conflict")}}selected{{/if}}>Конфликт</option>
-                                  </select>
-                                </label>
-                                <label class="text-sm text-gray-700">
-                                  <span class="block mb-1">Внимание</span>
-                                  <select name="attentionStatus" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
-                                    <option value="normal" {{#if (eq attention_status "normal")}}selected{{/if}}>Обычная</option>
-                                    <option value="needs_attention" {{#if (eq attention_status "needs_attention")}}selected{{/if}}>Требует внимания</option>
-                                    <option value="resolved" {{#if (eq attention_status "resolved")}}selected{{/if}}>Закрыто</option>
-                                  </select>
-                                </label>
-                              </div>
-                              <label class="text-sm text-gray-700">
-                                <span class="block mb-1">Комментарий</span>
-                                <textarea name="comment" rows="2" maxlength="1000" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">{{comment}}</textarea>
-                              </label>
-                              <button type="submit" class="px-3 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700">Обновить</button>
+                            </details>
+                            {{#if needs_attention}}
+                              <form method="post" action="/attendance/{{id}}/resolve">
+                                <input type="hidden" name="childId" value="{{student_id}}" />
+                                <input type="hidden" name="classId" value="{{class_id}}" />
+                                <input type="hidden" name="date" value="{{../selectedDate}}" />
+                                <input type="hidden" name="filter" value="{{../activeFilter}}" />
+                                <input type="hidden" name="q" value="{{../q}}" />
+                                <button type="submit" class="px-3 py-1.5 text-sm bg-green-50 text-green-700 rounded hover:bg-green-100">Закрыть</button>
+                              </form>
+                            {{/if}}
+                            <form method="post" action="/attendance/{{id}}/delete" onsubmit="return confirm('Удалить отметку об отсутствии?');">
+                              <input type="hidden" name="childId" value="{{student_id}}" />
+                              <input type="hidden" name="classId" value="{{class_id}}" />
+                              <input type="hidden" name="date" value="{{../selectedDate}}" />
+                              <input type="hidden" name="filter" value="{{../activeFilter}}" />
+                              <input type="hidden" name="q" value="{{../q}}" />
+                              <button type="submit" class="px-3 py-1.5 text-sm bg-red-50 text-red-700 rounded hover:bg-red-100">Удалить</button>
                             </form>
                           </div>
-                        </details>
-                        {{#if needs_attention}}
-                          <form method="post" action="/attendance/{{id}}/resolve">
-                            <input type="hidden" name="childId" value="{{student_id}}" />
-                            <input type="hidden" name="classId" value="{{class_id}}" />
-                            <input type="hidden" name="date" value="{{../selectedDate}}" />
-                            <input type="hidden" name="filter" value="{{../activeFilter}}" />
-                            <input type="hidden" name="q" value="{{../q}}" />
-                            <input type="hidden" name="analyticsMonth" value="{{../analyticsMonth}}" />
-                            <button type="submit" class="px-3 py-1.5 text-sm bg-green-50 text-green-700 rounded hover:bg-green-100">Закрыть</button>
-                          </form>
                         {{/if}}
-                        <form method="post" action="/attendance/{{id}}/delete" onsubmit="return confirm('Удалить отметку об отсутствии?');">
-                          <input type="hidden" name="childId" value="{{student_id}}" />
-                          <input type="hidden" name="classId" value="{{class_id}}" />
-                          <input type="hidden" name="date" value="{{../selectedDate}}" />
-                          <input type="hidden" name="filter" value="{{../activeFilter}}" />
-                          <input type="hidden" name="q" value="{{../q}}" />
-                          <input type="hidden" name="analyticsMonth" value="{{../analyticsMonth}}" />
-                          <button type="submit" class="px-3 py-1.5 text-sm bg-red-50 text-red-700 rounded hover:bg-red-100">Удалить</button>
-                        </form>
                       </div>
-                    {{/if}}
-                  </div>
+                    </div>
+                  {{/each}}
                 </div>
-              {{/each}}
+              {{else}}
+                <p class="text-sm text-gray-500">Отметок пока нет.</p>
+              {{/if}}
             </div>
-          {{else}}
-            <p class="text-sm text-gray-500">Отметок пока нет.</p>
-          {{/if}}
-        </section>
+          </section>
+        </div>
       {{else}}
         <div class="text-sm text-gray-500">В выбранном классе нет учеников.</div>
       {{/if}}
@@ -557,6 +406,51 @@
   const controlsForm = document.getElementById('attendance-controls-form');
   const classSelect = document.getElementById('class-select');
   classSelect?.addEventListener('change', () => controlsForm?.requestSubmit());
+
+  document.querySelectorAll('[data-flash]').forEach((node) => {
+    window.setTimeout(() => {
+      node.classList.add('opacity-0');
+      window.setTimeout(() => node.remove(), 250);
+    }, 3500);
+  });
+
+  const tabsRoot = document.querySelector('[data-attendance-tabs]');
+  if (tabsRoot) {
+    const storageKey = 'attendance.activeTab';
+    const buttons = Array.from(tabsRoot.querySelectorAll('[data-attendance-tab]'));
+    const panels = Array.from(tabsRoot.querySelectorAll('[data-attendance-panel]'));
+    const available = new Set(buttons.map((button) => button.dataset.attendanceTab));
+    const defaultTab = tabsRoot.dataset.defaultTab || buttons[0]?.dataset.attendanceTab || '';
+    const hashTab = window.location.hash.startsWith('#attendance-') ? window.location.hash.replace('#attendance-', '') : '';
+    const storedTab = sessionStorage.getItem(storageKey) || '';
+
+    const activeClasses = ['bg-white', 'border-gray-200', 'text-gray-900', 'shadow-sm'];
+    const inactiveClasses = ['bg-gray-50', 'border-transparent', 'text-gray-600', 'hover:bg-white'];
+
+    const activate = (tab, updateLocation = false) => {
+      const nextTab = available.has(tab) ? tab : defaultTab;
+      buttons.forEach((button) => {
+        const active = button.dataset.attendanceTab === nextTab;
+        button.classList.toggle('bg-white', active);
+        button.classList.toggle('border-gray-200', active);
+        button.classList.toggle('text-gray-900', active);
+        button.classList.toggle('shadow-sm', active);
+        button.classList.toggle('bg-gray-50', !active);
+        button.classList.toggle('border-transparent', !active);
+        button.classList.toggle('text-gray-600', !active);
+        button.classList.toggle('hover:bg-white', !active);
+      });
+      panels.forEach((panel) => panel.classList.toggle('hidden', panel.dataset.attendancePanel !== nextTab));
+      sessionStorage.setItem(storageKey, nextTab);
+      if (updateLocation) window.history.replaceState(null, '', `#attendance-${nextTab}`);
+    };
+
+    buttons.forEach((button) => {
+      button.addEventListener('click', () => activate(button.dataset.attendanceTab, true));
+    });
+
+    activate(available.has(hashTab) ? hashTab : (available.has(storedTab) ? storedTab : defaultTab));
+  }
 
   const applyReasonState = (form, syncStatuses = false) => {
     const reasonSelect = form.querySelector('select[name="reason"]');

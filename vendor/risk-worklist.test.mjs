@@ -75,6 +75,26 @@ const learning = {
   ],
 };
 
+const lateness = {
+  students: [
+    {
+      student_id: '40',
+      student_name: 'Данил Смирнов',
+      class_id: '8',
+      class_name: '8',
+      arrival_days: 4,
+      late_days: 2,
+      late_percent: 50,
+      total_late_minutes: 24,
+      missed_lessons: 1,
+      subjects: 1,
+      data_gaps: 0,
+      last_late_at: '2026-05-14 09:12:00',
+      last_late_label: '14.05.2026 09:12, 12 мин.',
+    },
+  ],
+};
+
 test('risk worklist filters by risk type', () => {
   const attention = buildRiskWorklist({ range, periods, learning, filters: { risk: 'attention' } });
   assert.deepEqual(attention.items.map((row) => row.student_id), ['10']);
@@ -110,4 +130,14 @@ test('student with data gaps and no missed lessons is included in schedule gap f
   assert.deepEqual(worklist.items.map((row) => row.student_id), ['30']);
   assert.equal(worklist.items[0].missed_lessons, 0);
   assert.equal(worklist.items[0].data_gaps, 1);
+});
+
+test('lateness is included as risk signal and sort mode', () => {
+  const byLate = buildRiskWorklist({ range, periods, learning, lateness, filters: { risk: 'late' } });
+  assert.deepEqual(byLate.items.map((row) => row.student_id), ['40']);
+  assert.equal(byLate.items[0].late_days, 2);
+  assert.equal(byLate.items[0].late_minutes, 24);
+
+  const sorted = buildRiskWorklist({ range, periods, learning, lateness, filters: { sort: 'late_minutes' } });
+  assert.equal(sorted.items[0].student_id, '40');
 });

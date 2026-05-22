@@ -108,13 +108,14 @@ export function getAuthUserFromRequest(req) {
 
   const payload = verifySignedValue(rawCookie, cfg.sessionSecret);
   if (!payload || Number(payload.exp || 0) <= Math.floor(Date.now() / 1000)) return null;
+  const rawRoleId = Number(payload.raw_role_id || 0);
 
   return {
     id: Number(payload.uid),
     name: payload.name || `uid:${payload.uid}`,
-    rawRoleId: Number(payload.raw_role_id || 0),
-    role: payload.role || 'guest',
-    permissions: payload.permissions || {},
+    rawRoleId,
+    role: payload.role || roleName(rawRoleId),
+    permissions: attendancePermissions(rawRoleId),
     landing: payload.landing || '/attendance',
   };
 }
@@ -241,6 +242,7 @@ export function attendancePermissions(roleID) {
   return {
     use_attendance: canUse,
     mark_absence: canManage,
+    manage_presence: role === 5,
   };
 }
 

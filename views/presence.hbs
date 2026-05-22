@@ -1,0 +1,179 @@
+<section data-presence-root data-date="{{board.date}}" class="space-y-3">
+  <div class="rounded-md border border-gray-200 bg-white p-3">
+    <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+      <div>
+        <h1 class="text-xl font-semibold text-gray-950">Приход / уход</h1>
+        <div class="mt-1 text-sm text-gray-600">{{board.date_label}} · {{board.totals.present}} / {{board.totals.students}}</div>
+      </div>
+      <label class="block md:w-80">
+        <span class="sr-only">Поиск</span>
+        <input data-presence-search type="search" inputmode="search" autocomplete="off" class="h-11 w-full rounded border border-gray-300 bg-white px-3 text-base text-gray-950 focus:border-gray-900 focus:ring-2 focus:ring-gray-900" placeholder="Поиск" />
+      </label>
+    </div>
+
+    {{#if board.classes.length}}
+      <div class="mt-3 flex gap-2 overflow-x-auto pb-1">
+        {{#each board.classes}}
+          <a href="#{{anchor}}" class="shrink-0 rounded border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-800 hover:border-gray-900">{{name}}</a>
+        {{/each}}
+      </div>
+    {{/if}}
+  </div>
+
+  <div data-presence-flash class="hidden">
+    <span data-presence-flash-text class="min-w-0 flex-1 truncate"></span>
+    <button type="button" data-presence-cancel class="hidden shrink-0 rounded border border-current px-3 py-1.5 text-sm font-medium">Отменить</button>
+  </div>
+
+  {{#if board.classes.length}}
+    <div class="space-y-3">
+      {{#each board.classes}}
+        <section id="{{anchor}}" data-presence-class class="scroll-mt-4 rounded-md border border-gray-200 bg-white">
+          <div class="flex items-center justify-between border-b border-gray-200 px-3 py-2">
+            <h2 class="text-lg font-semibold text-gray-950">{{name}}</h2>
+            <span class="text-sm text-gray-500">{{students.length}}</span>
+          </div>
+          <div class="grid grid-cols-2 gap-2 p-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+            {{#each students}}
+              <button
+                type="button"
+                data-presence-button
+                data-student-id="{{id}}"
+                data-class-id="{{classId}}"
+                data-last-event-id="{{state.last_event_id}}"
+                data-last-event-type="{{state.last_event_type}}"
+                data-search="{{name}} {{className}}"
+                aria-label="{{name}} · {{state.status_label}}"
+                class="min-h-[4.75rem] rounded-md border px-3 py-2 text-left shadow-sm transition focus:outline-none focus:ring-2 focus:ring-gray-900 disabled:cursor-wait disabled:opacity-60 {{#if state.is_present}}border-emerald-600 bg-emerald-50 hover:bg-emerald-100{{else}}border-gray-300 bg-white hover:bg-gray-50{{/if}}"
+              >
+                <span class="block truncate text-base font-semibold leading-5 text-gray-950">{{name}}</span>
+                <span data-presence-status class="mt-1 block truncate text-sm {{#if state.is_present}}text-emerald-700{{else}}text-gray-600{{/if}}">{{state.status_label}}</span>
+              </button>
+            {{/each}}
+          </div>
+        </section>
+      {{/each}}
+    </div>
+  {{else}}
+    <div class="rounded-md border border-gray-200 bg-white p-4 text-sm text-gray-500">Нет учеников</div>
+  {{/if}}
+</section>
+
+<script>
+(() => {
+  const root = document.querySelector('[data-presence-root]');
+  if (!root) return;
+
+  const buttons = Array.from(root.querySelectorAll('[data-presence-button]'));
+  const searchInput = root.querySelector('[data-presence-search]');
+  const sections = Array.from(root.querySelectorAll('[data-presence-class]'));
+  const flash = root.querySelector('[data-presence-flash]');
+  const flashText = root.querySelector('[data-presence-flash-text]');
+  const cancelButton = root.querySelector('[data-presence-cancel]');
+  const flashBase = 'sticky top-2 z-20 flex items-center gap-3 rounded-md border px-3 py-2 text-sm shadow-sm';
+
+  const eventLabel = (type) => type === 'departure' ? 'Ушел' : 'Пришел';
+  const newKey = () => window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+  function setFlash(text, { kind = 'ok', eventId = '' } = {}) {
+    if (!flash || !flashText) return;
+    const kindClass = kind === 'error'
+      ? 'border-red-200 bg-red-50 text-red-900'
+      : 'border-emerald-200 bg-emerald-50 text-emerald-900';
+    flash.className = `${flashBase} ${kindClass}`;
+    flashText.textContent = text;
+    if (cancelButton) {
+      cancelButton.dataset.eventId = eventId;
+      cancelButton.classList.toggle('hidden', !eventId);
+    }
+  }
+
+  async function postJson(url, body = {}) {
+    const response = await fetch(url, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.message || payload.error || 'Не удалось сохранить');
+    }
+    return payload;
+  }
+
+  function applyState(button, state) {
+    const status = button.querySelector('[data-presence-status]');
+    const isPresent = Boolean(state?.is_present);
+    button.dataset.lastEventId = state?.last_event_id || '';
+    button.dataset.lastEventType = state?.last_event_type || '';
+    button.setAttribute('aria-label', `${button.querySelector('.font-semibold')?.textContent || ''} · ${state?.status_label || 'Нет отметки'}`);
+
+    status.textContent = state?.status_label || 'Нет отметки';
+    button.classList.toggle('border-emerald-600', isPresent);
+    button.classList.toggle('bg-emerald-50', isPresent);
+    button.classList.toggle('hover:bg-emerald-100', isPresent);
+    button.classList.toggle('border-gray-300', !isPresent);
+    button.classList.toggle('bg-white', !isPresent);
+    button.classList.toggle('hover:bg-gray-50', !isPresent);
+    status.classList.toggle('text-emerald-700', isPresent);
+    status.classList.toggle('text-gray-600', !isPresent);
+  }
+
+  buttons.forEach((button) => {
+    button.addEventListener('click', async () => {
+      if (button.disabled) return;
+      button.disabled = true;
+      try {
+        const payload = await postJson('/api/attendance/presence/toggle', {
+          studentId: button.dataset.studentId,
+          classId: button.dataset.classId,
+          idempotencyKey: newKey(),
+        });
+        applyState(button, payload.state);
+        const event = payload.event || {};
+        setFlash(`${event.student_name || ''}: ${event.event_label || eventLabel(event.event_type)} ${event.occurred_time || ''}`.trim(), {
+          eventId: event.id || '',
+        });
+      } catch (err) {
+        setFlash(err.message || 'Не удалось сохранить', { kind: 'error' });
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+
+  cancelButton?.addEventListener('click', async () => {
+    const eventId = cancelButton.dataset.eventId || '';
+    if (!eventId) return;
+    cancelButton.disabled = true;
+    try {
+      const payload = await postJson(`/api/attendance/presence/events/${encodeURIComponent(eventId)}/cancel`);
+      const event = payload.event || {};
+      const button = buttons.find((item) => String(item.dataset.studentId) === String(event.student_id));
+      if (button) applyState(button, payload.state);
+      setFlash(`Отменено: ${event.student_name || ''}`.trim());
+    } catch (err) {
+      setFlash(err.message || 'Не удалось отменить', { kind: 'error' });
+    } finally {
+      cancelButton.disabled = false;
+    }
+  });
+
+  searchInput?.addEventListener('input', () => {
+    const q = searchInput.value.trim().toLocaleLowerCase('ru');
+    sections.forEach((section) => {
+      let visible = 0;
+      section.querySelectorAll('[data-presence-button]').forEach((button) => {
+        const match = !q || String(button.dataset.search || '').toLocaleLowerCase('ru').includes(q);
+        button.classList.toggle('hidden', !match);
+        if (match) visible += 1;
+      });
+      section.classList.toggle('hidden', visible === 0);
+    });
+  });
+})();
+</script>
