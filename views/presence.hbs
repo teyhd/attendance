@@ -44,10 +44,10 @@
                 data-last-event-type="{{state.last_event_type}}"
                 data-search="{{name}} {{className}}"
                 aria-label="{{name}} · {{state.status_label}}"
-                class="min-h-[4.75rem] rounded-md border px-3 py-2 text-left shadow-sm transition focus:outline-none focus:ring-2 focus:ring-gray-900 disabled:cursor-wait disabled:opacity-60 {{#if state.is_present}}border-emerald-600 bg-emerald-50 hover:bg-emerald-100{{else}}border-gray-300 bg-white hover:bg-gray-50{{/if}}"
+                class="min-h-[5.25rem] rounded-md border px-3 py-2 text-left shadow-sm transition focus:outline-none focus:ring-2 focus:ring-gray-900 disabled:cursor-wait disabled:opacity-60 {{#if state.is_present}}border-emerald-600 bg-emerald-50 hover:bg-emerald-100{{else}}border-gray-300 bg-white hover:bg-gray-50{{/if}}"
               >
                 <span class="block truncate text-base font-semibold leading-5 text-gray-950">{{name}}</span>
-                <span data-presence-status class="mt-1 block truncate text-sm {{#if state.is_present}}text-emerald-700{{else}}text-gray-600{{/if}}">{{state.status_label}}</span>
+                <span data-presence-status class="mt-1 block text-sm leading-4 {{#if state.is_present}}text-emerald-700{{else}}text-gray-600{{/if}}">{{state.status_label}}</span>
               </button>
             {{/each}}
           </div>
@@ -74,6 +74,16 @@
 
   const eventLabel = (type) => type === 'departure' ? 'Ушел' : 'Пришел';
   const newKey = () => window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const currentLocalDate = () => {
+    const date = new Date();
+    const pad = (value) => String(value).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  };
+  const refreshIfDateChanged = () => {
+    if (root.dataset.date && root.dataset.date !== currentLocalDate()) {
+      window.location.reload();
+    }
+  };
 
   function setFlash(text, { kind = 'ok', eventId = '' } = {}) {
     if (!flash || !flashText) return;
@@ -133,9 +143,13 @@
           classId: button.dataset.classId,
           idempotencyKey: newKey(),
         });
+        if (payload.event?.attendance_date && payload.event.attendance_date !== root.dataset.date) {
+          window.location.reload();
+          return;
+        }
         applyState(button, payload.state);
         const event = payload.event || {};
-        setFlash(`${event.student_name || ''}: ${event.event_label || eventLabel(event.event_type)} ${event.occurred_time || ''}`.trim(), {
+        setFlash(`${event.student_name || ''}: ${event.event_label || eventLabel(event.event_type)} ${event.occurred_label || event.occurred_time || ''}`.trim(), {
           eventId: event.id || '',
         });
       } catch (err) {
@@ -175,5 +189,11 @@
       section.classList.toggle('hidden', visible === 0);
     });
   });
+
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshIfDateChanged();
+  });
+  window.addEventListener('focus', refreshIfDateChanged);
+  window.setInterval(refreshIfDateChanged, 60_000);
 })();
 </script>

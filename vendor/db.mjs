@@ -857,28 +857,47 @@ function latestPresenceEventMap(events) {
   return map;
 }
 
-export async function getTodayAbsenceOverview({ date, now } = {}) {
+export async function getTodayAbsenceOverview({ date, now, classId } = {}) {
   const selectedDate = normalizeDateOnly(date || todayDate());
   const nowSql = normalizeDateTime(now || sqlNow(), { field: 'now', required: true });
+  const selectedClassId = String(classId || '').trim();
   const dayStart = `${selectedDate} 00:00:00`;
   const dayEnd = `${selectedDate} 23:59:59`;
+  const studentWhere = [
+    'type = 1',
+    'status = 1',
+    'kaf IS NOT NULL',
+  ];
+  const studentParams = [];
+  const absenceWhere = [
+    'p.deleted_at IS NULL',
+    'u.type = 1',
+    'u.status = 1',
+    'COALESCE(p.ends_at, ?) >= ?',
+    'p.starts_at <= ?',
+  ];
+  const absenceParams = [FAR_FUTURE, dayStart, dayEnd];
+
+  if (selectedClassId && selectedClassId !== 'all') {
+    studentWhere.push('kaf = ?');
+    studentParams.push(selectedClassId);
+    absenceWhere.push('p.class_id = ?');
+    absenceParams.push(selectedClassId);
+  }
 
   const [studentCountRows, absenceRows] = await Promise.all([
     usr.query(
       `SELECT CAST(kaf AS CHAR) AS class_id, COUNT(*) AS students_total
          FROM sso.users
-        WHERE type = 1 AND status = 1 AND kaf IS NOT NULL
+        WHERE ${studentWhere.join(' AND ')}
         GROUP BY kaf`,
+      studentParams,
     ),
     usr.query(
       `${absenceSelectSql()}
-        WHERE p.deleted_at IS NULL
-          AND u.type = 1
-          AND u.status = 1
-          AND COALESCE(p.ends_at, ?) >= ?
-          AND p.starts_at <= ?
+        WHERE ${absenceWhere.join(' AND ')}
         ORDER BY k.name, u.name, p.starts_at, p.id`,
-      [FAR_FUTURE, dayStart, dayEnd],
+      absenceParams,
     ),
   ]);
 
@@ -927,11 +946,21 @@ export async function getTodayAbsenceOverview({ date, now } = {}) {
     };
   }).sort((a, b) => compareClassNames(a.class_name, b.class_name));
 
+  const students = classes.flatMap((classItem) => classItem.students.map((student) => ({
+    ...student,
+    class_id: classItem.class_id,
+    class_name: classItem.class_name,
+  }))).sort((a, b) => (
+    compareClassNames(a.class_name, b.class_name)
+    || a.student_name.localeCompare(b.student_name, 'ru')
+  ));
+
   return {
     date: selectedDate,
     date_label: formatDateLabel(selectedDate),
     now: nowSql,
     has_absences: classes.length > 0,
+    students,
     totals: {
       classes_with_absences: classes.length,
       absent_students_today: classes.reduce((sum, row) => sum + row.absent_today, 0),
@@ -1009,13 +1038,14 @@ export async function getMonthlyAttendanceAnalytics({ month, classId, risk, reas
   const classes = await getClasses();
   const selectedClass = normalizeAnalyticsClass(classes, classId);
   const classFilter = selectedClass.id === 'all' ? null : selectedClass.id;
-  const [students, periods, scheduleRows, publishedSchoolDays, activeWeekdays, arrivals] = await Promise.all([
+  const [students, periods, scheduleRows, publishedSchoolDays, activeWeekdays, arrivals, todayAbsences] = await Promise.all([
     getMonthlyAnalyticsStudents(classFilter),
     getMonthlyAnalyticsPeriods(range, classFilter),
     getPublishedScheduleRows(range, classFilter),
     getPublishedScheduleDays(range),
     getActiveScheduleWeekdays(),
     getMonthlyFirstPresenceArrivals(range, classFilter),
+    getTodayAbsenceOverview({ classId: classFilter }),
   ]);
 
   const analytics = buildMonthlyAnalytics({
@@ -1041,7 +1071,13 @@ export async function getMonthlyAttendanceAnalytics({ month, classId, risk, reas
     publishedSchoolDays,
     activeWeekdays,
   });
-  analytics.has_activity = Boolean(analytics.has_data || analytics.learning?.has_data || analytics.lateness?.has_activity);
+  analytics.today_absences = todayAbsences;
+  analytics.has_activity = Boolean(
+    analytics.has_data
+    || analytics.learning?.has_data
+    || analytics.lateness?.has_activity
+    || analytics.today_absences?.has_absences
+  );
   const worklist = buildRiskWorklist({
     range,
     periods,
@@ -2589,6 +2625,7 @@ function mapPresenceEvent(row) {
     ? PRESENCE_EVENT_TYPES.DEPARTURE
     : PRESENCE_EVENT_TYPES.ARRIVAL;
   const occurredAt = row.occurred_at || '';
+  const occurredLabel = formatPresenceEventDateTime(occurredAt);
   return {
     id: row.id,
     student_id: row.student_id,
@@ -2598,7 +2635,8 @@ function mapPresenceEvent(row) {
     event_type: eventType,
     event_label: presenceEventTypeLabel(eventType),
     occurred_at: occurredAt,
-    occurred_time: occurredAt.slice(11, 16),
+    occurred_time: occurredAt.slice(11, 19),
+    occurred_label: occurredLabel,
     attendance_date: row.attendance_date || dateOnlyFromSql(occurredAt),
     actor_id: row.actor_id,
     source: row.source || 'tablet',
@@ -2614,14 +2652,15 @@ function presenceStateFromEvent(latestEvent) {
   const hasEvent = Boolean(latestEvent?.id);
   const isPresent = latestEvent?.event_type === PRESENCE_EVENT_TYPES.ARRIVAL;
   const statusWord = hasEvent ? presenceEventTypeLabel(latestEvent.event_type) : 'Нет отметки';
+  const statusTime = latestEvent?.occurred_label || formatPresenceEventDateTime(latestEvent?.occurred_at);
   return {
     has_event: hasEvent,
     is_present: isPresent,
     last_event_id: latestEvent?.id || '',
     last_event_type: latestEvent?.event_type || '',
     status_word: statusWord,
-    status_time: latestEvent?.occurred_time || '',
-    status_label: hasEvent ? `${statusWord} ${latestEvent.occurred_time}` : statusWord,
+    status_time: statusTime,
+    status_label: hasEvent ? `${statusWord} ${statusTime}` : statusWord,
     next_event_type: isPresent ? PRESENCE_EVENT_TYPES.DEPARTURE : PRESENCE_EVENT_TYPES.ARRIVAL,
     next_action_label: isPresent ? 'Ушел' : 'Пришел',
   };
@@ -2629,6 +2668,13 @@ function presenceStateFromEvent(latestEvent) {
 
 function presenceEventTypeLabel(eventType) {
   return eventType === PRESENCE_EVENT_TYPES.DEPARTURE ? 'Ушел' : 'Пришел';
+}
+
+function formatPresenceEventDateTime(value) {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
+  if (!match) return '';
+  const [, y, mo, d, h, mi, s] = match;
+  return `${h}:${mi}:${s} ${d}.${mo}.${y.slice(2)}`;
 }
 
 function normalizeIdempotencyKey(value) {

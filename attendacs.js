@@ -630,6 +630,7 @@ function toPublicPresenceEvent(event) {
     event_label: event.event_label,
     occurred_at: event.occurred_at,
     occurred_time: event.occurred_time,
+    occurred_label: event.occurred_label,
     attendance_date: event.attendance_date,
     actor_id: event.actor_id ? Number(event.actor_id) : null,
     source: event.source,

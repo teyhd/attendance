@@ -19,14 +19,7 @@
       {{/if}}
 
       <form id="attendance-controls-form" method="get" action="/attendance" class="flex flex-col sm:flex-row gap-2 sm:items-end">
-        <label class="text-sm text-gray-700">
-          <span class="block mb-1">Класс</span>
-          <select id="class-select" data-testid="class-select" name="class" class="w-full sm:w-36 rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
-            {{#each classes}}
-              <option value="{{id}}" {{#if (eq ../selectedClass id)}}selected{{/if}}>{{name}}</option>
-            {{/each}}
-          </select>
-        </label>
+        <input type="hidden" name="class" value="{{selectedClass}}" />
         <label class="text-sm text-gray-700">
           <span class="block mb-1">Дата</span>
           <input id="attendance-date" name="date" value="{{selectedDate}}" type="date" class="w-full sm:w-40 rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500" />
@@ -74,6 +67,19 @@
         <h2 class="text-base font-semibold">Ученики</h2>
         <span class="text-sm text-gray-500">{{children.length}}</span>
       </div>
+      <form id="attendance-class-form" method="get" action="/attendance" class="mb-3">
+        <input type="hidden" name="date" value="{{selectedDate}}" />
+        <input type="hidden" name="filter" value="{{activeFilter}}" />
+        <input type="hidden" name="q" value="{{q}}" />
+        <label class="block text-sm text-gray-700">
+          <span class="mb-1 block text-xs font-semibold uppercase text-gray-500">Класс</span>
+          <select id="class-select" data-testid="class-select" name="class" class="h-11 w-full rounded border border-gray-300 bg-white px-3 text-base font-medium text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500">
+            {{#each classes}}
+              <option value="{{id}}" {{#if (eq ../selectedClass id)}}selected{{/if}}>{{name}}</option>
+            {{/each}}
+          </select>
+        </label>
+      </form>
       {{#if children.length}}
         <div class="space-y-1.5">
           {{#each children}}
@@ -403,9 +409,8 @@
 
 <script>
 (() => {
-  const controlsForm = document.getElementById('attendance-controls-form');
   const classSelect = document.getElementById('class-select');
-  classSelect?.addEventListener('change', () => controlsForm?.requestSubmit());
+  classSelect?.addEventListener('change', () => classSelect.closest('form')?.requestSubmit());
 
   document.querySelectorAll('[data-flash]').forEach((node) => {
     window.setTimeout(() => {

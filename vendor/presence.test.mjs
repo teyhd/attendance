@@ -13,20 +13,20 @@ test('presence toggle starts with arrival and alternates events', () => {
   assert.equal(nextPresenceEventType({ event_type: 'departure' }), PRESENCE_EVENT_TYPES.ARRIVAL);
 });
 
-test('presence toggle treats fast repeated tap as duplicate', () => {
+test('presence toggle inserts departure on a fast repeated tap', () => {
   const result = resolvePresenceToggle({
     latestEvent: { event_type: 'arrival', occurred_at: '2026-05-22 08:00:00' },
     now: '2026-05-22 08:00:05',
   });
 
   assert.deepEqual(result, {
-    shouldInsert: false,
-    duplicate: true,
-    eventType: PRESENCE_EVENT_TYPES.ARRIVAL,
+    shouldInsert: true,
+    duplicate: false,
+    eventType: PRESENCE_EVENT_TYPES.DEPARTURE,
   });
 });
 
-test('presence toggle inserts next event after duplicate window', () => {
+test('presence toggle keeps alternating after any delay', () => {
   const result = resolvePresenceToggle({
     latestEvent: { event_type: 'arrival', occurred_at: '2026-05-22 08:00:00' },
     now: '2026-05-22 08:00:11',
