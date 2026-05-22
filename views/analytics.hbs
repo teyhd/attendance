@@ -87,6 +87,7 @@
                   <tr class="border-b">
                     <th class="py-2 pr-3 text-left font-medium">Класс</th>
                     <th class="py-2 pr-3 text-left font-medium">Имя</th>
+                    <th class="py-2 pr-3 text-left font-medium">Период</th>
                     <th class="py-2 text-left font-medium">Причина</th>
                   </tr>
                 </thead>
@@ -96,6 +97,12 @@
                       <td class="py-2 pr-3 align-top text-gray-600">{{class_name}}</td>
                       <td class="py-2 pr-3 align-top font-medium text-gray-900">
                         <a href="{{href}}" class="hover:text-indigo-700">{{student_name}}</a>
+                      </td>
+                      <td class="py-2 pr-3 align-top text-gray-700">
+                        <span>{{today_period_label}}</span>
+                        {{#if period_count_label}}
+                          <span class="ml-1 rounded-full bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">{{period_count_label}}</span>
+                        {{/if}}
                       </td>
                       <td class="py-2 align-top text-gray-700">
                         <span class="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-700">{{reason_name}}</span>
@@ -301,40 +308,69 @@
 
         <div class="grid gap-4 xl:grid-cols-2">
           <div>
-            <h3 class="text-sm font-semibold text-gray-900">Ученики</h3>
-            {{#if analytics.lateness.students}}
-              <div class="mt-3 overflow-x-auto">
-                <table class="min-w-full text-sm">
-                  <thead class="text-xs text-gray-500">
-                    <tr class="border-b">
-                      <th class="py-2 pr-3 text-left font-medium">Ученик</th>
-                      <th class="py-2 pr-3 text-left font-medium">Класс</th>
-                      <th class="py-2 pr-3 text-right font-medium">Приходы</th>
-                      <th class="py-2 pr-3 text-right font-medium">Опозд.</th>
-                      <th class="py-2 pr-3 text-right font-medium">%</th>
-                      <th class="py-2 pr-3 text-right font-medium">Мин.</th>
-                      <th class="py-2 pr-3 text-right font-medium">Уроки</th>
-                      <th class="py-2 text-left font-medium">Последнее</th>
-                    </tr>
-                  </thead>
-                  <tbody class="divide-y divide-gray-100">
-                    {{#each analytics.lateness.students}}
-                      <tr>
-                        <td class="py-2 pr-3 font-medium text-gray-900"><button type="button" class="text-left hover:text-indigo-700" data-student-analytics-open data-student-id="{{student_id}}">{{student_name}}</button></td>
-                        <td class="py-2 pr-3 text-gray-600">{{class_name}}</td>
-                        <td class="py-2 pr-3 text-right text-gray-900">{{arrival_days}}</td>
-                        <td class="py-2 pr-3 text-right {{#if late_days}}text-amber-700{{else}}text-gray-500{{/if}}">{{late_days}}</td>
-                        <td class="py-2 pr-3 text-right text-gray-700">{{late_percent}}</td>
-                        <td class="py-2 pr-3 text-right text-gray-900">{{total_late_minutes}}</td>
-                        <td class="py-2 pr-3 text-right text-gray-900">{{missed_lessons}}</td>
-                        <td class="py-2 text-gray-700">{{#if last_late_label}}{{last_late_label}}{{else}}—{{/if}}</td>
-                      </tr>
-                    {{/each}}
-                  </tbody>
-                </table>
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+              <h3 class="text-sm font-semibold text-gray-900">Классы и дети</h3>
+              <div class="flex flex-col gap-2 sm:items-end">
+                <div class="flex flex-wrap gap-1" data-lateness-filter-group>
+                  <button type="button" data-lateness-filter="all" class="rounded border px-2.5 py-1.5 text-xs font-medium">Все</button>
+                  <button type="button" data-lateness-filter="late" class="rounded border px-2.5 py-1.5 text-xs font-medium">Опоздали</button>
+                  <button type="button" data-lateness-filter="arrived" class="rounded border px-2.5 py-1.5 text-xs font-medium">Вовремя</button>
+                  <button type="button" data-lateness-filter="gap" class="rounded border px-2.5 py-1.5 text-xs font-medium">Пробелы</button>
+                </div>
+                <label class="sr-only" for="lateness-sort">Сортировка</label>
+                <select id="lateness-sort" data-lateness-sort class="rounded border-gray-300 text-sm focus:border-indigo-500 focus:ring-indigo-500">
+                  <option value="late_first">Сначала опоздавшие</option>
+                  <option value="arrived_first">Сначала пришедшие</option>
+                  <option value="minutes">Минуты опоздания</option>
+                  <option value="name">Имя</option>
+                </select>
+              </div>
+            </div>
+            {{#if analytics.lateness.classes}}
+              <div class="mt-3 space-y-3" data-lateness-classes>
+                {{#each analytics.lateness.classes}}
+                  <section data-lateness-class class="rounded border border-gray-200 bg-white">
+                    <div class="flex flex-col gap-1 border-b border-gray-100 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+                      <div class="font-semibold text-gray-900">Класс {{class_name}}</div>
+                      <div class="flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-500">
+                        <span><span data-lateness-class-visible>{{students_total}}</span> / {{students_total}}</span>
+                        <span>опозд.: {{students_late}}</span>
+                        <span>вовремя: {{students_arrived}}</span>
+                        {{#if students_gap}}<span class="text-red-700">пробелы: {{students_gap}}</span>{{/if}}
+                      </div>
+                    </div>
+                    <div class="divide-y divide-gray-100" data-lateness-student-list>
+                      {{#each students}}
+                        <div
+                          data-lateness-student
+                          data-lateness-status="{{status_code}}"
+                          data-lateness-name="{{student_name}}"
+                          data-lateness-arrivals="{{arrival_days}}"
+                          data-lateness-late-days="{{late_days}}"
+                          data-lateness-minutes="{{total_late_minutes}}"
+                          class="grid gap-2 px-3 py-2 text-sm sm:grid-cols-[minmax(0,1fr)_auto]"
+                        >
+                          <div class="min-w-0">
+                            <button type="button" class="font-medium text-gray-900 hover:text-indigo-700" data-student-analytics-open data-student-id="{{student_id}}">{{student_name}}</button>
+                            <div class="mt-1 flex flex-wrap gap-1 text-xs">
+                              <span class="rounded-full px-2 py-0.5 {{status_class}}">{{status_label}}</span>
+                              <span class="rounded-full bg-gray-100 px-2 py-0.5 text-gray-700">приходы: {{arrival_days}}</span>
+                              <span class="rounded-full bg-amber-50 px-2 py-0.5 text-amber-800">опозд.: {{late_days}}</span>
+                              {{#if data_gaps}}<span class="rounded-full bg-red-50 px-2 py-0.5 text-red-700">пробелы: {{data_gaps}}</span>{{/if}}
+                            </div>
+                          </div>
+                          <div class="text-left text-xs text-gray-600 sm:text-right">
+                            <div>{{detail_label}}</div>
+                            <div class="mt-0.5">{{total_late_minutes}} мин. · {{missed_lessons}} ур.</div>
+                          </div>
+                        </div>
+                      {{/each}}
+                    </div>
+                  </section>
+                {{/each}}
               </div>
             {{else}}
-              <p class="mt-2 text-sm text-gray-500">Опозданий нет.</p>
+              <p class="mt-2 text-sm text-gray-500">Приходов за период нет.</p>
             {{/if}}
           </div>
 
@@ -769,6 +805,91 @@
       window.setTimeout(() => highlightTarget(target), 250);
     }
   }
+})();
+
+(() => {
+  const root = document.querySelector('[data-lateness-classes]');
+  if (!root) return;
+
+  const buttons = Array.from(document.querySelectorAll('[data-lateness-filter]'));
+  const sortSelect = document.querySelector('[data-lateness-sort]');
+  const classBlocks = Array.from(root.querySelectorAll('[data-lateness-class]'));
+  const activeClasses = ['bg-gray-900', 'border-gray-900', 'text-white'];
+  const inactiveClasses = ['bg-white', 'border-gray-300', 'text-gray-700', 'hover:bg-gray-50'];
+  let activeFilter = 'all';
+
+  function numberAttr(row, name) {
+    return Number(row.dataset[name] || 0);
+  }
+
+  function rowMatches(row) {
+    if (activeFilter === 'all') return true;
+    return row.dataset.latenessStatus === activeFilter;
+  }
+
+  function compareRows(left, right) {
+    const sort = sortSelect?.value || 'late_first';
+    if (sort === 'arrived_first') {
+      return (
+        Number(right.dataset.latenessStatus === 'arrived') - Number(left.dataset.latenessStatus === 'arrived')
+        || numberAttr(right, 'latenessArrivals') - numberAttr(left, 'latenessArrivals')
+        || String(left.dataset.latenessName || '').localeCompare(String(right.dataset.latenessName || ''), 'ru', { numeric: true, sensitivity: 'base' })
+      );
+    }
+    if (sort === 'minutes') {
+      return (
+        numberAttr(right, 'latenessMinutes') - numberAttr(left, 'latenessMinutes')
+        || numberAttr(right, 'latenessLateDays') - numberAttr(left, 'latenessLateDays')
+        || String(left.dataset.latenessName || '').localeCompare(String(right.dataset.latenessName || ''), 'ru', { numeric: true, sensitivity: 'base' })
+      );
+    }
+    if (sort === 'name') {
+      return String(left.dataset.latenessName || '').localeCompare(String(right.dataset.latenessName || ''), 'ru', { numeric: true, sensitivity: 'base' });
+    }
+    return (
+      Number(right.dataset.latenessStatus === 'late') - Number(left.dataset.latenessStatus === 'late')
+      || numberAttr(right, 'latenessLateDays') - numberAttr(left, 'latenessLateDays')
+      || numberAttr(right, 'latenessMinutes') - numberAttr(left, 'latenessMinutes')
+      || String(left.dataset.latenessName || '').localeCompare(String(right.dataset.latenessName || ''), 'ru', { numeric: true, sensitivity: 'base' })
+    );
+  }
+
+  function paintButtons() {
+    buttons.forEach((button) => {
+      const active = button.dataset.latenessFilter === activeFilter;
+      button.classList.toggle(activeClasses[0], active);
+      button.classList.toggle(activeClasses[1], active);
+      button.classList.toggle(activeClasses[2], active);
+      inactiveClasses.forEach((className) => button.classList.toggle(className, !active));
+    });
+  }
+
+  function applyLatenessView() {
+    paintButtons();
+    classBlocks.forEach((block) => {
+      const list = block.querySelector('[data-lateness-student-list]');
+      const rows = Array.from(block.querySelectorAll('[data-lateness-student]')).sort(compareRows);
+      let visible = 0;
+      rows.forEach((row) => {
+        const show = rowMatches(row);
+        row.classList.toggle('hidden', !show);
+        if (show) visible += 1;
+        list?.append(row);
+      });
+      block.classList.toggle('hidden', visible === 0);
+      const count = block.querySelector('[data-lateness-class-visible]');
+      if (count) count.textContent = String(visible);
+    });
+  }
+
+  buttons.forEach((button) => {
+    button.addEventListener('click', () => {
+      activeFilter = button.dataset.latenessFilter || 'all';
+      applyLatenessView();
+    });
+  });
+  sortSelect?.addEventListener('change', applyLatenessView);
+  applyLatenessView();
 })();
 
 (() => {

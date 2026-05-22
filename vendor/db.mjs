@@ -2351,6 +2351,7 @@ function buildTodayStudentRow(studentBucket, date, nowSql) {
     reason_name: selected.reason_name,
     reason_code: selected.reason_code,
     period_label: selected.period_label,
+    today_period_label: formatTodayAbsencePeriodLabel(selected.starts_at, selected.ends_at, date),
     status_label: status.label,
     status_rank: status.rank,
     is_now: status.code === 'now',
@@ -2410,6 +2411,36 @@ function todayPeriodStatus(period, nowSql) {
     return { code: 'future', label: 'позже сегодня', rank: 1, className: 'bg-sky-100 text-sky-800' };
   }
   return { code: 'completed', label: 'уже завершено', rank: 2, className: 'bg-gray-100 text-gray-700' };
+}
+
+function formatTodayAbsencePeriodLabel(startsAt, endsAt, date) {
+  const start = parseCompactDateTime(startsAt);
+  const end = parseCompactDateTime(endsAt);
+  if (!start) return '';
+  if (!end) {
+    return start.date === date ? `с ${start.time}` : `с ${start.short}`;
+  }
+  if (start.date === date && end.date === date) {
+    return `${start.time} — ${end.time}`;
+  }
+  if (start.date === date) {
+    return `${start.time} — ${end.short}`;
+  }
+  if (end.date === date) {
+    return `${start.short} — ${end.time}`;
+  }
+  return `${start.short} — ${end.short}`;
+}
+
+function parseCompactDateTime(value) {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+  if (!match) return null;
+  const [, y, mo, d, h, mi] = match;
+  return {
+    date: `${y}-${mo}-${d}`,
+    time: `${h}:${mi}`,
+    short: `${d}.${mo} ${h}:${mi}`,
+  };
 }
 
 function attendanceHref({ classId, studentId, date }) {

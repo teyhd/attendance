@@ -123,6 +123,34 @@ test('only the first arrival of the day is used', () => {
   assert.equal(analytics.late_days_total, 0);
 });
 
+test('lateness groups late, on-time, and schedule-gap arrivals by class', () => {
+  const analytics = buildLateAnalytics({
+    range,
+    students: [
+      student,
+      { ...student, student_id: '11', student_name: 'On time' },
+      { ...student, student_id: '12', student_name: 'Gap' },
+    ],
+    arrivals: [
+      arrival({ id: 'late', student_id: '10', arrival_at: '2026-05-04 09:10:00' }),
+      arrival({ id: 'ontime', student_id: '11', student_name: 'On time', arrival_at: '2026-05-04 09:01:00' }),
+      arrival({ id: 'gap', student_id: '12', student_name: 'Gap', attendance_date: '2026-05-05', arrival_at: '2026-05-05 09:01:00' }),
+    ],
+    scheduleRows: [schedule()],
+    publishedSchoolDays: ['2026-05-04'],
+  });
+
+  const statuses = new Map(analytics.students.map((row) => [row.student_id, row.status_code]));
+  assert.equal(statuses.get('10'), 'late');
+  assert.equal(statuses.get('11'), 'arrived');
+  assert.equal(statuses.get('12'), 'gap');
+  assert.equal(analytics.classes.length, 1);
+  assert.equal(analytics.classes[0].students_total, 3);
+  assert.equal(analytics.classes[0].students_late, 1);
+  assert.equal(analytics.classes[0].students_arrived, 1);
+  assert.equal(analytics.classes[0].students_gap, 1);
+});
+
 test('individual schedule replaces class lesson in the same slot', () => {
   const analytics = buildLateAnalytics({
     range,

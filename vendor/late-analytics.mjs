@@ -31,6 +31,7 @@ const EMPTY_LATENESS = {
     coverage_percent: 100,
   },
   students: [],
+  classes: [],
   subjects: [],
   daily: [],
   daily_active: [],
@@ -262,12 +263,15 @@ function aggregateLateness({ range, students, firstArrivals, lateEvents, dataGap
     dailyBuckets.set(event.date, dailyBucket);
   }
 
+  const maxStudentLateDays = Math.max(1, ...Array.from(studentBuckets.values()).map((item) => item.events.length));
   const studentRows = Array.from(studentBuckets.values()).map((bucket) => {
     const lateDays = bucket.events.length;
     const arrivalDays = bucket.arrivalDays.size;
     const totalMinutes = bucket.events.reduce((sum, event) => sum + Number(event.late_minutes || 0), 0);
     const missedLessons = bucket.events.reduce((sum, event) => sum + Number(event.missed_lessons || 0), 0);
     const lastLate = bucket.events.toSorted(compareLateEvents).at(-1);
+    const dataGaps = bucket.dataGaps.length;
+    const status = latenessStudentStatus({ lateDays, arrivalDays, dataGaps });
     return {
       student_id: bucket.student_id,
       student_name: bucket.student_name,
@@ -280,16 +284,21 @@ function aggregateLateness({ range, students, firstArrivals, lateEvents, dataGap
       avg_late_minutes: lateDays ? Math.round(totalMinutes / lateDays) : 0,
       missed_lessons: missedLessons,
       subjects: bucket.subjectKeys.size,
-      data_gaps: bucket.dataGaps.length,
+      data_gaps: dataGaps,
+      status_code: status.code,
+      status_label: status.label,
+      status_class: status.className,
+      detail_label: latenessStudentDetailLabel({ lateDays, arrivalDays, totalMinutes, missedLessons, dataGaps, lastLate }),
       last_late_at: lastLate?.arrival_at || '',
       last_late_date: lastLate?.date_label || '',
       last_late_time: lastLate ? `${lastLate.arrival_time} / ${lastLate.first_lesson_time}` : '',
       last_late_label: lastLate ? `${lastLate.date_label} ${lastLate.arrival_time}, ${lastLate.late_minutes} мин.` : '',
       href: `/attendance?class=${encodeURIComponent(bucket.class_id)}&student=${encodeURIComponent(bucket.student_id)}&analyticsMonth=${encodeURIComponent(range.month)}#lateness-analytics`,
-      bar_width: percentOf(lateDays, Math.max(1, ...Array.from(studentBuckets.values()).map((item) => item.events.length))),
+      bar_width: percentOf(lateDays, maxStudentLateDays),
     };
-  }).filter((row) => row.late_days > 0 || row.data_gaps > 0)
+  }).filter((row) => row.arrival_days > 0 || row.late_days > 0 || row.data_gaps > 0)
     .sort(compareStudentRows);
+  const classRows = buildLatenessClassRows(studentRows);
 
   const totalMissedLessons = lateEvents.reduce((sum, event) => sum + Number(event.missed_lessons || 0), 0);
   const subjectRows = Array.from(subjectBuckets.values()).map((bucket) => {
@@ -341,6 +350,7 @@ function aggregateLateness({ range, students, firstArrivals, lateEvents, dataGap
       coverage_percent: firstArrivals.length ? percentOf(coveredArrivalDays, firstArrivals.length) : 100,
     },
     students: studentRows,
+    classes: classRows,
     subjects: subjectRows,
     daily: dailyRows,
     daily_active: dailyActiveRows,
@@ -386,6 +396,90 @@ function ensureSubjectBucket(map, lesson) {
   return map.get(key);
 }
 
+function buildLatenessClassRows(studentRows) {
+  const buckets = new Map();
+  for (const student of studentRows || []) {
+    const classId = String(student.class_id || '');
+    if (!buckets.has(classId)) {
+      buckets.set(classId, {
+        class_id: classId,
+        class_name: student.class_name || '',
+        students: [],
+        arrival_days: 0,
+        late_days: 0,
+        total_late_minutes: 0,
+        missed_lessons: 0,
+        data_gaps: 0,
+      });
+    }
+    const bucket = buckets.get(classId);
+    bucket.students.push(student);
+    bucket.arrival_days += Number(student.arrival_days || 0);
+    bucket.late_days += Number(student.late_days || 0);
+    bucket.total_late_minutes += Number(student.total_late_minutes || 0);
+    bucket.missed_lessons += Number(student.missed_lessons || 0);
+    bucket.data_gaps += Number(student.data_gaps || 0);
+  }
+
+  return Array.from(buckets.values()).map((bucket) => {
+    const lateStudents = bucket.students.filter((student) => Number(student.late_days || 0) > 0).length;
+    const arrivedStudents = bucket.students.filter((student) => student.status_code === 'arrived').length;
+    const gapStudents = bucket.students.filter((student) => student.status_code === 'gap').length;
+    bucket.students = bucket.students.toSorted(compareStudentRows);
+    return {
+      ...bucket,
+      students_total: bucket.students.length,
+      students_late: lateStudents,
+      students_arrived: arrivedStudents,
+      students_gap: gapStudents,
+      late_percent: percentOf(bucket.late_days, bucket.arrival_days),
+    };
+  }).sort(compareClassRows);
+}
+
+function latenessStudentStatus({ lateDays, arrivalDays, dataGaps }) {
+  if (lateDays > 0) {
+    return {
+      code: 'late',
+      label: 'Опоздал',
+      className: 'bg-amber-100 text-amber-800',
+    };
+  }
+  if (dataGaps > 0) {
+    return {
+      code: 'gap',
+      label: 'Нет расписания',
+      className: 'bg-red-50 text-red-700',
+    };
+  }
+  if (arrivalDays > 0) {
+    return {
+      code: 'arrived',
+      label: 'Вовремя',
+      className: 'bg-emerald-50 text-emerald-700',
+    };
+  }
+  return {
+    code: 'none',
+    label: 'Нет приходов',
+    className: 'bg-gray-100 text-gray-600',
+  };
+}
+
+function latenessStudentDetailLabel({ lateDays, arrivalDays, totalMinutes, missedLessons, dataGaps, lastLate }) {
+  if (lateDays > 0) {
+    const lessonPart = missedLessons ? `, уроков: ${missedLessons}` : '';
+    return `${lastLate?.date_label || ''} ${totalMinutes} мин.${lessonPart}`.trim();
+  }
+  if (dataGaps > 0) {
+    return `Пробелы расписания: ${dataGaps}`;
+  }
+  if (arrivalDays > 0) {
+    return `Приходов: ${arrivalDays}, без опозданий`;
+  }
+  return '';
+}
+
 function compareArrivalRows(a, b) {
   return (
     String(a.attendance_date || '').localeCompare(String(b.attendance_date || '')) ||
@@ -400,6 +494,10 @@ function compareLateEvents(a, b) {
     String(a.arrival_at || '').localeCompare(String(b.arrival_at || '')) ||
     String(a.student_name || '').localeCompare(String(b.student_name || ''), 'ru')
   );
+}
+
+function compareClassRows(a, b) {
+  return String(a.class_name || '').localeCompare(String(b.class_name || ''), 'ru', { numeric: true, sensitivity: 'base' });
 }
 
 function compareStudentRows(a, b) {
