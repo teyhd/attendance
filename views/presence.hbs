@@ -2,13 +2,9 @@
   <div class="rounded-md border border-gray-200 bg-white p-3">
     <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
       <div>
-        <h1 class="text-xl font-semibold text-gray-950">Приход / уход</h1>
+        <h1 class="text-xl font-semibold text-gray-950">Ручной ввод</h1>
         <div class="mt-1 text-sm text-gray-600">{{board.date_label}} · {{board.totals.present}} / {{board.totals.students}}</div>
       </div>
-      <label class="block md:w-80">
-        <span class="sr-only">Поиск</span>
-        <input data-presence-search type="search" inputmode="search" autocomplete="off" class="h-11 w-full rounded border border-gray-300 bg-white px-3 text-base text-gray-950 focus:border-gray-900 focus:ring-2 focus:ring-gray-900" placeholder="Поиск" />
-      </label>
     </div>
 
     {{#if board.classes.length}}
@@ -31,9 +27,9 @@
         <section id="{{anchor}}" data-presence-class class="scroll-mt-4 rounded-md border border-gray-200 bg-white">
           <div class="flex items-center justify-between border-b border-gray-200 px-3 py-2">
             <h2 class="text-lg font-semibold text-gray-950">{{name}}</h2>
-            <span class="text-sm text-gray-500">{{students.length}}</span>
+            <span class="text-sm text-gray-500">{{students_label}}</span>
           </div>
-          <div class="grid grid-cols-2 gap-2 p-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          <div class="grid grid-cols-1 gap-2 p-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {{#each students}}
               <button
                 type="button"
@@ -42,12 +38,13 @@
                 data-class-id="{{classId}}"
                 data-last-event-id="{{state.last_event_id}}"
                 data-last-event-type="{{state.last_event_type}}"
-                data-search="{{name}} {{className}}"
+                data-status-code="{{state.status_code}}"
                 aria-label="{{name}} · {{state.status_label}}"
-                class="min-h-[5.25rem] rounded-md border px-3 py-2 text-left shadow-sm transition focus:outline-none focus:ring-2 focus:ring-gray-900 disabled:cursor-wait disabled:opacity-60 {{#if state.is_present}}border-emerald-600 bg-emerald-50 hover:bg-emerald-100{{else}}border-gray-300 bg-white hover:bg-gray-50{{/if}}"
+                class="min-h-[6.25rem] rounded-md border px-3 py-3 text-left shadow-sm transition focus:outline-none focus:ring-2 focus:ring-gray-900 disabled:cursor-wait disabled:opacity-60 {{#if (eq state.status_code "absent")}}border-red-300 bg-red-50 hover:bg-red-100{{else}}{{#if (eq state.status_code "late")}}border-amber-300 bg-amber-50 hover:bg-amber-100{{else}}{{#if (eq state.status_code "present")}}border-emerald-600 bg-emerald-50 hover:bg-emerald-100{{else}}{{#if (eq state.status_code "departed")}}border-slate-300 bg-slate-50 hover:bg-slate-100{{else}}border-gray-300 bg-white hover:bg-gray-50{{/if}}{{/if}}{{/if}}{{/if}}"
               >
-                <span class="block truncate text-base font-semibold leading-5 text-gray-950">{{name}}</span>
-                <span data-presence-status class="mt-1 block text-sm leading-4 {{#if state.is_present}}text-emerald-700{{else}}text-gray-600{{/if}}">{{state.status_label}}</span>
+                <span class="block text-base font-semibold leading-5 text-gray-950">{{name}}</span>
+                <span data-presence-status class="mt-2 inline-flex rounded-full px-2 py-0.5 text-xs font-semibold {{#if (eq state.status_code "absent")}}bg-red-100 text-red-800{{else}}{{#if (eq state.status_code "late")}}bg-amber-100 text-amber-800{{else}}{{#if (eq state.status_code "present")}}bg-emerald-100 text-emerald-800{{else}}{{#if (eq state.status_code "departed")}}bg-slate-200 text-slate-700{{else}}bg-gray-100 text-gray-600{{/if}}{{/if}}{{/if}}{{/if}}">{{state.status_badge_label}}</span>
+                <span data-presence-detail class="mt-1 block text-sm leading-4 text-gray-600">{{state.status_detail}}</span>
               </button>
             {{/each}}
           </div>
@@ -65,14 +62,40 @@
   if (!root) return;
 
   const buttons = Array.from(root.querySelectorAll('[data-presence-button]'));
-  const searchInput = root.querySelector('[data-presence-search]');
-  const sections = Array.from(root.querySelectorAll('[data-presence-class]'));
   const flash = root.querySelector('[data-presence-flash]');
   const flashText = root.querySelector('[data-presence-flash-text]');
   const cancelButton = root.querySelector('[data-presence-cancel]');
   const flashBase = 'sticky top-2 z-20 flex items-center gap-3 rounded-md border px-3 py-2 text-sm shadow-sm';
 
-  const eventLabel = (type) => type === 'departure' ? 'Ушел' : 'Пришел';
+  const eventLabel = (type) => type === 'departure' ? 'Ушёл' : 'Пришёл';
+  const cardToneClasses = [
+    'border-red-300', 'bg-red-50', 'hover:bg-red-100',
+    'border-amber-300', 'bg-amber-50', 'hover:bg-amber-100',
+    'border-emerald-600', 'bg-emerald-50', 'hover:bg-emerald-100',
+    'border-slate-300', 'bg-slate-50', 'hover:bg-slate-100',
+    'border-gray-300', 'bg-white', 'hover:bg-gray-50',
+  ];
+  const statusToneClasses = [
+    'bg-red-100', 'text-red-800',
+    'bg-amber-100', 'text-amber-800',
+    'bg-emerald-100', 'text-emerald-800',
+    'bg-slate-200', 'text-slate-700',
+    'bg-gray-100', 'text-gray-600',
+  ];
+  const cardTone = {
+    absent: ['border-red-300', 'bg-red-50', 'hover:bg-red-100'],
+    late: ['border-amber-300', 'bg-amber-50', 'hover:bg-amber-100'],
+    present: ['border-emerald-600', 'bg-emerald-50', 'hover:bg-emerald-100'],
+    departed: ['border-slate-300', 'bg-slate-50', 'hover:bg-slate-100'],
+    none: ['border-gray-300', 'bg-white', 'hover:bg-gray-50'],
+  };
+  const statusTone = {
+    absent: ['bg-red-100', 'text-red-800'],
+    late: ['bg-amber-100', 'text-amber-800'],
+    present: ['bg-emerald-100', 'text-emerald-800'],
+    departed: ['bg-slate-200', 'text-slate-700'],
+    none: ['bg-gray-100', 'text-gray-600'],
+  };
   const newKey = () => window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const currentLocalDate = () => {
     const date = new Date();
@@ -117,20 +140,19 @@
 
   function applyState(button, state) {
     const status = button.querySelector('[data-presence-status]');
-    const isPresent = Boolean(state?.is_present);
+    const detail = button.querySelector('[data-presence-detail]');
+    const statusCode = state?.status_code || (state?.is_present ? 'present' : 'none');
     button.dataset.lastEventId = state?.last_event_id || '';
     button.dataset.lastEventType = state?.last_event_type || '';
+    button.dataset.statusCode = statusCode;
     button.setAttribute('aria-label', `${button.querySelector('.font-semibold')?.textContent || ''} · ${state?.status_label || 'Нет отметки'}`);
 
-    status.textContent = state?.status_label || 'Нет отметки';
-    button.classList.toggle('border-emerald-600', isPresent);
-    button.classList.toggle('bg-emerald-50', isPresent);
-    button.classList.toggle('hover:bg-emerald-100', isPresent);
-    button.classList.toggle('border-gray-300', !isPresent);
-    button.classList.toggle('bg-white', !isPresent);
-    button.classList.toggle('hover:bg-gray-50', !isPresent);
-    status.classList.toggle('text-emerald-700', isPresent);
-    status.classList.toggle('text-gray-600', !isPresent);
+    status.textContent = state?.status_badge_label || state?.status_word || 'Нет отметки';
+    if (detail) detail.textContent = state?.status_detail || state?.status_time || '';
+    button.classList.remove(...cardToneClasses);
+    button.classList.add(...(cardTone[statusCode] || cardTone.none));
+    status.classList.remove(...statusToneClasses);
+    status.classList.add(...(statusTone[statusCode] || statusTone.none));
   }
 
   buttons.forEach((button) => {
@@ -175,19 +197,6 @@
     } finally {
       cancelButton.disabled = false;
     }
-  });
-
-  searchInput?.addEventListener('input', () => {
-    const q = searchInput.value.trim().toLocaleLowerCase('ru');
-    sections.forEach((section) => {
-      let visible = 0;
-      section.querySelectorAll('[data-presence-button]').forEach((button) => {
-        const match = !q || String(button.dataset.search || '').toLocaleLowerCase('ru').includes(q);
-        button.classList.toggle('hidden', !match);
-        if (match) visible += 1;
-      });
-      section.classList.toggle('hidden', visible === 0);
-    });
   });
 
   document.addEventListener('visibilitychange', () => {

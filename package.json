@@ -17,7 +17,7 @@
   "scripts": {
     "start": "node attendacs.js",
     "dev": "nodemon attendacs.js",
-    "build:css": "tailwindcss -i ./assets/tailwind.css -o ./public/assets/app.css --minify",
+    "build:css": "node -e \"process.env.BROWSERSLIST_IGNORE_OLD_DATA='1'; process.argv=['node','tailwindcss','-i','./assets/tailwind.css','-o','./public/assets/app.css','--minify']; import('tailwindcss/lib/cli.js')\"",
     "test": "node --test"
   },
   "dependencies": {

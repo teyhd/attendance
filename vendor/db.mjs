@@ -7,6 +7,7 @@ import {
   normalizeAnalyticsMonth,
   percentOf,
 } from './analytics.mjs';
+import { buildActiveClassList, studentCountLabel } from './classes.mjs';
 import {
   OTHER_REASON_CODE,
   WITHOUT_REASON_CODE,
@@ -19,7 +20,7 @@ import {
   resolvePresenceToggle,
 } from './presence.mjs';
 import { buildLearningAnalytics } from './learning-analytics.mjs';
-import { buildLateAnalytics } from './late-analytics.mjs';
+import { LATE_THRESHOLD_MINUTES, buildLateAnalytics } from './late-analytics.mjs';
 import { buildRiskWorklist } from './risk-worklist.mjs';
 
 const FAR_FUTURE = '9999-12-31 23:59:59';
@@ -200,9 +201,12 @@ export async function ensureAttendanceSchema() {
     VALUES
       ('illness', 'Болезнь', 1, 0, 'confirmed', 10, 1),
       ('family', 'Семейные обстоятельства', 1, 0, 'confirmed', 20, 1),
-      ('trip', 'Поездка', 1, 0, 'confirmed', 30, 1),
-      ('${WITHOUT_REASON_CODE}', 'Без причины', 0, 1, 'needs_clarification', 40, 1),
-      ('${OTHER_REASON_CODE}', 'Другое', 0, 0, 'reported', 50, 1)
+      ('trip', 'Соревнования', 1, 0, 'confirmed', 30, 1),
+      ('olympiad', 'Олимпиада', 1, 0, 'confirmed', 40, 1),
+      ('medical_checkup', 'Медосмотр', 1, 0, 'confirmed', 50, 1),
+      ('excused', 'Уважительная причина', 1, 0, 'reported', 60, 1),
+      ('${OTHER_REASON_CODE}', 'Другое', 0, 0, 'reported', 70, 1),
+      ('${WITHOUT_REASON_CODE}', 'Без причины', 0, 1, 'needs_clarification', 80, 1)
     ON DUPLICATE KEY UPDATE
       name = VALUES(name),
       is_excused = VALUES(is_excused),
@@ -295,16 +299,20 @@ async function ensureUniqueIndex(schema, table, indexName, columnsSql) {
 
 export async function getClasses() {
   const [rows] = await usr.query(
-    `SELECT CAST(id AS CHAR) AS id, name
-       FROM sso.kaf_name
-      WHERE type = 1 AND id > 0
-      ORDER BY
-        CASE WHEN NULLIF(REGEXP_SUBSTR(name, '^[0-9]+'), '') IS NULL THEN 1 ELSE 0 END,
-        CAST(NULLIF(REGEXP_SUBSTR(name, '^[0-9]+'), '') AS UNSIGNED),
-        name,
-        id`,
+    `SELECT
+        CAST(k.id AS CHAR) AS id,
+        k.name,
+        COUNT(u.id) AS students_count
+       FROM sso.kaf_name k
+       LEFT JOIN sso.users u
+         ON u.kaf = k.id
+        AND u.type = 1
+        AND u.status = 1
+      WHERE k.type = 1
+        AND k.id > 0
+      GROUP BY k.id, k.name`,
   );
-  return rows;
+  return buildActiveClassList(rows);
 }
 
 export async function getMentorClassIds(userId) {
@@ -359,17 +367,23 @@ export async function getStudentById(id) {
 
 export async function getPresenceBoard({ date } = {}) {
   const selectedDate = normalizeDateOnly(date || todayDate());
-  const [classes, students, events] = await Promise.all([
+  const nowSql = sqlNow();
+  const [classes, students, events, absences, schoolDay] = await Promise.all([
     getClasses(),
     getPresenceStudents(),
     listPresenceEventsForDate(selectedDate),
+    listPresenceAbsencesForDate(selectedDate),
+    getSchoolDayBounds(selectedDate),
   ]);
   const latestByStudent = latestPresenceEventMap(events);
+  const firstArrivalByStudent = firstPresenceArrivalMap(events);
+  const absencesByStudent = presenceAbsencesByStudent(absences);
   const classBuckets = new Map(classes.map((classItem) => [
     String(classItem.id),
     {
       ...classItem,
       anchor: `presence-class-${classItem.id}`,
+      students_label: studentCountLabel(classItem.students_count),
       students: [],
     },
   ]));
@@ -378,9 +392,16 @@ export async function getPresenceBoard({ date } = {}) {
     const classBucket = classBuckets.get(String(student.classId));
     if (!classBucket) continue;
     const latestEvent = latestByStudent.get(String(student.id)) || null;
+    const absence = presenceAbsenceForStudent(absencesByStudent.get(String(student.id)), selectedDate, nowSql);
+    const firstArrival = firstArrivalByStudent.get(String(student.id)) || null;
     classBucket.students.push({
       ...student,
-      state: presenceStateFromEvent(latestEvent),
+      state: presenceBoardState({
+        latestEvent,
+        absence,
+        firstArrival,
+        schoolDay,
+      }),
     });
   }
 
@@ -849,12 +870,93 @@ async function listPresenceEventsForDate(date) {
   return rows.map(mapPresenceEvent);
 }
 
+async function listPresenceAbsencesForDate(date) {
+  const dayStart = `${date} 00:00:00`;
+  const dayEnd = `${date} 23:59:59`;
+  const [rows] = await usr.query(
+    `${absenceSelectSql()}
+      WHERE p.deleted_at IS NULL
+        AND COALESCE(p.ends_at, ?) >= ?
+        AND p.starts_at <= ?
+        AND u.type = 1
+        AND u.status = 1
+        AND k.type = 1
+      ORDER BY p.starts_at, p.id`,
+    [FAR_FUTURE, dayStart, dayEnd],
+  );
+  return rows.map(mapAbsencePeriod);
+}
+
 function latestPresenceEventMap(events) {
   const map = new Map();
   for (const event of events || []) {
     map.set(String(event.student_id), event);
   }
   return map;
+}
+
+function firstPresenceArrivalMap(events) {
+  const map = new Map();
+  for (const event of events || []) {
+    if (event.event_type !== PRESENCE_EVENT_TYPES.ARRIVAL) continue;
+    const studentId = String(event.student_id);
+    if (!map.has(studentId)) map.set(studentId, event);
+  }
+  return map;
+}
+
+function presenceAbsencesByStudent(absences) {
+  const map = new Map();
+  for (const absence of absences || []) {
+    const studentId = String(absence.student_id);
+    if (!map.has(studentId)) map.set(studentId, []);
+    map.get(studentId).push(absence);
+  }
+  return map;
+}
+
+function presenceAbsenceForStudent(absences = [], selectedDate, nowSql) {
+  if (!absences.length) return null;
+  if (selectedDate === dateOnlyFromSql(nowSql)) {
+    return absences.find((absence) => isAbsenceActiveAt(absence, nowSql)) || null;
+  }
+  return absences[0] || null;
+}
+
+function isAbsenceActiveAt(absence, nowSql) {
+  const startsAt = String(absence?.starts_at || '');
+  const endsAt = String(absence?.ends_at || FAR_FUTURE);
+  return startsAt <= nowSql && endsAt >= nowSql;
+}
+
+function presenceBoardState({ latestEvent, absence, firstArrival, schoolDay } = {}) {
+  const state = presenceStateFromEvent(latestEvent);
+  if (absence) {
+    return {
+      ...state,
+      is_present: false,
+      status_code: 'absent',
+      status_badge_label: 'Отсутствует',
+      status_detail: [absence.reason_name, absence.period_label].filter(Boolean).join(' · '),
+    };
+  }
+  if (state.is_present && isLateArrival(firstArrival, schoolDay)) {
+    return {
+      ...state,
+      status_code: 'late',
+      status_badge_label: 'Опоздал',
+      status_detail: firstArrival.occurred_label || firstArrival.occurred_time || '',
+    };
+  }
+  return state;
+}
+
+function isLateArrival(firstArrival, schoolDay) {
+  if (!schoolDay?.from_schedule || !firstArrival?.occurred_at || !schoolDay.starts_at) return false;
+  const arrivalMs = parseSqlDateTimeMs(firstArrival.occurred_at);
+  const startsMs = parseSqlDateTimeMs(schoolDay.starts_at);
+  if (!Number.isFinite(arrivalMs) || !Number.isFinite(startsMs)) return false;
+  return ((arrivalMs - startsMs) / 60_000) > LATE_THRESHOLD_MINUTES;
 }
 
 export async function getTodayAbsenceOverview({ date, now, classId } = {}) {
@@ -1501,6 +1603,7 @@ function buildMonthlyAnalytics({ range, classes, selectedClass, students, period
   const riskBuckets = new Map();
   const absentStudents = new Set();
   const absenceDayKeys = new Set();
+  const nowSql = sqlNow();
 
   const visibleClasses = selectedClass.id === 'all'
     ? classes
@@ -1535,6 +1638,7 @@ function buildMonthlyAnalytics({ range, classes, selectedClass, students, period
     const isWithoutReason = isWithoutReasonCode(period.reason_code);
     const needsAttention = period.attention_status === 'needs_attention';
     const needsClarification = period.confirmation_status === 'needs_clarification';
+    const isPlanned = String(period.starts_at || '') > nowSql;
     if (isWithoutReason) withoutReasonPeriods += 1;
     if (needsAttention) needsAttentionPeriods += 1;
     if (needsClarification) needsClarificationPeriods += 1;
@@ -1590,6 +1694,9 @@ function buildMonthlyAnalytics({ range, classes, selectedClass, students, period
         riskBucket.needsAttention.add(dayKey);
         if (dailyBucket) dailyBucket.needsAttention.add(dayKey);
       }
+      if (isPlanned && dailyBucket) {
+        dailyBucket.plannedAbsences.add(dayKey);
+      }
     }
   }
 
@@ -1607,6 +1714,7 @@ function buildMonthlyAnalytics({ range, classes, selectedClass, students, period
       absence_hours_label: formatHoursShort(bucket.absenceHours),
       without_reason: bucket.withoutReason.size,
       needs_attention: bucket.needsAttention.size,
+      planned_absences: bucket.plannedAbsences.size,
       reason_segments: reasonSegments,
       reason_summary: dailyReasonSummary(reasonSegments),
       top_reason_code: reasonSegments[0]?.code || '',
@@ -1614,6 +1722,7 @@ function buildMonthlyAnalytics({ range, classes, selectedClass, students, period
       top_reason_color: reasonSegments[0]?.color || REASON_BAR_COLORS.default,
     };
   });
+  markDailySpikes(dailyRows);
   const maxDailyDays = Math.max(0, ...dailyRows.map((row) => row.absence_days));
   for (const row of dailyRows) {
     row.bar_width = maxDailyDays ? percentOf(row.absence_days, maxDailyDays) : 0;
@@ -1625,7 +1734,9 @@ function buildMonthlyAnalytics({ range, classes, selectedClass, students, period
     row.absence_days > 0 ||
     row.absence_periods > 0 ||
     row.without_reason > 0 ||
-    row.needs_attention > 0
+    row.needs_attention > 0 ||
+    row.planned_absences > 0 ||
+    row.has_spike
   ));
 
   const reasonRows = Array.from(reasonBuckets.values())
@@ -1720,6 +1831,7 @@ function buildMonthlyAnalytics({ range, classes, selectedClass, students, period
       ...classes.map((item) => ({
         id: item.id,
         name: item.name,
+        students_count: Number(item.students_count || 0),
         selected: String(item.id) === String(selectedClass.id),
       })),
     ],
@@ -1909,6 +2021,20 @@ function buildDailyCalendar(range, dailyRows) {
   return slots;
 }
 
+function markDailySpikes(dailyRows) {
+  for (let index = 0; index < dailyRows.length; index += 1) {
+    const row = dailyRows[index];
+    const previous = dailyRows[index - 1];
+    const currentDays = Number(row.absence_days || 0);
+    const previousDays = Number(previous?.absence_days || 0);
+    const hasSpike = currentDays >= 3 && currentDays >= Math.max(3, previousDays * 2);
+    row.has_spike = Boolean(previous && hasSpike);
+    row.spike_label = row.has_spike
+      ? `рост с ${previousDays} до ${currentDays} ученик-дн.`
+      : '';
+  }
+}
+
 function dailyReasonSegments(bucket) {
   const totalDays = bucket.absenceDays.size;
   return Array.from(bucket.reasonBuckets.values())
@@ -1982,8 +2108,10 @@ function richDailyHeatTitle(row) {
   for (const reason of row.reason_segments || []) {
     parts.push(`${reason.name}: ${reason.absence_days} дн., ${reason.students} уч., ${reason.periods} пер., ${reason.absence_hours_label}`);
   }
+  if (Number(row.planned_absences || 0) > 0) parts.push(`запланировано: ${Number(row.planned_absences || 0)}`);
   if (Number(row.without_reason || 0) > 0) parts.push(`без причины: ${Number(row.without_reason || 0)}`);
   if (Number(row.needs_attention || 0) > 0) parts.push(`внимание: ${Number(row.needs_attention || 0)}`);
+  if (row.has_spike) parts.push(`резкий рост: ${row.spike_label}`);
   return parts.join('\n');
 }
 
@@ -2034,6 +2162,20 @@ function dateTimeParts(value) {
   };
 }
 
+function parseSqlDateTimeMs(value) {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!match) return Number.NaN;
+  const [, year, month, day, hour, minute, second = '0'] = match;
+  return Date.UTC(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+    Number(second),
+  );
+}
+
 function createDailyBucket(date) {
   return {
     date,
@@ -2043,6 +2185,7 @@ function createDailyBucket(date) {
     absenceHours: 0,
     withoutReason: new Set(),
     needsAttention: new Set(),
+    plannedAbsences: new Set(),
     reasonBuckets: new Map(),
   };
 }
@@ -2684,21 +2827,25 @@ function presenceStateFromEvent(latestEvent) {
   const isPresent = latestEvent?.event_type === PRESENCE_EVENT_TYPES.ARRIVAL;
   const statusWord = hasEvent ? presenceEventTypeLabel(latestEvent.event_type) : 'Нет отметки';
   const statusTime = latestEvent?.occurred_label || formatPresenceEventDateTime(latestEvent?.occurred_at);
+  const statusCode = hasEvent ? (isPresent ? 'present' : 'departed') : 'none';
   return {
     has_event: hasEvent,
     is_present: isPresent,
+    status_code: statusCode,
     last_event_id: latestEvent?.id || '',
     last_event_type: latestEvent?.event_type || '',
     status_word: statusWord,
     status_time: statusTime,
     status_label: hasEvent ? `${statusWord} ${statusTime}` : statusWord,
+    status_badge_label: statusWord,
+    status_detail: statusTime,
     next_event_type: isPresent ? PRESENCE_EVENT_TYPES.DEPARTURE : PRESENCE_EVENT_TYPES.ARRIVAL,
-    next_action_label: isPresent ? 'Ушел' : 'Пришел',
+    next_action_label: isPresent ? 'Ушёл' : 'Пришёл',
   };
 }
 
 function presenceEventTypeLabel(eventType) {
-  return eventType === PRESENCE_EVENT_TYPES.DEPARTURE ? 'Ушел' : 'Пришел';
+  return eventType === PRESENCE_EVENT_TYPES.DEPARTURE ? 'Ушёл' : 'Пришёл';
 }
 
 function formatPresenceEventDateTime(value) {

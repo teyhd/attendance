@@ -8,6 +8,7 @@ import 'dotenv/config';
 
 import * as db from './vendor/db.mjs';
 import { isWithoutReasonCode } from './vendor/absence-reasons.mjs';
+import { buildAttendanceActions } from './vendor/attendance-ui.mjs';
 import { requireApiAuth, requirePageAuth, requirePermission, setupAuthRoutes } from './vendor/auth.mjs';
 
 import express from 'express';
@@ -113,7 +114,7 @@ const hbs = exphbs.create({
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 export const appDir = __dirname;
-const attendanceFilterIds = new Set(['all', 'current', 'future', 'missing', 'attention']);
+const attendanceFilterIds = new Set(['all']);
 
 app.engine('hbs', hbs.engine);
 app.set('view engine', 'hbs');
@@ -148,10 +149,10 @@ app.get('/attendance', requirePageAuth, asyncHandler(async (req, res) => {
   const selectedClass = resolveSelectedClass(classes, req.query.class);
   const selectedDate = normalizeDateInput(req.query.date) || formatDateInput(new Date());
   const schoolDay = await db.getSchoolDayBounds(selectedDate);
-  const activeFilter = normalizeAttendanceFilter(req.query.filter);
-  const q = String(req.query.q || '').trim();
+  const activeFilter = 'all';
+  const q = '';
   const allClassChildren = selectedClass ? await db.getStudentsByClass(selectedClass) : [];
-  const searchedChildren = filterStudents(allClassChildren, q);
+  const searchedChildren = allClassChildren;
   const requestedStudent = req.query.student;
   const summary = selectedClass ? await db.getAttendanceSummary({ classId: selectedClass, date: selectedDate }) : null;
   const classDayAbsences = selectedClass
@@ -219,8 +220,6 @@ app.get('/attendance', requirePageAuth, asyncHandler(async (req, res) => {
       classId: selectedClass,
       studentId: child.id,
       date: selectedDate,
-      filter: activeFilter,
-      q,
     }),
   }));
 
@@ -238,7 +237,7 @@ app.get('/attendance', requirePageAuth, asyncHandler(async (req, res) => {
   const reasons = await db.getAbsenceReasons();
 
   res.render('attendance', {
-    title: 'Посещаемость',
+    title: 'Пропуски',
     currentUser: req.authUser,
     activePage: 'attendance',
     classes,
@@ -262,11 +261,7 @@ app.get('/attendance', requirePageAuth, asyncHandler(async (req, res) => {
     q,
     reasons,
     defaultFrom: defaultDateTimeForDate(selectedDate, schoolDay),
-    filters: buildFilters(activeFilter, {
-      classId: selectedClass,
-      date: selectedDate,
-      q,
-    }),
+    attendanceActions: buildAttendanceActions(canManage),
     success: req.query.success,
     error: req.query.error,
     canManage,
@@ -279,10 +274,6 @@ app.get('/attendance/analytics', requirePageAuth, asyncHandler(async (req, res) 
   const analytics = await db.getMonthlyAttendanceAnalytics({
     month: req.query.month,
     classId,
-    risk: req.query.risk,
-    reason: req.query.reason,
-    q: req.query.q,
-    sort: req.query.sort,
   });
   const canManage = Boolean(req.authUser?.permissions?.mark_absence);
 
@@ -302,7 +293,7 @@ app.get('/attendance/presence', requirePageAuth, requirePermission('manage_prese
   const board = await db.getPresenceBoard({ date: selectedDate });
 
   res.render('presence', {
-    title: 'Приход / уход',
+    title: 'Ручной ввод',
     currentUser: req.authUser,
     activePage: 'presence',
     board,
@@ -326,8 +317,6 @@ app.post('/attendance', requirePageAuth, requirePermission('mark_absence'), asyn
       classId: absence.class_id,
       studentId: absence.student_id,
       date: dateOnlyFromDateTime(absence.starts_at) || req.body.date,
-      filter: req.body.filter,
-      q: req.body.q,
       analyticsMonth: req.body.analyticsMonth,
       success: 'created',
     }));
@@ -336,8 +325,6 @@ app.post('/attendance', requirePageAuth, requirePermission('mark_absence'), asyn
       classId: req.body.classId,
       studentId: req.body.childId,
       date: req.body.date,
-      filter: req.body.filter,
-      q: req.body.q,
       analyticsMonth: req.body.analyticsMonth,
       error: userErrorMessage(err),
     }));
@@ -352,8 +339,6 @@ app.post('/attendance/:absenceId/update', requirePageAuth, requirePermission('ma
         classId: req.body.classId,
         studentId: req.body.childId,
         date: req.body.date,
-        filter: req.body.filter,
-        q: req.body.q,
         analyticsMonth: req.body.analyticsMonth,
         error: 'Отметка не найдена',
       }));
@@ -362,8 +347,6 @@ app.post('/attendance/:absenceId/update', requirePageAuth, requirePermission('ma
       classId: absence.class_id,
       studentId: absence.student_id,
       date: dateOnlyFromDateTime(absence.starts_at) || req.body.date,
-      filter: req.body.filter,
-      q: req.body.q,
       analyticsMonth: req.body.analyticsMonth,
       success: 'updated',
     }));
@@ -372,8 +355,6 @@ app.post('/attendance/:absenceId/update', requirePageAuth, requirePermission('ma
       classId: req.body.classId,
       studentId: req.body.childId,
       date: req.body.date,
-      filter: req.body.filter,
-      q: req.body.q,
       analyticsMonth: req.body.analyticsMonth,
       error: userErrorMessage(err),
     }));
@@ -386,8 +367,6 @@ app.post('/attendance/:absenceId/delete', requirePageAuth, requirePermission('ma
     classId: req.body.classId,
     studentId: req.body.childId,
     date: req.body.date,
-    filter: req.body.filter,
-    q: req.body.q,
     analyticsMonth: req.body.analyticsMonth,
     success: deleted ? 'deleted' : '',
     error: deleted ? '' : 'Отметка не найдена',
@@ -400,8 +379,6 @@ app.post('/attendance/:absenceId/resolve', requirePageAuth, requirePermission('m
     classId: req.body.classId || absence?.class_id,
     studentId: req.body.childId || absence?.student_id,
     date: req.body.date,
-    filter: req.body.filter,
-    q: req.body.q,
     analyticsMonth: req.body.analyticsMonth,
     success: absence ? 'resolved' : '',
     error: absence ? '' : 'Отметка не найдена',
@@ -823,10 +800,6 @@ function normalizeAttendanceFilter(value) {
 function buildFilters(activeFilter, context = {}) {
   const filters = [
     { id: 'all', name: 'Все' },
-    { id: 'current', name: 'Сейчас' },
-    { id: 'future', name: 'Будущие' },
-    { id: 'missing', name: 'Без причины' },
-    { id: 'attention', name: 'Требуют внимания' },
   ];
   return filters.map((filter) => ({
     ...filter,

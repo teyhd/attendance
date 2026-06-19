@@ -29,10 +29,6 @@
             {{/each}}
           </select>
         </label>
-        <input type="hidden" name="risk" value="{{analytics.risk_filters.risk}}" />
-        <input type="hidden" name="reason" value="{{analytics.risk_filters.reason}}" />
-        <input type="hidden" name="q" value="{{analytics.risk_filters.q}}" />
-        <input type="hidden" name="sort" value="{{analytics.risk_filters.sort}}" />
         <button type="submit" class="px-4 py-2 bg-gray-900 text-white rounded hover:bg-gray-800">Показать</button>
         <button type="button" data-print-analytics class="px-4 py-2 border rounded bg-white text-gray-700 hover:bg-gray-50">Печать</button>
         <button type="button" data-export-analytics class="px-4 py-2 border rounded bg-white text-gray-700 hover:bg-gray-50">CSV</button>
@@ -446,6 +442,17 @@
                 {{#if absence_days}}
                   <div class="mt-auto space-y-1">
                     <div class="truncate text-[11px] font-medium leading-tight">{{reason_summary}}</div>
+                    <div class="flex flex-wrap gap-1">
+                      {{#if planned_absences}}
+                        <span class="rounded bg-sky-100 px-1 text-[10px] font-medium text-sky-800">план</span>
+                      {{/if}}
+                      {{#if without_reason}}
+                        <span class="rounded bg-amber-100 px-1 text-[10px] font-medium text-amber-800">без причины</span>
+                      {{/if}}
+                      {{#if has_spike}}
+                        <span class="rounded bg-red-100 px-1 text-[10px] font-medium text-red-800">рост</span>
+                      {{/if}}
+                    </div>
                     <div class="flex h-1.5 overflow-hidden rounded-full bg-white/70">
                       {{#each reason_segments}}
                         <span class="h-1.5" style="width: {{width}}%; background-color: {{color}};" title="{{title}}"></span>
@@ -470,11 +477,17 @@
                         </div>
                       {{/each}}
                     </div>
+                    {{#if planned_absences}}
+                      <div class="mt-2 rounded bg-sky-50 px-2 py-1 text-sky-800">Запланировано: {{planned_absences}}</div>
+                    {{/if}}
                     {{#if without_reason}}
                       <div class="mt-2 rounded bg-amber-50 px-2 py-1 text-amber-800">Без причины: {{without_reason}}</div>
                     {{/if}}
                     {{#if needs_attention}}
                       <div class="mt-2 rounded bg-red-50 px-2 py-1 text-red-800">Требуют внимания: {{needs_attention}}</div>
+                    {{/if}}
+                    {{#if has_spike}}
+                      <div class="mt-2 rounded bg-red-50 px-2 py-1 text-red-800">Резкий рост: {{spike_label}}</div>
                     {{/if}}
                   </div>
                 {{/if}}
@@ -487,6 +500,8 @@
             <span class="inline-flex items-center gap-1"><span class="h-2.5 w-2.5 rounded-full" style="background-color: {{bar_color}};"></span>{{name}}</span>
           {{/each}}
           <span class="inline-flex items-center gap-1"><span class="h-2.5 w-2.5 rounded border" style="background-color:#fee2e2;border-color:#fecaca;"></span>внимание</span>
+          <span class="inline-flex items-center gap-1"><span class="h-2.5 w-2.5 rounded border" style="background-color:#dbeafe;border-color:#bfdbfe;"></span>план</span>
+          <span class="inline-flex items-center gap-1"><span class="h-2.5 w-2.5 rounded border" style="background-color:#fee2e2;border-color:#fecaca;"></span>рост</span>
         </div>
       </section>
 
@@ -523,7 +538,7 @@
           {{#each analytics.classes}}
             <div>
               <div class="flex items-center justify-between gap-2 text-sm">
-                <a href="/attendance?class={{class_id}}&date={{../analytics.period.to}}&filter=attention" class="font-medium text-gray-900 hover:text-indigo-700">{{class_name}}</a>
+                <a href="/attendance?class={{class_id}}&date={{../analytics.period.to}}" class="font-medium text-gray-900 hover:text-indigo-700">{{class_name}}</a>
                 <span class="text-gray-500">{{absent_students}}/{{students_total}} · {{absence_days}} дн. · {{absence_hours_label}}</span>
               </div>
               <div class="mt-1 h-2 rounded-full bg-gray-100 overflow-hidden">
@@ -543,45 +558,9 @@
       </section>
 
       <section data-analytics-panel="summary" id="risk-students" class="bg-white shadow rounded-lg p-4 min-w-0">
-        <div class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <h2 class="text-base font-semibold text-gray-900">Требуют внимания</h2>
-            <div class="mt-1 text-sm text-gray-500">{{analytics.risk_students_filtered}} из {{analytics.risk_students_total}}</div>
-          </div>
-          <form method="get" action="/attendance/analytics" class="no-print grid gap-2 sm:grid-cols-2 lg:grid-cols-5 lg:items-end">
-            <input type="hidden" name="month" value="{{analytics.month}}" />
-            <input type="hidden" name="class" value="{{analytics.class_id}}" />
-            <label class="text-sm text-gray-700">
-              <span class="block mb-1">Сигнал</span>
-              <select name="risk" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
-                {{#each analytics.risk_filter_options}}
-                  <option value="{{id}}" {{#if selected}}selected{{/if}}>{{name}}</option>
-                {{/each}}
-              </select>
-            </label>
-            <label class="text-sm text-gray-700">
-              <span class="block mb-1">Причина</span>
-              <select name="reason" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
-                <option value="">Все причины</option>
-                {{#each analytics.risk_reason_options}}
-                  <option value="{{code}}" {{#if selected}}selected{{/if}}>{{name}} ({{count}})</option>
-                {{/each}}
-              </select>
-            </label>
-            <label class="text-sm text-gray-700">
-              <span class="block mb-1">Поиск</span>
-              <input name="q" value="{{analytics.risk_filters.q}}" type="search" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500" />
-            </label>
-            <label class="text-sm text-gray-700">
-              <span class="block mb-1">Сортировка</span>
-              <select name="sort" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
-                {{#each analytics.risk_sort_options}}
-                  <option value="{{id}}" {{#if selected}}selected{{/if}}>{{name}}</option>
-                {{/each}}
-              </select>
-            </label>
-            <button type="submit" class="px-4 py-2 bg-gray-900 text-white rounded hover:bg-gray-800">Показать</button>
-          </form>
+        <div>
+          <h2 class="text-base font-semibold text-gray-900">Проблемные случаи</h2>
+          <div class="mt-1 text-sm text-gray-500">{{analytics.risk_students_total}}</div>
         </div>
 
         {{#if analytics.risk_students}}
@@ -652,7 +631,7 @@
             </table>
           </div>
         {{else}}
-          <div class="mt-4 rounded border border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">По текущим фильтрам учеников нет.</div>
+          <div class="mt-4 rounded border border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">Проблемных случаев нет.</div>
         {{/if}}
       </section>
     </div>

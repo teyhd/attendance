@@ -2,7 +2,7 @@
   <div class="bg-white shadow rounded-lg p-4 space-y-4">
     <div class="flex flex-col xl:flex-row xl:items-end gap-3">
       <div class="flex-1">
-        <h1 class="text-xl font-semibold text-gray-900">Посещаемость</h1>
+        <h1 class="text-xl font-semibold text-gray-900">Пропуски</h1>
         <div class="mt-1 text-sm text-gray-600">{{displayDate selectedDate}}</div>
       </div>
 
@@ -24,12 +24,6 @@
           <span class="block mb-1">Дата</span>
           <input id="attendance-date" name="date" value="{{selectedDate}}" type="date" class="w-full sm:w-40 rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500" />
         </label>
-        <label class="text-sm text-gray-700">
-          <span class="block mb-1">Поиск</span>
-          <input name="q" value="{{q}}" type="search" class="w-full sm:w-52 rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500" />
-        </label>
-        <input type="hidden" name="filter" value="{{activeFilter}}" />
-        <button type="submit" class="px-4 py-2 bg-gray-900 text-white rounded hover:bg-gray-800">Показать</button>
       </form>
     </div>
 
@@ -54,11 +48,13 @@
       </div>
     {{/if}}
 
-    <div class="flex flex-wrap gap-2">
-      {{#each filters}}
-        <a href="{{{href}}}" class="px-3 py-1.5 text-sm rounded border {{#if active}}bg-indigo-600 text-white border-indigo-600{{else}}bg-white text-gray-700 hover:bg-gray-50{{/if}}">{{name}}</a>
-      {{/each}}
-    </div>
+    {{#if attendanceActions.length}}
+      <div class="flex flex-wrap gap-2">
+        {{#each attendanceActions}}
+          <button type="button" data-attendance-action="{{target}}" class="rounded border border-indigo-200 bg-white px-3 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-50">{{label}}</button>
+        {{/each}}
+      </div>
+    {{/if}}
   </div>
 
   <div class="grid lg:grid-cols-[320px_1fr] gap-4">
@@ -69,8 +65,6 @@
       </div>
       <form id="attendance-class-form" method="get" action="/attendance" class="mb-3">
         <input type="hidden" name="date" value="{{selectedDate}}" />
-        <input type="hidden" name="filter" value="{{activeFilter}}" />
-        <input type="hidden" name="q" value="{{q}}" />
         <label class="block text-sm text-gray-700">
           <span class="mb-1 block text-xs font-semibold uppercase text-gray-500">Класс</span>
           <select id="class-select" data-testid="class-select" name="class" class="h-11 w-full rounded border border-gray-300 bg-white px-3 text-base font-medium text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500">
@@ -175,8 +169,6 @@
                 <input type="hidden" name="childId" value="{{selectedChild.id}}" />
                 <input type="hidden" name="classId" value="{{selectedChild.classId}}" />
                 <input type="hidden" name="date" value="{{selectedDate}}" />
-                <input type="hidden" name="filter" value="{{activeFilter}}" />
-                <input type="hidden" name="q" value="{{q}}" />
                 <input type="hidden" name="source" value="mentor" />
 
                 <div class="grid gap-3 md:grid-cols-2">
@@ -223,7 +215,7 @@
               {{#if currentAbsences.length}}
                 {{#if activeNowAbsences.length}}
                   <div>
-                    <div class="mb-1 text-xs font-semibold uppercase text-gray-500">Сейчас</div>
+                    <div class="mb-1 text-xs font-semibold uppercase text-gray-500">Активно</div>
                     <div class="divide-y divide-gray-100">
                       {{#each activeNowAbsences}}
                         <div class="py-2 flex flex-col xl:flex-row xl:items-start xl:justify-between gap-2">
@@ -243,8 +235,6 @@
                               <input type="hidden" name="childId" value="{{student_id}}" />
                               <input type="hidden" name="classId" value="{{class_id}}" />
                               <input type="hidden" name="date" value="{{../selectedDate}}" />
-                              <input type="hidden" name="filter" value="{{../activeFilter}}" />
-                              <input type="hidden" name="q" value="{{../q}}" />
                               <button type="submit" class="px-3 py-1.5 text-sm bg-green-600 text-white rounded hover:bg-green-700">Закрыть вопрос</button>
                             </form>
                           {{/if}}
@@ -276,8 +266,6 @@
                               <input type="hidden" name="childId" value="{{student_id}}" />
                               <input type="hidden" name="classId" value="{{class_id}}" />
                               <input type="hidden" name="date" value="{{../selectedDate}}" />
-                              <input type="hidden" name="filter" value="{{../activeFilter}}" />
-                              <input type="hidden" name="q" value="{{../q}}" />
                               <button type="submit" class="px-3 py-1.5 text-sm bg-green-600 text-white rounded hover:bg-green-700">Закрыть вопрос</button>
                             </form>
                           {{/if}}
@@ -323,8 +311,6 @@
                                   <input type="hidden" name="childId" value="{{student_id}}" />
                                   <input type="hidden" name="classId" value="{{class_id}}" />
                                   <input type="hidden" name="date" value="{{../selectedDate}}" />
-                                  <input type="hidden" name="filter" value="{{../activeFilter}}" />
-                                  <input type="hidden" name="q" value="{{../q}}" />
                                   <div class="grid sm:grid-cols-2 gap-2">
                                     <label class="text-sm text-gray-700">
                                       <span class="block mb-1">Начало</span>
@@ -375,8 +361,6 @@
                                 <input type="hidden" name="childId" value="{{student_id}}" />
                                 <input type="hidden" name="classId" value="{{class_id}}" />
                                 <input type="hidden" name="date" value="{{../selectedDate}}" />
-                                <input type="hidden" name="filter" value="{{../activeFilter}}" />
-                                <input type="hidden" name="q" value="{{../q}}" />
                                 <button type="submit" class="px-3 py-1.5 text-sm bg-green-50 text-green-700 rounded hover:bg-green-100">Закрыть</button>
                               </form>
                             {{/if}}
@@ -384,8 +368,6 @@
                               <input type="hidden" name="childId" value="{{student_id}}" />
                               <input type="hidden" name="classId" value="{{class_id}}" />
                               <input type="hidden" name="date" value="{{../selectedDate}}" />
-                              <input type="hidden" name="filter" value="{{../activeFilter}}" />
-                              <input type="hidden" name="q" value="{{../q}}" />
                               <button type="submit" class="px-3 py-1.5 text-sm bg-red-50 text-red-700 rounded hover:bg-red-100">Удалить</button>
                             </form>
                           </div>
@@ -411,6 +393,8 @@
 (() => {
   const classSelect = document.getElementById('class-select');
   classSelect?.addEventListener('change', () => classSelect.closest('form')?.requestSubmit());
+  const dateInput = document.getElementById('attendance-date');
+  dateInput?.addEventListener('change', () => dateInput.closest('form')?.requestSubmit());
 
   document.querySelectorAll('[data-flash]').forEach((node) => {
     window.setTimeout(() => {
@@ -420,6 +404,7 @@
   });
 
   const tabsRoot = document.querySelector('[data-attendance-tabs]');
+  let activateAttendanceTab = null;
   if (tabsRoot) {
     const storageKey = 'attendance.activeTab';
     const buttons = Array.from(tabsRoot.querySelectorAll('[data-attendance-tab]'));
@@ -449,6 +434,7 @@
       sessionStorage.setItem(storageKey, nextTab);
       if (updateLocation) window.history.replaceState(null, '', `#attendance-${nextTab}`);
     };
+    activateAttendanceTab = activate;
 
     buttons.forEach((button) => {
       button.addEventListener('click', () => activate(button.dataset.attendanceTab, true));
@@ -456,6 +442,20 @@
 
     activate(available.has(hashTab) ? hashTab : (available.has(storedTab) ? storedTab : defaultTab));
   }
+
+  const focusNewAbsenceField = (target) => {
+    activateAttendanceTab?.('mark', true);
+    window.setTimeout(() => {
+      const selector = target === 'planned' ? '#absence-from' : '#reason';
+      const field = document.querySelector(selector);
+      field?.focus();
+      field?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }, 0);
+  };
+
+  document.querySelectorAll('[data-attendance-action]').forEach((button) => {
+    button.addEventListener('click', () => focusNewAbsenceField(button.dataset.attendanceAction));
+  });
 
   const applyReasonState = (form, syncStatuses = false) => {
     const reasonSelect = form.querySelector('select[name="reason"]');
