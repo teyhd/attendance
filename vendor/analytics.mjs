@@ -74,6 +74,64 @@ export function percentOf(value, total) {
   return Math.round((Number(value || 0) / Number(total)) * 100);
 }
 
+export function countActualPresenceDays(events = []) {
+  return presenceDayKeys(events).size;
+}
+
+export function expectedPresenceDates(range, { publishedSchoolDays = [], activeWeekdays = [1, 2, 3, 4, 5] } = {}) {
+  const rangeDays = Array.isArray(range?.days) ? range.days : [];
+  if (!rangeDays.length) return [];
+
+  const rangeDaySet = new Set(rangeDays);
+  const published = [...new Set((publishedSchoolDays || []).map(dateOnly).filter((day) => rangeDaySet.has(day)))];
+  if (published.length) return published.sort();
+
+  const weekdaySet = new Set((activeWeekdays || [])
+    .map(Number)
+    .filter((day) => day >= 1 && day <= 7));
+  const fallbackWeekdays = weekdaySet.size ? weekdaySet : new Set([1, 2, 3, 4, 5]);
+  return rangeDays.filter((day) => fallbackWeekdays.has(isoWeekday(day)));
+}
+
+export function buildClassPresenceSummary({
+  range,
+  studentsTotal = 0,
+  arrivals = [],
+  lateness = {},
+  todayAbsences = {},
+  publishedSchoolDays = [],
+  activeWeekdays = [1, 2, 3, 4, 5],
+  absenceDays = 0,
+  needsAttention = 0,
+  needsClarification = 0,
+  withoutReason = 0,
+  riskStudentsTotal = 0,
+} = {}) {
+  const presenceDays = countActualPresenceDays(arrivals);
+  const schoolDays = expectedPresenceDates(range, { publishedSchoolDays, activeWeekdays });
+  const expectedPresenceDays = Math.max(0, Number(studentsTotal || 0)) * schoolDays.length;
+  const lateDays = Number(lateness?.late_days_total || 0);
+  const coveredArrivalDays = Number.isFinite(Number(lateness?.coverage?.covered_arrival_days))
+    ? Number(lateness.coverage.covered_arrival_days)
+    : Math.max(0, presenceDays - Number(lateness?.data_gaps_total || 0));
+
+  return {
+    attendance_percent: percentOf(presenceDays, expectedPresenceDays),
+    presence_days: presenceDays,
+    expected_presence_days: expectedPresenceDays,
+    expected_school_days: schoolDays.length,
+    absent_today: Number(todayAbsences?.totals?.absent_students_today || 0),
+    late_days: lateDays,
+    on_time_days: Math.max(0, coveredArrivalDays - lateDays),
+    covered_arrival_days: coveredArrivalDays,
+    risk_students_total: Number(riskStudentsTotal || 0),
+    absence_days: Number(absenceDays || 0),
+    needs_attention: Number(needsAttention || 0),
+    needs_clarification: Number(needsClarification || 0),
+    without_reason: Number(withoutReason || 0),
+  };
+}
+
 export function hoursWithinRange(startsAt, endsAt, range) {
   const startMs = parseDateTimeMs(startsAt);
   const endMs = parseDateTimeMs(endsAt || endOfStartDay(startsAt));
@@ -121,6 +179,25 @@ function parseDateTimeMs(value) {
     Number(minute),
     Number(second),
   );
+}
+
+function presenceDayKeys(events = []) {
+  const keys = new Set();
+  for (const event of events || []) {
+    if (event?.cancelled_at) continue;
+    if (event?.event_type && event.event_type !== 'arrival') continue;
+    const studentId = String(event?.student_id || event?.studentId || '').trim();
+    const day = dateOnly(event?.attendance_date || event?.arrival_at || event?.occurred_at);
+    if (studentId && day) keys.add(`${studentId}|${day}`);
+  }
+  return keys;
+}
+
+function isoWeekday(dateText) {
+  const [year, month, day] = String(dateText || '').split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  const weekday = date.getUTCDay();
+  return weekday === 0 ? 7 : weekday;
 }
 
 function endOfStartDay(value) {

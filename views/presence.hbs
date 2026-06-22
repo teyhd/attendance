@@ -1,30 +1,32 @@
 <section data-presence-root data-date="{{board.date}}" class="space-y-3">
-  <div class="rounded-md border border-gray-200 bg-white p-3">
-    <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-      <div>
-        <h1 class="text-xl font-semibold text-gray-950">Ручной ввод</h1>
-        <div class="mt-1 text-sm text-gray-600">{{board.date_label}} · {{board.totals.present}} / {{board.totals.students}}</div>
+  <div class="sticky top-2 z-20 space-y-2">
+    <div class="rounded-md border border-gray-200 bg-white p-3 shadow-sm">
+      <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+        <div>
+          <h1 class="text-xl font-semibold text-gray-950">Ручной ввод</h1>
+          <div class="mt-1 text-sm text-gray-600">{{board.date_label}} · {{board.totals.present}} / {{board.totals.students}}</div>
+        </div>
       </div>
+
+      {{#if board.classes.length}}
+        <div class="mt-3 flex gap-2 overflow-x-auto pb-1">
+          {{#each board.classes}}
+            <a href="#{{anchor}}" class="shrink-0 rounded border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-800 hover:border-gray-900">{{name}}</a>
+          {{/each}}
+        </div>
+      {{/if}}
     </div>
 
-    {{#if board.classes.length}}
-      <div class="mt-3 flex gap-2 overflow-x-auto pb-1">
-        {{#each board.classes}}
-          <a href="#{{anchor}}" class="shrink-0 rounded border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-800 hover:border-gray-900">{{name}}</a>
-        {{/each}}
-      </div>
-    {{/if}}
-  </div>
-
-  <div data-presence-flash class="hidden">
-    <span data-presence-flash-text class="min-w-0 flex-1 truncate"></span>
-    <button type="button" data-presence-cancel class="hidden shrink-0 rounded border border-current px-3 py-1.5 text-sm font-medium">Отменить</button>
+    <div data-presence-flash class="hidden">
+      <span data-presence-flash-text class="min-w-0 flex-1 truncate"></span>
+      <button type="button" data-presence-cancel class="hidden shrink-0 rounded border border-current px-3 py-1.5 text-sm font-medium">Отменить</button>
+    </div>
   </div>
 
   {{#if board.classes.length}}
     <div class="space-y-3">
       {{#each board.classes}}
-        <section id="{{anchor}}" data-presence-class class="scroll-mt-4 rounded-md border border-gray-200 bg-white">
+        <section id="{{anchor}}" data-presence-class class="scroll-mt-4 rounded-md border border-gray-200 bg-white" style="scroll-margin-top: 9rem;">
           <div class="flex items-center justify-between border-b border-gray-200 px-3 py-2">
             <h2 class="text-lg font-semibold text-gray-950">{{name}}</h2>
             <span class="text-sm text-gray-500">{{students_label}}</span>
@@ -65,7 +67,7 @@
   const flash = root.querySelector('[data-presence-flash]');
   const flashText = root.querySelector('[data-presence-flash-text]');
   const cancelButton = root.querySelector('[data-presence-cancel]');
-  const flashBase = 'sticky top-2 z-20 flex items-center gap-3 rounded-md border px-3 py-2 text-sm shadow-sm';
+  const flashBase = 'flex items-center gap-3 rounded-md border px-3 py-2 text-sm shadow-sm';
 
   const eventLabel = (type) => type === 'departure' ? 'Ушёл' : 'Пришёл';
   const cardToneClasses = [

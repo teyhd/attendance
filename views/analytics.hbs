@@ -16,7 +16,7 @@
         <div class="mt-1 text-sm text-gray-600">{{analytics.month_label}} · {{analytics.class_name}}</div>
       </div>
 
-      <form method="get" action="/attendance/analytics" class="no-print flex flex-col sm:flex-row gap-2 sm:items-end">
+      <form method="get" action="/attendance/analytics" data-analytics-controls class="no-print flex flex-col sm:flex-row gap-2 sm:items-end">
         <label class="text-sm text-gray-700">
           <span class="block mb-1">Месяц</span>
           <input name="month" value="{{analytics.month}}" type="month" class="w-full sm:w-40 rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500" />
@@ -29,7 +29,6 @@
             {{/each}}
           </select>
         </label>
-        <button type="submit" class="px-4 py-2 bg-gray-900 text-white rounded hover:bg-gray-800">Показать</button>
         <button type="button" data-print-analytics class="px-4 py-2 border rounded bg-white text-gray-700 hover:bg-gray-50">Печать</button>
         <button type="button" data-export-analytics class="px-4 py-2 border rounded bg-white text-gray-700 hover:bg-gray-50">CSV</button>
       </form>
@@ -42,6 +41,13 @@
             <div class="text-xs text-gray-500">{{label}}</div>
             <div class="mt-1 text-2xl font-semibold text-gray-900">{{value}}</div>
             <div class="mt-1 text-xs text-gray-500">{{hint}}</div>
+            {{#if details}}
+              <div class="mt-2 flex flex-wrap gap-1">
+                {{#each details}}
+                  <span class="rounded-full px-2 py-0.5 text-[11px] font-medium {{tone_class}}">{{label}}</span>
+                {{/each}}
+              </div>
+            {{/if}}
             <div class="mt-2 text-xs font-medium text-indigo-700">{{action_label}}</div>
           </a>
         {{else}}
@@ -49,6 +55,13 @@
             <div class="text-xs text-gray-500">{{label}}</div>
             <div class="mt-1 text-2xl font-semibold text-gray-900">{{value}}</div>
             <div class="mt-1 text-xs text-gray-500">{{hint}}</div>
+            {{#if details}}
+              <div class="mt-2 flex flex-wrap gap-1">
+                {{#each details}}
+                  <span class="rounded-full px-2 py-0.5 text-[11px] font-medium {{tone_class}}">{{label}}</span>
+                {{/each}}
+              </div>
+            {{/if}}
           </div>
         {{/if}}
       {{/each}}
@@ -72,9 +85,16 @@
 
       <section data-analytics-panel="summary" class="space-y-4">
         <div id="today-absences" class="bg-white shadow rounded-lg p-4">
-          <div class="flex items-center justify-between gap-3">
-            <h2 class="text-base font-semibold text-gray-900">Отсутствуют сегодня</h2>
-            <div class="text-sm text-gray-500">{{analytics.today_absences.totals.absent_students_today}}</div>
+          <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 class="text-base font-semibold text-gray-900">Отсутствующие</h2>
+              <div class="mt-1 flex flex-wrap gap-1 text-xs">
+                <span class="rounded-full bg-gray-100 px-2 py-0.5 text-gray-600">{{analytics.class_summary.absent_today_label}}</span>
+                <span class="rounded-full {{#if analytics.class_summary.without_reason}}bg-amber-100 text-amber-800{{else}}bg-gray-100 text-gray-600{{/if}} px-2 py-0.5">без причины: {{analytics.class_summary.without_reason}}</span>
+                <span class="rounded-full {{#if analytics.class_summary.needs_attention}}bg-red-100 text-red-800{{else}}bg-gray-100 text-gray-600{{/if}} px-2 py-0.5">внимание: {{analytics.class_summary.needs_attention}}</span>
+                <span class="rounded-full {{#if analytics.class_summary.needs_clarification}}bg-yellow-100 text-yellow-800{{else}}bg-gray-100 text-gray-600{{/if}} px-2 py-0.5">уточнить: {{analytics.class_summary.needs_clarification}}</span>
+              </div>
+            </div>
           </div>
           {{#if analytics.today_absences.students}}
             <div class="mt-3 overflow-x-auto">
@@ -308,7 +328,6 @@
               <h3 class="text-sm font-semibold text-gray-900">Классы и дети</h3>
               <div class="flex flex-col gap-2 sm:items-end">
                 <div class="flex flex-wrap gap-1" data-lateness-filter-group>
-                  <button type="button" data-lateness-filter="all" class="rounded border px-2.5 py-1.5 text-xs font-medium">Все</button>
                   <button type="button" data-lateness-filter="late" class="rounded border px-2.5 py-1.5 text-xs font-medium">Опоздали</button>
                   <button type="button" data-lateness-filter="arrived" class="rounded border px-2.5 py-1.5 text-xs font-medium">Вовремя</button>
                   <button type="button" data-lateness-filter="gap" class="rounded border px-2.5 py-1.5 text-xs font-medium">Пробелы</button>
@@ -392,31 +411,6 @@
           </div>
         </div>
 
-        <div>
-          <h3 class="text-sm font-semibold text-gray-900">Дни</h3>
-          {{#if analytics.lateness.daily_active}}
-            <div class="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-              {{#each analytics.lateness.daily_active}}
-                <div class="rounded border border-gray-200 p-3 text-sm">
-                  <div class="flex items-center justify-between gap-2">
-                    <span class="font-medium text-gray-900">{{date_label}}</span>
-                    <span class="text-gray-500">{{late_days}} опозд.</span>
-                  </div>
-                  <div class="mt-1 flex justify-between gap-2 text-xs text-gray-500">
-                    <span>{{late_students}} уч.</span>
-                    <span>{{missed_lessons}} уроков</span>
-                    <span>{{avg_late_minutes}} мин.</span>
-                  </div>
-                  {{#if data_gaps}}
-                    <div class="mt-1 text-xs text-red-700">Пробелы: {{data_gaps}}</div>
-                  {{/if}}
-                </div>
-              {{/each}}
-            </div>
-          {{else}}
-            <p class="mt-2 text-sm text-gray-500">Дней с опозданиями нет.</p>
-          {{/if}}
-        </div>
       </section>
 
       <section data-analytics-panel="calendar" id="absence-calendar" class="hidden bg-white shadow rounded-lg p-4">
@@ -560,7 +554,7 @@
       <section data-analytics-panel="summary" id="risk-students" class="bg-white shadow rounded-lg p-4 min-w-0">
         <div>
           <h2 class="text-base font-semibold text-gray-900">Проблемные случаи</h2>
-          <div class="mt-1 text-sm text-gray-500">{{analytics.risk_students_total}}</div>
+          <div class="mt-1 text-sm text-gray-500">{{analytics.class_summary.risk_students_label}}</div>
         </div>
 
         {{#if analytics.risk_students}}
@@ -660,6 +654,11 @@
 <script id="analytics-data" type="application/json">{{{json analytics}}}</script>
 <script>
 (() => {
+  const form = document.querySelector('[data-analytics-controls]');
+  form?.querySelectorAll('input[name="month"], select[name="class"]').forEach((control) => {
+    control.addEventListener('change', () => form.requestSubmit());
+  });
+
   document.querySelector('[data-print-analytics]')?.addEventListener('click', () => window.print());
 })();
 
@@ -1119,6 +1118,7 @@
             <label class="text-sm text-gray-700">
               <span class="mb-1 block">Причина</span>
               <select name="reason" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
+                ${period.reason_code === 'excused' ? `<option value="${attr(period.reason_code)}" selected>${escapeHtml(period.reason_name)}</option>` : ''}
                 ${reasons.map((reason) => `<option value="${attr(reason.code)}" ${reason.code === period.reason_code ? 'selected' : ''}>${escapeHtml(reason.name)}</option>`).join('')}
               </select>
             </label>

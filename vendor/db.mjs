@@ -1,5 +1,6 @@
 import mysql from 'mysql2';
 import {
+  buildClassPresenceSummary,
   buildMonthRange,
   compareClassNames,
   expandDateRangeWithinMonth,
@@ -1082,21 +1083,38 @@ export async function getStudentContext(studentId, { days = 30 } = {}) {
   }
 
   const from = daysAgoDateTime(safeDays);
-  const [rows] = await usr.query(
-    `${absenceSelectSql()}
-      WHERE p.student_id = ?
-        AND p.deleted_at IS NULL
-        AND COALESCE(p.ends_at, ?) >= ?
-      ORDER BY p.starts_at DESC, p.id DESC
-      LIMIT 50`,
-    [studentId, FAR_FUTURE, from],
-  );
+  const fromDate = dateOnlyFromSql(from);
+  const [absenceResult, presenceResult] = await Promise.all([
+    usr.query(
+      `${absenceSelectSql()}
+        WHERE p.student_id = ?
+          AND p.deleted_at IS NULL
+          AND COALESCE(p.ends_at, ?) >= ?
+        ORDER BY p.starts_at DESC, p.id DESC
+        LIMIT 50`,
+      [studentId, FAR_FUTURE, from],
+    ),
+    usr.query(
+      `SELECT COUNT(DISTINCT e.attendance_date) AS present_days
+         FROM attendance.presence_events e
+        WHERE e.student_id = ?
+          AND e.event_type = ?
+          AND e.cancelled_at IS NULL
+          AND e.attendance_date >= ?`,
+      [studentId, PRESENCE_EVENT_TYPES.ARRIVAL, fromDate],
+    ),
+  ]);
+  const rows = absenceResult[0];
+  const presentDays = Number(presenceResult[0][0]?.present_days || 0);
   const absences = rows.map(mapAbsencePeriod);
   const lastComment = absences.find((absence) => absence.comment)?.comment || '';
 
   return {
     student,
     days: safeDays,
+    present_days: presentDays,
+    present_days_window: safeDays,
+    present_days_label: presenceDaysLabel(presentDays, safeDays),
     absence_count: absences.length,
     needs_attention_count: absences.filter((absence) => absence.attention_status === 'needs_attention').length,
     without_reason_count: absences.filter((absence) => isWithoutReasonCode(absence.reason_code)).length,
@@ -1195,6 +1213,25 @@ export async function getMonthlyAttendanceAnalytics({ month, classId, risk, reas
   analytics.risk_sort_options = worklist.sort_options;
   analytics.risk_reason_options = worklist.reason_options;
   analytics.risk_filters = worklist.filters;
+  const classSummary = buildClassPresenceSummary({
+    range,
+    studentsTotal: students.length,
+    arrivals,
+    lateness: analytics.lateness,
+    todayAbsences,
+    publishedSchoolDays,
+    activeWeekdays,
+    absenceDays: analytics.kpi?.absence_days,
+    needsAttention: analytics.kpi?.needs_attention,
+    needsClarification: analytics.kpi?.needs_clarification,
+    withoutReason: analytics.kpi?.without_reason,
+    riskStudentsTotal: worklist.total_count,
+  });
+  analytics.class_summary = {
+    ...classSummary,
+    absent_today_label: studentCountLabel(classSummary.absent_today),
+    risk_students_label: studentCountLabel(classSummary.risk_students_total),
+  };
   return analytics;
 }
 
@@ -1339,12 +1376,14 @@ export async function getStudentMonthlyAnalytics(studentId, { month } = {}) {
     periods,
     learning,
     lateness,
-    reason_options: reasons.map((item) => ({
-      code: item.code,
-      name: item.name,
-      default_confirmation_status: item.defaultConfirmationStatus,
-      requires_attention: item.requiresAttention,
-    })),
+    reason_options: reasons
+      .filter((item) => item.code !== 'excused')
+      .map((item) => ({
+        code: item.code,
+        name: item.name,
+        default_confirmation_status: item.defaultConfirmationStatus,
+        requires_attention: item.requiresAttention,
+      })),
   };
 }
 
@@ -2936,6 +2975,21 @@ function daysAgoDateTime(days) {
   date.setDate(date.getDate() - days);
   const pad = (n) => String(n).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} 00:00:00`;
+}
+
+function presenceDaysLabel(presentDays, windowDays) {
+  const count = Number(presentDays || 0);
+  return `Присутствовал ${count} ${dayWord(count)} из ${Number(windowDays || 0)}`;
+}
+
+function dayWord(value) {
+  const abs = Math.abs(Number(value || 0));
+  const mod100 = abs % 100;
+  const mod10 = abs % 10;
+  if (mod100 >= 11 && mod100 <= 14) return 'дней';
+  if (mod10 === 1) return 'день';
+  if (mod10 >= 2 && mod10 <= 4) return 'дня';
+  return 'дней';
 }
 
 function normalizeDateOnly(value) {

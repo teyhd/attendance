@@ -2,8 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  buildClassPresenceSummary,
   buildMonthRange,
   compareClassNames,
+  countActualPresenceDays,
+  expectedPresenceDates,
   expandDateRangeWithinMonth,
   hoursWithinRange,
   normalizeAnalyticsMonth,
@@ -65,4 +68,58 @@ test('hoursWithinRange counts period hours clipped to selected month', () => {
     12,
   );
   assert.equal(Math.round(hoursWithinRange('2026-05-10 08:00:00', null, range) * 10) / 10, 16);
+});
+
+test('countActualPresenceDays counts unique non-cancelled arrival days only', () => {
+  assert.equal(countActualPresenceDays([
+    { student_id: '10', event_type: 'arrival', attendance_date: '2026-05-04' },
+    { student_id: '10', event_type: 'arrival', attendance_date: '2026-05-04' },
+    { student_id: '10', event_type: 'departure', attendance_date: '2026-05-04' },
+    { student_id: '10', event_type: 'arrival', attendance_date: '2026-05-05', cancelled_at: '2026-05-05 10:00:00' },
+    { student_id: '11', event_type: 'arrival', occurred_at: '2026-05-04 09:01:00' },
+  ]), 2);
+});
+
+test('expectedPresenceDates uses published days before weekday fallback', () => {
+  const range = buildMonthRange('2026-05');
+  assert.deepEqual(
+    expectedPresenceDates(range, { publishedSchoolDays: ['2026-05-03', '2026-05-04'], activeWeekdays: [1] }),
+    ['2026-05-03', '2026-05-04'],
+  );
+  assert.deepEqual(
+    expectedPresenceDates(range, { publishedSchoolDays: [], activeWeekdays: [1] }).slice(0, 2),
+    ['2026-05-04', '2026-05-11'],
+  );
+});
+
+test('buildClassPresenceSummary keeps factual presence separate from excused absences', () => {
+  const range = buildMonthRange('2026-05');
+  const summary = buildClassPresenceSummary({
+    range,
+    studentsTotal: 2,
+    arrivals: [
+      { student_id: '10', event_type: 'arrival', attendance_date: '2026-05-04' },
+      { student_id: '11', event_type: 'arrival', attendance_date: '2026-05-04' },
+    ],
+    lateness: {
+      late_days_total: 1,
+      data_gaps_total: 1,
+      coverage: { covered_arrival_days: 1 },
+    },
+    todayAbsences: { totals: { absent_students_today: 1 } },
+    publishedSchoolDays: ['2026-05-04', '2026-05-05'],
+    absenceDays: 3,
+    needsAttention: 1,
+    needsClarification: 2,
+    withoutReason: 1,
+    riskStudentsTotal: 5,
+  });
+
+  assert.equal(summary.presence_days, 2);
+  assert.equal(summary.expected_presence_days, 4);
+  assert.equal(summary.attendance_percent, 50);
+  assert.equal(summary.on_time_days, 0);
+  assert.equal(summary.absent_today, 1);
+  assert.equal(summary.absence_days, 3);
+  assert.equal(summary.risk_students_total, 5);
 });

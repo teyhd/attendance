@@ -20,6 +20,7 @@ import { fileURLToPath } from 'url';
 let i_count = 1;
 const PORT = process.env.PORT || 789;
 const app = express();
+const LEGACY_EXCUSED_REASON_CODE = 'excused';
 const hbs = exphbs.create({
   defaultLayout: 'main',
   extname: 'hbs',
@@ -234,7 +235,8 @@ app.get('/attendance', requirePageAuth, asyncHandler(async (req, res) => {
   const studentContext = selectedStudentId
     ? await db.getStudentContext(selectedStudentId, { days: 30 })
     : null;
-  const reasons = await db.getAbsenceReasons();
+  const reasons = (await db.getAbsenceReasons())
+    .filter((reason) => reason.code !== LEGACY_EXCUSED_REASON_CODE);
 
   res.render('attendance', {
     title: 'Пропуски',
@@ -620,58 +622,65 @@ function toPublicPresenceEvent(event) {
 
 function buildAnalyticsKpiCards(analytics) {
   const kpi = analytics.kpi || {};
-  const learning = analytics.learning || {};
+  const summary = analytics.class_summary || {};
   const lateness = analytics.lateness || {};
   const withoutReason = Number(kpi.without_reason || 0);
   const needsAttention = Number(kpi.needs_attention || 0);
+  const needsClarification = Number(kpi.needs_clarification || 0);
+  const hasActivity = Boolean(analytics.has_activity);
   const hasAbsenceData = Boolean(analytics.has_data);
-  const hasQualityTarget = hasAbsenceData && Boolean(analytics.quality?.has_issues);
+  const hasRiskData = Number(summary.risk_students_total || 0) > 0;
   const target = (condition, id, actionLabel) => (condition
     ? { href: `#${id}`, target_id: id, action_label: actionLabel }
     : {});
 
   return [
     {
-      label: 'Ученики с отсутствиями',
-      value: `${Number(kpi.students_with_absences || 0)} / ${Number(kpi.students_total || 0)}`,
-      hint: 'за выбранный месяц',
-      border_class: 'border-sky-500',
-      ...target(hasAbsenceData, 'risk-students', 'Смотреть учеников'),
+      label: 'Посещаемость',
+      value: `${Number(summary.attendance_percent || 0)}%`,
+      hint: `${Number(summary.presence_days || 0)} приходов из ${Number(summary.expected_presence_days || 0)}`,
+      border_class: Number(summary.attendance_percent || 0) ? 'border-emerald-500' : 'border-gray-300',
+      ...target(hasActivity, 'lateness-analytics', 'Смотреть приходы'),
     },
     {
-      label: 'Пропущено уроков',
-      value: Number(learning.missed_lessons_total || 0),
-      hint: 'по расписанию',
-      border_class: 'border-indigo-500',
-      ...target(Boolean(learning.has_data), 'learning-analytics', 'Смотреть уроки'),
+      label: 'Отсутствующие',
+      value: summary.absent_today_label || `${Number(summary.absent_today || 0)} учеников`,
+      hint: 'сегодня',
+      border_class: Number(summary.absent_today || 0) ? 'border-amber-500' : 'border-emerald-500',
+      details: [
+        { label: `без причины: ${withoutReason}`, tone_class: withoutReason ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-600' },
+        { label: `внимание: ${needsAttention}`, tone_class: needsAttention ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-600' },
+        { label: `уточнить: ${needsClarification}`, tone_class: needsClarification ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-100 text-gray-600' },
+      ],
+      ...target(hasAbsenceData, 'today-absences', 'Открыть список'),
     },
     {
       label: 'Опоздания',
-      value: Number(lateness.late_days_total || 0),
+      value: Number(summary.late_days || lateness.late_days_total || 0),
       hint: 'ученик-дней',
       border_class: Number(lateness.late_days_total || 0) ? 'border-amber-500' : 'border-emerald-500',
       ...target(Boolean(lateness.has_activity), 'lateness-analytics', 'Смотреть опоздания'),
     },
     {
-      label: 'Дней отсутствия',
-      value: Number(kpi.absence_days || 0),
+      label: 'Вовремя',
+      value: Number(summary.on_time_days || 0),
+      hint: 'приходы по расписанию',
+      border_class: Number(summary.on_time_days || 0) ? 'border-emerald-500' : 'border-gray-300',
+      ...target(Boolean(lateness.has_activity), 'lateness-analytics', 'Смотреть приходы'),
+    },
+    {
+      label: 'Проблемные случаи',
+      value: summary.risk_students_label || `${Number(summary.risk_students_total || 0)} учеников`,
+      hint: 'сигналы за месяц',
+      border_class: hasRiskData ? 'border-red-500' : 'border-emerald-500',
+      ...target(hasRiskData, 'risk-students', 'Открыть список'),
+    },
+    {
+      label: 'Дни отсутствия',
+      value: Number(summary.absence_days || kpi.absence_days || 0),
       hint: 'ученик-день',
       border_class: 'border-indigo-500',
       ...target(hasAbsenceData, 'absence-calendar', 'Смотреть календарь'),
-    },
-    {
-      label: 'Без причины',
-      value: withoutReason,
-      hint: 'записей с причиной "Без причины"',
-      border_class: withoutReason ? 'border-amber-500' : 'border-emerald-500',
-      ...target(hasQualityTarget, 'data-quality', 'Разобрать'),
-    },
-    {
-      label: 'Открытые вопросы',
-      value: needsAttention,
-      hint: needsAttention ? 'отметки, которые нужно разобрать' : 'нет отметок, требующих действия',
-      border_class: needsAttention ? 'border-red-500' : 'border-emerald-500',
-      ...target(hasAbsenceData, 'risk-students', 'Открыть список'),
     },
   ];
 }

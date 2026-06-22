@@ -3,7 +3,6 @@
     <div class="flex flex-col xl:flex-row xl:items-end gap-3">
       <div class="flex-1">
         <h1 class="text-xl font-semibold text-gray-900">Пропуски</h1>
-        <div class="mt-1 text-sm text-gray-600">{{displayDate selectedDate}}</div>
       </div>
 
       {{#if success}}
@@ -17,33 +16,22 @@
       {{#if error}}
         <div data-flash class="rounded border border-red-200 bg-red-50 text-red-800 px-3 py-2 text-sm">{{error}}</div>
       {{/if}}
-
-      <form id="attendance-controls-form" method="get" action="/attendance" class="flex flex-col sm:flex-row gap-2 sm:items-end">
-        <input type="hidden" name="class" value="{{selectedClass}}" />
-        <label class="text-sm text-gray-700">
-          <span class="block mb-1">Дата</span>
-          <input id="attendance-date" name="date" value="{{selectedDate}}" type="date" class="w-full sm:w-40 rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500" />
-        </label>
-      </form>
     </div>
 
     {{#if summary}}
-      <div class="grid grid-cols-2 lg:grid-cols-4 gap-2">
+      <div class="grid grid-cols-2 lg:grid-cols-3 gap-2">
         <div class="border rounded p-3">
           <div class="text-xs text-gray-500">В классе</div>
           <div class="text-2xl font-semibold text-gray-900">{{summary.students_total}}</div>
-        </div>
-        <div class="border rounded p-3">
-          <div class="text-xs text-gray-500">На дату</div>
-          <div class="text-2xl font-semibold text-gray-900">{{summary.absent_students}}</div>
         </div>
         <div class="border rounded p-3">
           <div class="text-xs text-gray-500">Без причины</div>
           <div class="text-2xl font-semibold text-amber-700">{{summary.without_reason_count}}</div>
         </div>
         <div class="border rounded p-3">
-          <div class="text-xs text-gray-500">Внимание</div>
-          <div class="text-2xl font-semibold text-red-700">{{summary.needs_attention_count}}</div>
+          <div class="text-xs text-gray-500">Отсутствующие</div>
+          <div class="text-2xl font-semibold text-gray-900">{{summary.absent_students}}</div>
+          <div class="mt-1 text-xs {{#if summary.needs_attention_count}}text-red-700{{else}}text-gray-500{{/if}}">внимание: {{summary.needs_attention_count}}</div>
         </div>
       </div>
     {{/if}}
@@ -124,12 +112,12 @@
           </div>
           <div class="grid grid-cols-3 gap-2 text-center">
             <div class="border rounded px-3 py-2">
-              <div class="text-lg font-semibold">{{studentContext.absence_count}}</div>
-              <div class="text-xs text-gray-500">30 дней</div>
+              <div class="text-sm font-semibold leading-tight text-gray-900">{{studentContext.present_days_label}}</div>
             </div>
             <div class="border rounded px-3 py-2">
-              <div class="text-lg font-semibold text-red-700">{{studentContext.needs_attention_count}}</div>
-              <div class="text-xs text-gray-500">внимание</div>
+              <div class="text-lg font-semibold text-gray-900">{{studentContext.absence_count}}</div>
+              <div class="text-xs text-gray-500">Отсутствующие</div>
+              <div class="mt-0.5 text-[11px] {{#if studentContext.needs_attention_count}}text-red-700{{else}}text-gray-500{{/if}}">внимание: {{studentContext.needs_attention_count}}</div>
             </div>
             <div class="border rounded px-3 py-2">
               <div class="text-lg font-semibold text-amber-700">{{studentContext.without_reason_count}}</div>
@@ -158,8 +146,7 @@
                   <h3 class="font-semibold text-gray-900">Новая отметка</h3>
                   <div class="mt-0.5 truncate text-sm text-gray-600">{{selectedChild.name}}</div>
                 </div>
-                <div class="grid grid-cols-3 gap-1 rounded-lg border border-gray-200 bg-white p-1 shadow-sm">
-                  <button type="button" data-fill="today" class="rounded-md px-3 py-2 text-sm font-medium text-gray-700 hover:bg-indigo-50 hover:text-indigo-700">Сегодня</button>
+                <div class="grid grid-cols-2 gap-1 rounded-lg border border-gray-200 bg-white p-1 shadow-sm">
                   <button type="button" data-fill="day-end" title="До {{schoolDay.end_label}}" class="rounded-md px-3 py-2 text-sm font-medium text-gray-700 hover:bg-indigo-50 hover:text-indigo-700">До конца дня</button>
                   <button type="button" data-fill="lesson" class="rounded-md px-3 py-2 text-sm font-medium text-gray-700 hover:bg-indigo-50 hover:text-indigo-700">Один урок</button>
                 </div>
@@ -325,6 +312,9 @@
                                     <label class="text-sm text-gray-700">
                                       <span class="block mb-1">Причина</span>
                                       <select name="reason" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
+                                        {{#if (eq reason_code "excused")}}
+                                          <option value="{{reason_code}}" selected>{{reason_name}}</option>
+                                        {{/if}}
                                         {{#each ../reasons}}
                                           <option value="{{code}}" {{#if (eq ../reason_code code)}}selected{{/if}}>{{name}}</option>
                                         {{/each}}
@@ -393,8 +383,6 @@
 (() => {
   const classSelect = document.getElementById('class-select');
   classSelect?.addEventListener('change', () => classSelect.closest('form')?.requestSubmit());
-  const dateInput = document.getElementById('attendance-date');
-  dateInput?.addEventListener('change', () => dateInput.closest('form')?.requestSubmit());
 
   document.querySelectorAll('[data-flash]').forEach((node) => {
     window.setTimeout(() => {
@@ -542,14 +530,6 @@
   const schoolStartForDate = (date) => timeForDate(date, '09:00', schoolDayStart);
   const schoolEndForDate = (date) => timeForDate(date, '19:00', schoolDayEnd);
 
-  const setToday = () => {
-    const parts = dateParts();
-    const date = parts ? selectedDateFromParts() : inputDate(format(new Date()));
-    fromInput.value = schoolStartForDate(date);
-    toInput.value = schoolEndForDate(date);
-    setActivePreset('today');
-  };
-
   const setDayEnd = () => {
     const currentStart = fromInput.value || schoolDayStart || format(new Date());
     const date = inputDate(currentStart) || selectedDateFromParts();
@@ -568,7 +548,6 @@
     setActivePreset('lesson');
   };
 
-  document.querySelector('[data-fill="today"]')?.addEventListener('click', setToday);
   document.querySelector('[data-fill="day-end"]')?.addEventListener('click', setDayEnd);
   document.querySelector('[data-fill="lesson"]')?.addEventListener('click', setOneLesson);
   fromInput.addEventListener('input', () => setActivePreset(''));
