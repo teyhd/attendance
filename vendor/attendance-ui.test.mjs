@@ -6,7 +6,8 @@ import { buildAttendanceActions } from './attendance-ui.mjs';
 test('buildAttendanceActions exposes only useful absence actions', () => {
   const labels = buildAttendanceActions(true).map((item) => item.label);
 
-  assert.deepEqual(labels, ['По причине', 'Запланировать отсутствие']);
+  assert.deepEqual(labels, ['Запланировать отсутствие']);
+  assert.equal(labels.includes('По причине'), false);
   assert.equal(labels.includes('Сейчас'), false);
   assert.equal(labels.includes('Без причины'), false);
   assert.equal(labels.includes('Будущее'), false);

@@ -23,6 +23,7 @@ import {
 import { buildLearningAnalytics } from './learning-analytics.mjs';
 import { LATE_THRESHOLD_MINUTES, buildLateAnalytics } from './late-analytics.mjs';
 import { buildRiskWorklist } from './risk-worklist.mjs';
+import { buildStudentAttendanceAnalytics } from './student-attendance-analytics.mjs';
 
 const FAR_FUTURE = '9999-12-31 23:59:59';
 const SCHOOL_DAY_FALLBACK_START = '09:00:00';
@@ -1158,13 +1159,14 @@ export async function getMonthlyAttendanceAnalytics({ month, classId, risk, reas
   const classes = await getClasses();
   const selectedClass = normalizeAnalyticsClass(classes, classId);
   const classFilter = selectedClass.id === 'all' ? null : selectedClass.id;
-  const [students, periods, scheduleRows, publishedSchoolDays, activeWeekdays, arrivals, todayAbsences] = await Promise.all([
+  const [students, periods, scheduleRows, publishedSchoolDays, activeWeekdays, arrivals, presenceEvents, todayAbsences] = await Promise.all([
     getMonthlyAnalyticsStudents(classFilter),
     getMonthlyAnalyticsPeriods(range, classFilter),
     getPublishedScheduleRows(range, classFilter),
     getPublishedScheduleDays(range),
     getActiveScheduleWeekdays(),
     getMonthlyFirstPresenceArrivals(range, classFilter),
+    getMonthlyPresenceEvents(range, classFilter),
     getTodayAbsenceOverview({ classId: classFilter }),
   ]);
 
@@ -1191,6 +1193,25 @@ export async function getMonthlyAttendanceAnalytics({ month, classId, risk, reas
     publishedSchoolDays,
     activeWeekdays,
   });
+  analytics.student_attendance = selectedClass.id === 'all'
+    ? {
+      enabled: false,
+      school_days_total: 0,
+      students: [],
+    }
+    : {
+      enabled: true,
+      ...buildStudentAttendanceAnalytics({
+        range,
+        students,
+        periods,
+        arrivals,
+        presenceEvents,
+        scheduleRows,
+        publishedSchoolDays,
+        activeWeekdays,
+      }),
+    };
   analytics.today_absences = todayAbsences;
   analytics.has_activity = Boolean(
     analytics.has_data
@@ -1319,7 +1340,19 @@ export async function getStudentMonthlyAnalytics(studentId, { month } = {}) {
 
   const selectedMonth = normalizeAnalyticsMonth(month);
   const range = buildMonthRange(selectedMonth);
-  const [periods, learning, lateness, reasons, classes] = await Promise.all([
+  const [
+    periods,
+    learning,
+    lateness,
+    reasons,
+    classes,
+    classStudents,
+    scheduleRows,
+    publishedSchoolDays,
+    activeWeekdays,
+    arrivals,
+    presenceEvents,
+  ] = await Promise.all([
     listAbsencePeriods({
       studentId,
       from: range.start_at,
@@ -1330,8 +1363,24 @@ export async function getStudentMonthlyAnalytics(studentId, { month } = {}) {
     getStudentLatenessAnalytics(studentId, { month: selectedMonth }),
     getAbsenceReasons(),
     getClasses(),
+    getMonthlyAnalyticsStudents(student.classId),
+    getPublishedScheduleRows(range, student.classId),
+    getPublishedScheduleDays(range),
+    getActiveScheduleWeekdays(),
+    getMonthlyFirstPresenceArrivals(range, student.classId, student.id),
+    getMonthlyPresenceEvents(range, student.classId, student.id),
   ]);
   const classItem = classes.find((item) => String(item.id) === String(student.classId));
+  const attendance = buildStudentAttendanceAnalytics({
+    range,
+    students: classStudents.filter((item) => String(item.student_id) === String(student.id)),
+    periods,
+    arrivals,
+    presenceEvents,
+    scheduleRows,
+    publishedSchoolDays,
+    activeWeekdays,
+  }).students[0] || null;
   const absenceDayKeys = new Set();
   let withoutReason = 0;
   let needsAttention = 0;
@@ -1372,7 +1421,13 @@ export async function getStudentMonthlyAnalytics(studentId, { month } = {}) {
       late_days: Number(lateness.late_days_total || 0),
       late_minutes: Number(lateness.total_late_minutes || 0),
       late_missed_lessons: Number(lateness.missed_lessons_total || 0),
+      present_days: Number(attendance?.present_days || 0),
+      school_days_total: Number(attendance?.school_days_total || 0),
+      excused_absence_days: Number(attendance?.excused_absence_days || 0),
+      unexcused_absence_days: Number(attendance?.unexcused_absence_days || 0),
+      incomplete_days: Number(attendance?.incomplete_days || 0),
     },
+    attendance,
     periods,
     learning,
     lateness,
@@ -1536,6 +1591,45 @@ async function getMonthlyFirstPresenceArrivals(range, classId, studentId = null)
        ) first_arrivals
       WHERE row_num = 1
       ORDER BY attendance_date, arrival_at, student_name`,
+    params,
+  );
+  return rows;
+}
+
+async function getMonthlyPresenceEvents(range, classId, studentId = null) {
+  const where = [
+    'e.cancelled_at IS NULL',
+    'e.attendance_date BETWEEN ? AND ?',
+    'u.type = 1',
+    'u.status = 1',
+    'k.type = 1',
+  ];
+  const params = [range.start_date, range.end_date];
+  if (classId) {
+    where.push('e.class_id = ?');
+    params.push(classId);
+  }
+  if (studentId) {
+    where.push('e.student_id = ?');
+    params.push(studentId);
+  }
+
+  const [rows] = await usr.query(
+    `SELECT
+        CAST(e.id AS CHAR) AS id,
+        CAST(e.student_id AS CHAR) AS student_id,
+        CAST(e.class_id AS CHAR) AS class_id,
+        e.event_type,
+        DATE_FORMAT(e.attendance_date, '%Y-%m-%d') AS attendance_date,
+        DATE_FORMAT(e.occurred_at, '%Y-%m-%d %H:%i:%s') AS occurred_at,
+        e.source,
+        COALESCE(NULLIF(u.display_name_custom, ''), NULLIF(u.nickname, ''), NULLIF(u.msgnickname, ''), u.name) AS student_name,
+        k.name AS class_name
+       FROM attendance.presence_events e
+       JOIN sso.users u ON u.id = e.student_id
+       JOIN sso.kaf_name k ON k.id = e.class_id
+      WHERE ${where.join(' AND ')}
+      ORDER BY e.attendance_date, e.occurred_at, e.id`,
     params,
   );
   return rows;

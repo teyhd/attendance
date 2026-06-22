@@ -34,7 +34,7 @@
       </form>
     </div>
 
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
       {{#each kpiCards}}
         {{#if href}}
           <a href="{{href}}" data-kpi-card data-target-id="{{target_id}}" class="block border-l-4 {{border_class}} border rounded bg-white p-3 transition hover:-translate-y-0.5 hover:shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2">
@@ -328,8 +328,9 @@
               <h3 class="text-sm font-semibold text-gray-900">Классы и дети</h3>
               <div class="flex flex-col gap-2 sm:items-end">
                 <div class="flex flex-wrap gap-1" data-lateness-filter-group>
+                  <button type="button" data-lateness-filter="all" class="rounded border px-2.5 py-1.5 text-xs font-medium">Все</button>
                   <button type="button" data-lateness-filter="late" class="rounded border px-2.5 py-1.5 text-xs font-medium">Опоздали</button>
-                  <button type="button" data-lateness-filter="arrived" class="rounded border px-2.5 py-1.5 text-xs font-medium">Вовремя</button>
+                  <button type="button" data-lateness-filter="on_time" class="rounded border px-2.5 py-1.5 text-xs font-medium">Вовремя</button>
                   <button type="button" data-lateness-filter="gap" class="rounded border px-2.5 py-1.5 text-xs font-medium">Пробелы</button>
                 </div>
                 <label class="sr-only" for="lateness-sort">Сортировка</label>
@@ -350,7 +351,7 @@
                       <div class="flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-500">
                         <span><span data-lateness-class-visible>{{students_total}}</span> / {{students_total}}</span>
                         <span>опозд.: {{students_late}}</span>
-                        <span>вовремя: {{students_arrived}}</span>
+                        <span>вовремя: {{students_on_time}}</span>
                         {{#if students_gap}}<span class="text-red-700">пробелы: {{students_gap}}</span>{{/if}}
                       </div>
                     </div>
@@ -361,6 +362,7 @@
                           data-lateness-status="{{status_code}}"
                           data-lateness-name="{{student_name}}"
                           data-lateness-arrivals="{{arrival_days}}"
+                          data-lateness-on-time-days="{{on_time_days}}"
                           data-lateness-late-days="{{late_days}}"
                           data-lateness-minutes="{{total_late_minutes}}"
                           class="grid gap-2 px-3 py-2 text-sm sm:grid-cols-[minmax(0,1fr)_auto]"
@@ -370,6 +372,7 @@
                             <div class="mt-1 flex flex-wrap gap-1 text-xs">
                               <span class="rounded-full px-2 py-0.5 {{status_class}}">{{status_label}}</span>
                               <span class="rounded-full bg-gray-100 px-2 py-0.5 text-gray-700">приходы: {{arrival_days}}</span>
+                              <span class="rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">вовремя: {{on_time_days}}</span>
                               <span class="rounded-full bg-amber-50 px-2 py-0.5 text-amber-800">опозд.: {{late_days}}</span>
                               {{#if data_gaps}}<span class="rounded-full bg-red-50 px-2 py-0.5 text-red-700">пробелы: {{data_gaps}}</span>{{/if}}
                             </div>
@@ -549,83 +552,31 @@
         {{#if analytics.hidden_zero_classes}}
           <div class="mt-3 text-xs text-gray-500">Классы без отметок скрыты: {{analytics.hidden_zero_classes}}</div>
         {{/if}}
-      </section>
 
-      <section data-analytics-panel="summary" id="risk-students" class="bg-white shadow rounded-lg p-4 min-w-0">
-        <div>
-          <h2 class="text-base font-semibold text-gray-900">Проблемные случаи</h2>
-          <div class="mt-1 text-sm text-gray-500">{{analytics.class_summary.risk_students_label}}</div>
-        </div>
-
-        {{#if analytics.risk_students}}
-          <div class="mt-4 overflow-x-auto">
-            <table class="min-w-full text-sm">
-              <thead class="text-xs text-gray-500">
-                <tr class="border-b">
-                  <th class="py-2 pr-3 text-left font-medium">Ученик</th>
-                  <th class="py-2 pr-3 text-left font-medium">Класс</th>
-                  <th class="py-2 pr-3 text-left font-medium">Последнее</th>
-                  <th class="py-2 pr-3 text-right font-medium">Дни</th>
-                  <th class="py-2 pr-3 text-right font-medium">Уроки</th>
-                  <th class="py-2 pr-3 text-right font-medium">Опозд.</th>
-                  <th class="py-2 pr-3 text-right font-medium">Без расп.</th>
-                  <th class="py-2 pr-3 text-right font-medium">Вним.</th>
-                  <th class="py-2 pr-3 text-left font-medium">Причина</th>
-                  <th class="py-2 text-left font-medium">Статус</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-gray-100">
-                {{#each analytics.risk_students}}
-                  <tr class="cursor-pointer hover:bg-indigo-50" data-student-analytics-row data-student-id="{{student_id}}">
-                    <td class="py-2 pr-3 align-top font-medium text-gray-900">
-                      <button type="button" class="text-left hover:text-indigo-700" data-student-analytics-open data-student-id="{{student_id}}">{{student_name}}</button>
-                      <div class="mt-1 text-xs text-gray-500">периодов: {{periods}}{{#if late_days}} · опозд.: {{late_days}}{{/if}}</div>
-                    </td>
-                    <td class="py-2 pr-3 align-top text-gray-600">{{class_name}}</td>
-                    <td class="py-2 pr-3 align-top text-gray-700">
-                      {{#if last_period_date}}
-                        <div class="font-medium text-gray-900">{{last_period_date}}</div>
-                        <div class="text-xs leading-tight text-gray-500">{{last_period_time}}</div>
-                      {{else}}
-                        {{#if last_late_label}}
-                          <div class="font-medium text-gray-900">{{last_late_date}}</div>
-                          <div class="text-xs leading-tight text-amber-700">{{last_late_time}}</div>
-                        {{else}}
-                          <span class="text-gray-400">—</span>
-                        {{/if}}
-                      {{/if}}
-                    </td>
-                    <td class="py-2 pr-3 align-top text-right text-gray-900">{{absence_days}}</td>
-                    <td class="py-2 pr-3 align-top text-right {{#if missed_lessons}}text-indigo-700{{else}}text-gray-500{{/if}}">{{missed_lessons}}</td>
-                    <td class="py-2 pr-3 align-top text-right {{#if late_days}}text-amber-700{{else}}text-gray-500{{/if}}">{{late_days}}</td>
-                    <td class="py-2 pr-3 align-top text-right {{#if data_gaps}}text-red-700{{else}}text-gray-500{{/if}}">{{data_gaps}}</td>
-                    <td class="py-2 pr-3 align-top text-right {{#if needs_attention}}text-red-700{{else}}text-gray-500{{/if}}">{{needs_attention}}</td>
-                    <td class="py-2 pr-3 align-top text-gray-700">
-                      <div class="font-medium text-gray-900">{{#if last_reason}}{{last_reason}}{{else}}{{#if last_late_label}}Опоздание{{else}}—{{/if}}{{/if}}</div>
-                      {{#if last_late_label}}
-                        <div class="mt-1 max-w-[18rem] truncate text-xs text-amber-700">{{last_late_label}}</div>
-                      {{/if}}
-                      {{#if last_comment_short}}
-                        <div class="mt-1 max-w-[18rem] truncate text-xs text-gray-500" title="{{last_comment}}">{{last_comment_short}}</div>
-                      {{/if}}
-                    </td>
-                    <td class="py-2 align-top">
-                      <div class="flex flex-wrap gap-1">
-                        {{#if has_attention}}<span class="rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-800">внимание</span>{{/if}}
-                        {{#if has_missing_reason}}<span class="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-800">без причины</span>{{/if}}
-                        {{#if has_clarification}}<span class="rounded-full bg-yellow-100 px-2 py-0.5 text-xs text-yellow-800">уточнить</span>{{/if}}
-                        {{#if has_schedule_gap}}<span class="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-700">нет расписания</span>{{/if}}
-                        {{#if has_missed_lessons}}<span class="rounded-full bg-indigo-50 px-2 py-0.5 text-xs text-indigo-700">уроки</span>{{/if}}
-                        {{#if has_late}}<span class="rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-800">опоздания</span>{{/if}}
+        {{#if analytics.student_attendance.enabled}}
+          <div id="class-students-attendance" class="mt-6 border-t border-gray-200 pt-4">
+            <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+              <h3 class="text-sm font-semibold text-gray-900">Ученики</h3>
+              <div class="text-xs text-gray-500">{{analytics.student_attendance.school_days_total}} учебных дней</div>
+            </div>
+            {{#if analytics.student_attendance.students}}
+              <div class="mt-3 divide-y divide-gray-100">
+                {{#each analytics.student_attendance.students}}
+                  <div class="py-3" data-student-analytics-row data-student-id="{{student_id}}" data-student-open-tab="days" data-student-open-mode="all">
+                    <div class="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                      <button type="button" class="text-left text-sm font-medium text-gray-900 hover:text-indigo-700" data-student-analytics-open data-student-id="{{student_id}}">{{student_name}}</button>
+                      <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
+                        <button type="button" class="rounded border border-indigo-200 px-3 py-1.5 text-left text-xs font-medium text-indigo-700 hover:bg-indigo-50" data-student-analytics-open data-student-id="{{student_id}}" data-student-open-tab="days" data-student-open-mode="absences">{{absence_button_label}}</button>
+                        <button type="button" class="rounded border border-gray-200 px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50" data-student-analytics-open data-student-id="{{student_id}}" data-student-open-tab="days" data-student-open-mode="all">{{metric_label}}</button>
                       </div>
-                    </td>
-                  </tr>
+                    </div>
+                  </div>
                 {{/each}}
-              </tbody>
-            </table>
+              </div>
+            {{else}}
+              <div class="mt-3 rounded border border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">Ученики не найдены.</div>
+            {{/if}}
           </div>
-        {{else}}
-          <div class="mt-4 rounded border border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">Проблемных случаев нет.</div>
         {{/if}}
       </section>
     </div>
@@ -680,8 +631,8 @@
       lines.push(row(['Класс', item.class_name, '', '', item.absence_days, item.absence_hours, item.periods, item.without_reason, item.needs_attention, '', '', '']));
     });
 
-    (data.risk_students || []).forEach((item) => {
-      lines.push(row(['Ученик риска', item.class_name, item.student_name, item.last_period_label || item.last_late_label || '', item.absence_days, '', item.periods, item.without_reason, item.needs_attention, item.late_days || '', item.late_minutes || '', item.last_comment || item.last_reason || item.last_late_label || '']));
+    (data.student_attendance?.students || []).forEach((item) => {
+      lines.push(row(['Ученик', item.class_name, item.student_name, item.metric_label || '', item.absence_days, '', '', item.unexcused_absence_days, '', '', '', item.absence_button_label || '']));
     });
 
     (data.lateness?.students || []).forEach((item) => {
@@ -802,6 +753,7 @@
 
   function rowMatches(row) {
     if (activeFilter === 'all') return true;
+    if (activeFilter === 'on_time') return numberAttr(row, 'latenessOnTimeDays') > 0;
     return row.dataset.latenessStatus === activeFilter;
   }
 
@@ -809,7 +761,7 @@
     const sort = sortSelect?.value || 'late_first';
     if (sort === 'arrived_first') {
       return (
-        Number(right.dataset.latenessStatus === 'arrived') - Number(left.dataset.latenessStatus === 'arrived')
+        numberAttr(right, 'latenessOnTimeDays') - numberAttr(left, 'latenessOnTimeDays')
         || numberAttr(right, 'latenessArrivals') - numberAttr(left, 'latenessArrivals')
         || String(left.dataset.latenessName || '').localeCompare(String(right.dataset.latenessName || ''), 'ru', { numeric: true, sensitivity: 'base' })
       );
@@ -882,7 +834,7 @@
   const body = dialog.querySelector('[data-student-modal-body]');
   const closeButton = dialog.querySelector('[data-student-modal-close]');
   const canManagePage = dialog.dataset.canManage === '1';
-  const state = { payload: null, tab: 'overview' };
+  const state = { payload: null, tab: 'overview', dayMode: 'all' };
 
   const tabItems = [
     ['overview', 'Обзор'],
@@ -908,9 +860,10 @@
     else dialog.setAttribute('open', '');
   }
 
-  async function openStudent(studentId) {
+  async function openStudent(studentId, options = {}) {
     state.payload = null;
-    state.tab = 'overview';
+    state.tab = options.tab || 'overview';
+    state.dayMode = options.mode || 'all';
     title.textContent = 'Аналитика';
     subtitle.textContent = '';
     tabs.innerHTML = '';
@@ -953,8 +906,13 @@
     const kpi = payload.kpi || {};
     const learning = payload.learning || {};
     const lateness = payload.lateness || {};
+    const attendance = payload.attendance || {};
     return `
       <div class="grid grid-cols-2 gap-2 lg:grid-cols-4">
+        ${summaryCard('Присутствовал', `${number(kpi.present_days)}/${number(kpi.school_days_total)}`, number(kpi.present_days) ? 'green' : 'gray')}
+        ${summaryCard('Уважительно', kpi.excused_absence_days)}
+        ${summaryCard('Без причины', kpi.unexcused_absence_days, number(kpi.unexcused_absence_days) ? 'amber' : 'gray')}
+        ${summaryCard('Неполных дней', kpi.incomplete_days, number(kpi.incomplete_days) ? 'sky' : 'gray')}
         ${summaryCard('Периодов', kpi.periods)}
         ${summaryCard('Дней', kpi.absence_days)}
         ${summaryCard('Уроков', kpi.missed_lessons)}
@@ -965,6 +923,7 @@
         ${summaryCard('Внимание', kpi.needs_attention, number(kpi.needs_attention) ? 'red' : 'gray')}
         ${summaryCard('Без причины', kpi.without_reason, number(kpi.without_reason) ? 'amber' : 'gray')}
       </div>
+      ${attendance.metric_label ? `<button type="button" class="mt-3 rounded border border-gray-200 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50" data-student-tab="days" data-student-days-mode="all">${escapeHtml(attendance.metric_label)}</button>` : ''}
       ${learning.data_gaps_total ? `<div class="mt-3 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Есть дни без опубликованного расписания: ${escapeHtml(learning.data_gaps_total)}.</div>` : ''}
       ${lateness.data_gaps_total ? `<div class="mt-3 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Пробелы расписания по приходам: ${escapeHtml(lateness.data_gaps_total)}.</div>` : ''}
       <div class="mt-4 grid gap-4 lg:grid-cols-2">
@@ -1151,15 +1110,52 @@
   }
 
   function renderDays(payload) {
-    const days = (payload.learning?.daily || []).filter((day) => number(day.missed_lessons) || number(day.data_gaps));
-    if (!days.length) return '<div class="rounded border border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">Дней с пропущенными уроками или пробелами расписания нет.</div>';
+    const attendance = payload.attendance || {};
+    const mode = state.dayMode === 'absences' ? 'absences' : 'all';
+    return `
+      ${renderDayModeToggle(mode)}
+      ${mode === 'absences'
+        ? renderAbsenceDetails(attendance.absence_details || [])
+        : renderAttendanceDays(attendance.days || [])}
+    `;
+  }
+
+  function renderDayModeToggle(mode) {
+    const button = (id, label) => `
+      <button type="button" data-student-days-mode="${id}" class="rounded border px-3 py-1.5 text-sm ${mode === id ? 'border-gray-900 bg-gray-900 text-white' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'}">${label}</button>
+    `;
+    return `<div class="mb-3 flex flex-wrap gap-2">${button('all', 'Все дни')}${button('absences', 'Отсутствия')}</div>`;
+  }
+
+  function renderAbsenceDetails(days) {
+    if (!days.length) return '<div class="rounded border border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">Дат отсутствия за месяц нет.</div>';
+    return `<div class="space-y-2">${days.map((day) => `
+      <div class="rounded border border-gray-200 p-3 text-sm">
+        <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+          <div class="font-medium text-gray-900">${escapeHtml(day.short_date_label)} — ${escapeHtml(day.status_label)} — ${escapeHtml(day.absence_state_label)}</div>
+          <span class="rounded-full px-2 py-0.5 text-xs ${day.is_unexcused ? 'bg-amber-50 text-amber-800' : 'bg-indigo-50 text-indigo-700'}">${escapeHtml(day.reason_label)}</span>
+        </div>
+        ${day.comment_label ? `<div class="mt-1 text-sm text-gray-600">${escapeHtml(day.comment_label)}</div>` : ''}
+      </div>
+    `).join('')}</div>`;
+  }
+
+  function renderAttendanceDays(days) {
+    if (!days.length) return '<div class="rounded border border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">Учебных дней за период нет.</div>';
     return `<div class="grid gap-2 md:grid-cols-2">${days.map((day) => `
       <div class="rounded border border-gray-200 p-3 text-sm">
-        <div class="flex items-center justify-between gap-2">
-          <span class="font-medium text-gray-900">${escapeHtml(day.date_label)}</span>
-          <span class="text-gray-500">${escapeHtml(day.missed_lessons)} уроков</span>
+        <div class="flex items-start justify-between gap-2">
+          <div>
+            <div class="font-medium text-gray-900">${escapeHtml(day.date_label)}</div>
+            <div class="mt-1 flex flex-wrap gap-1 text-xs">
+              <span class="rounded-full px-2 py-0.5 ${escapeHtml(day.status_class)}">${escapeHtml(day.status_label)}</span>
+              ${day.arrival_time ? `<span class="rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">приход: ${escapeHtml(day.arrival_time)}</span>` : ''}
+              ${day.departure_time ? `<span class="rounded-full bg-sky-50 px-2 py-0.5 text-sky-700">уход: ${escapeHtml(day.departure_time)}</span>` : ''}
+            </div>
+          </div>
         </div>
-        ${day.data_gaps ? `<div class="mt-1 text-xs text-red-700">Без расписания: ${escapeHtml(day.data_gaps)}</div>` : ''}
+        ${day.reason_label ? `<div class="mt-2 text-sm text-gray-700">${escapeHtml(day.absence_state_label)} · ${escapeHtml(day.reason_label)}</div>` : ''}
+        ${day.comment_label ? `<div class="mt-1 text-xs text-gray-500">${escapeHtml(day.comment_label)}</div>` : ''}
       </div>
     `).join('')}</div>`;
   }
@@ -1190,7 +1186,7 @@
   }
 
   function summaryCard(label, value, tone = 'gray') {
-    const toneClass = tone === 'red' ? 'text-red-700' : tone === 'amber' ? 'text-amber-700' : 'text-gray-900';
+    const toneClass = tone === 'red' ? 'text-red-700' : tone === 'amber' ? 'text-amber-700' : tone === 'green' ? 'text-emerald-700' : tone === 'sky' ? 'text-sky-700' : 'text-gray-900';
     return `<div class="rounded border border-gray-200 p-3"><div class="text-xs text-gray-500">${escapeHtml(label)}</div><div class="mt-1 text-2xl font-semibold ${toneClass}">${escapeHtml(value ?? 0)}</div></div>`;
   }
 
@@ -1208,21 +1204,36 @@
     const button = event.target.closest('[data-student-analytics-open]');
     if (button) {
       event.preventDefault();
-      openStudent(button.dataset.studentId);
+      openStudent(button.dataset.studentId, {
+        tab: button.dataset.studentOpenTab || 'overview',
+        mode: button.dataset.studentOpenMode || 'all',
+      });
       return;
     }
     const row = event.target.closest('[data-student-analytics-row]');
     if (row && !event.target.closest('a, button, input, select, textarea, summary')) {
-      openStudent(row.dataset.studentId);
+      openStudent(row.dataset.studentId, {
+        tab: row.dataset.studentOpenTab || 'overview',
+        mode: row.dataset.studentOpenMode || 'all',
+      });
     }
   });
 
   dialog.addEventListener('click', (event) => {
     if (event.target === dialog) dialog.close();
     if (event.target.closest('[data-student-modal-close]')) dialog.close();
+    const dayMode = event.target.closest('[data-student-days-mode]');
+    if (dayMode) {
+      state.dayMode = dayMode.dataset.studentDaysMode || 'all';
+    }
     const tab = event.target.closest('[data-student-tab]');
     if (tab) {
       state.tab = tab.dataset.studentTab;
+      if (tab.dataset.studentDaysMode) state.dayMode = tab.dataset.studentDaysMode;
+      render();
+      return;
+    }
+    if (dayMode) {
       render();
     }
   });

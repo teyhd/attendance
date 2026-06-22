@@ -18,21 +18,62 @@
       {{/if}}
     </div>
 
-    {{#if summary}}
+    {{#if attendanceSummaryFilters.length}}
       <div class="grid grid-cols-2 lg:grid-cols-3 gap-2">
-        <div class="border rounded p-3">
-          <div class="text-xs text-gray-500">В классе</div>
-          <div class="text-2xl font-semibold text-gray-900">{{summary.students_total}}</div>
+        {{#each attendanceSummaryFilters}}
+          <a href="{{href}}" class="block rounded border p-3 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2 {{card_class}}">
+            <div class="text-xs text-gray-500">{{label}}</div>
+            <div class="text-2xl font-semibold {{value_class}}">{{value}}</div>
+            {{#if detail}}
+              <div class="mt-1 text-xs {{detail_class}}">{{detail}}</div>
+            {{/if}}
+          </a>
+        {{/each}}
+      </div>
+    {{/if}}
+
+    {{#if attendanceFilterTable.visible}}
+      <div id="attendance-filter-table" class="rounded border border-gray-200 bg-white p-3">
+        <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+          <h2 class="text-sm font-semibold text-gray-900">{{attendanceFilterTable.title}}</h2>
+          <span class="text-xs text-gray-500">{{attendanceFilterTable.count}}</span>
         </div>
-        <div class="border rounded p-3">
-          <div class="text-xs text-gray-500">Без причины</div>
-          <div class="text-2xl font-semibold text-amber-700">{{summary.without_reason_count}}</div>
-        </div>
-        <div class="border rounded p-3">
-          <div class="text-xs text-gray-500">Отсутствующие</div>
-          <div class="text-2xl font-semibold text-gray-900">{{summary.absent_students}}</div>
-          <div class="mt-1 text-xs {{#if summary.needs_attention_count}}text-red-700{{else}}text-gray-500{{/if}}">внимание: {{summary.needs_attention_count}}</div>
-        </div>
+        {{#if attendanceFilterTable.rows.length}}
+          <div class="mt-3 overflow-x-auto">
+            <table class="min-w-full text-sm">
+              <thead class="text-xs text-gray-500">
+                <tr class="border-b">
+                  <th class="py-2 pr-3 text-left font-medium">Ученик</th>
+                  <th class="py-2 pr-3 text-left font-medium">Период</th>
+                  <th class="py-2 pr-3 text-left font-medium">Причина</th>
+                  <th class="py-2 pr-3 text-left font-medium">Статус</th>
+                  <th class="py-2 text-left font-medium">Комментарий</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-100">
+                {{#each attendanceFilterTable.rows}}
+                  <tr class="hover:bg-indigo-50">
+                    <td class="py-2 pr-3 align-top font-medium text-gray-900">
+                      <a href="{{href}}" class="hover:text-indigo-700">{{student_name}}</a>
+                    </td>
+                    <td class="py-2 pr-3 align-top text-gray-700">{{period_label}}</td>
+                    <td class="py-2 pr-3 align-top">
+                      <span class="rounded-full px-2 py-0.5 text-xs {{reason_class}}">{{reason_name}}</span>
+                    </td>
+                    <td class="py-2 pr-3 align-top">
+                      <span class="rounded-full px-2 py-0.5 text-xs {{attention_class}}">{{attention_label}}</span>
+                    </td>
+                    <td class="py-2 align-top text-gray-600">
+                      {{#if comment}}{{comment}}{{else}}<span class="text-gray-400">—</span>{{/if}}
+                    </td>
+                  </tr>
+                {{/each}}
+              </tbody>
+            </table>
+          </div>
+        {{else}}
+          <div class="mt-3 rounded border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-500">{{attendanceFilterTable.empty_label}}</div>
+        {{/if}}
       </div>
     {{/if}}
 
@@ -110,20 +151,11 @@
             {{/if}}
             <a href="/attendance/analytics?class={{selectedClass}}" class="mt-2 inline-flex text-sm font-medium text-indigo-700 hover:text-indigo-900">Аналитика класса</a>
           </div>
-          <div class="grid grid-cols-3 gap-2 text-center">
-            <div class="border rounded px-3 py-2">
+          {{#if studentContext}}
+            <div class="shrink-0 rounded border border-gray-200 px-3 py-2 text-center">
               <div class="text-sm font-semibold leading-tight text-gray-900">{{studentContext.present_days_label}}</div>
             </div>
-            <div class="border rounded px-3 py-2">
-              <div class="text-lg font-semibold text-gray-900">{{studentContext.absence_count}}</div>
-              <div class="text-xs text-gray-500">Отсутствующие</div>
-              <div class="mt-0.5 text-[11px] {{#if studentContext.needs_attention_count}}text-red-700{{else}}text-gray-500{{/if}}">внимание: {{studentContext.needs_attention_count}}</div>
-            </div>
-            <div class="border rounded px-3 py-2">
-              <div class="text-lg font-semibold text-amber-700">{{studentContext.without_reason_count}}</div>
-              <div class="text-xs text-gray-500">без причины</div>
-            </div>
-          </div>
+          {{/if}}
         </div>
 
         <div data-attendance-tabs data-default-tab="{{#if canManage}}mark{{else}}active{{/if}}" class="space-y-4">

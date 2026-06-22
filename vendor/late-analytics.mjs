@@ -17,7 +17,9 @@ export const LATE_MISSED_LESSON_MIN_OVERLAP_MINUTES = 15;
 
 const EMPTY_LATENESS = {
   late_days_total: 0,
+  on_time_days_total: 0,
   students_late_total: 0,
+  students_on_time_total: 0,
   students_with_arrivals_total: 0,
   missed_lessons_total: 0,
   subjects_total: 0,
@@ -267,6 +269,7 @@ function aggregateLateness({ range, students, firstArrivals, lateEvents, dataGap
   const studentRows = Array.from(studentBuckets.values()).map((bucket) => {
     const lateDays = bucket.events.length;
     const arrivalDays = bucket.arrivalDays.size;
+    const onTimeDays = Math.max(0, arrivalDays - lateDays - bucket.dataGaps.length);
     const totalMinutes = bucket.events.reduce((sum, event) => sum + Number(event.late_minutes || 0), 0);
     const missedLessons = bucket.events.reduce((sum, event) => sum + Number(event.missed_lessons || 0), 0);
     const lastLate = bucket.events.toSorted(compareLateEvents).at(-1);
@@ -278,8 +281,10 @@ function aggregateLateness({ range, students, firstArrivals, lateEvents, dataGap
       class_id: bucket.class_id,
       class_name: bucket.class_name,
       arrival_days: arrivalDays,
+      on_time_days: onTimeDays,
       late_days: lateDays,
       late_percent: percentOf(lateDays, arrivalDays),
+      on_time_percent: percentOf(onTimeDays, arrivalDays),
       total_late_minutes: totalMinutes,
       avg_late_minutes: lateDays ? Math.round(totalMinutes / lateDays) : 0,
       missed_lessons: missedLessons,
@@ -301,6 +306,10 @@ function aggregateLateness({ range, students, firstArrivals, lateEvents, dataGap
   const classRows = buildLatenessClassRows(studentRows);
 
   const totalMissedLessons = lateEvents.reduce((sum, event) => sum + Number(event.missed_lessons || 0), 0);
+  const onTimeDaysTotal = studentRows.reduce((sum, row) => sum + Number(row.on_time_days || 0), 0);
+  const onTimeStudentIds = new Set(studentRows
+    .filter((row) => Number(row.on_time_days || 0) > 0)
+    .map((row) => String(row.student_id)));
   const subjectRows = Array.from(subjectBuckets.values()).map((bucket) => {
     const studentsSet = new Set(bucket.lessons.map((item) => item.event.student_id));
     const daysSet = new Set(bucket.lessons.map((item) => `${item.event.student_id}|${item.event.date}`));
@@ -336,7 +345,9 @@ function aggregateLateness({ range, students, firstArrivals, lateEvents, dataGap
   const coveredArrivalDays = Math.max(0, firstArrivals.length - dataGaps.length);
   return {
     late_days_total: lateEvents.length,
+    on_time_days_total: onTimeDaysTotal,
     students_late_total: lateStudentIds.size,
+    students_on_time_total: onTimeStudentIds.size,
     students_with_arrivals_total: arrivalStudentIds.size,
     missed_lessons_total: totalMissedLessons,
     subjects_total: subjectRows.length,
@@ -406,6 +417,7 @@ function buildLatenessClassRows(studentRows) {
         class_name: student.class_name || '',
         students: [],
         arrival_days: 0,
+        on_time_days: 0,
         late_days: 0,
         total_late_minutes: 0,
         missed_lessons: 0,
@@ -415,6 +427,7 @@ function buildLatenessClassRows(studentRows) {
     const bucket = buckets.get(classId);
     bucket.students.push(student);
     bucket.arrival_days += Number(student.arrival_days || 0);
+    bucket.on_time_days += Number(student.on_time_days || 0);
     bucket.late_days += Number(student.late_days || 0);
     bucket.total_late_minutes += Number(student.total_late_minutes || 0);
     bucket.missed_lessons += Number(student.missed_lessons || 0);
@@ -424,15 +437,18 @@ function buildLatenessClassRows(studentRows) {
   return Array.from(buckets.values()).map((bucket) => {
     const lateStudents = bucket.students.filter((student) => Number(student.late_days || 0) > 0).length;
     const arrivedStudents = bucket.students.filter((student) => student.status_code === 'arrived').length;
+    const onTimeStudents = bucket.students.filter((student) => Number(student.on_time_days || 0) > 0).length;
     const gapStudents = bucket.students.filter((student) => student.status_code === 'gap').length;
     bucket.students = bucket.students.toSorted(compareStudentRows);
     return {
       ...bucket,
       students_total: bucket.students.length,
       students_late: lateStudents,
+      students_on_time: onTimeStudents,
       students_arrived: arrivedStudents,
       students_gap: gapStudents,
       late_percent: percentOf(bucket.late_days, bucket.arrival_days),
+      on_time_percent: percentOf(bucket.on_time_days, bucket.arrival_days),
     };
   }).sort(compareClassRows);
 }

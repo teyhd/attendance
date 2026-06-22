@@ -115,7 +115,7 @@ const hbs = exphbs.create({
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 export const appDir = __dirname;
-const attendanceFilterIds = new Set(['all']);
+const attendanceFilterIds = new Set(['all', 'current', 'missing']);
 
 app.engine('hbs', hbs.engine);
 app.set('view engine', 'hbs');
@@ -150,7 +150,7 @@ app.get('/attendance', requirePageAuth, asyncHandler(async (req, res) => {
   const selectedClass = resolveSelectedClass(classes, req.query.class);
   const selectedDate = normalizeDateInput(req.query.date) || formatDateInput(new Date());
   const schoolDay = await db.getSchoolDayBounds(selectedDate);
-  const activeFilter = 'all';
+  const activeFilter = normalizeAttendanceFilter(req.query.filter);
   const q = '';
   const allClassChildren = selectedClass ? await db.getStudentsByClass(selectedClass) : [];
   const searchedChildren = allClassChildren;
@@ -199,13 +199,6 @@ app.get('/attendance', requirePageAuth, asyncHandler(async (req, res) => {
           || futureAbsence?.attention_status === 'needs_attention'
           || dayAbsence?.attention_status === 'needs_attention',
       };
-    })
-    .filter((child) => {
-      if (activeFilter === 'current') return child.hasCurrentAbsence;
-      if (activeFilter === 'future') return child.hasFutureAbsence;
-      if (activeFilter === 'missing') return child.hasMissingReason;
-      if (activeFilter === 'attention') return child.needsAttention;
-      return true;
     });
 
   const selectedChild = allClassChildren.find((c) => String(c.id) === String(requestedStudent))
@@ -221,8 +214,20 @@ app.get('/attendance', requirePageAuth, asyncHandler(async (req, res) => {
       classId: selectedClass,
       studentId: child.id,
       date: selectedDate,
+      filter: activeFilter,
     }),
   }));
+  const attendanceSummaryFilters = buildAttendanceSummaryFilters(summary, {
+    activeFilter,
+    classId: selectedClass,
+    date: selectedDate,
+  });
+  const attendanceFilterTable = buildAttendanceFilterTable({
+    activeFilter,
+    classId: selectedClass,
+    date: selectedDate,
+    absences: classDayAbsences,
+  });
 
   const childAbsences = selectedStudentId
     ? await db.listAbsencePeriods({ studentId: selectedStudentId, limit: 100 })
@@ -255,6 +260,8 @@ app.get('/attendance', requirePageAuth, asyncHandler(async (req, res) => {
     classFutureAbsences,
     classDayAbsences,
     summary,
+    attendanceSummaryFilters,
+    attendanceFilterTable,
     studentContext,
     selectedClass,
     selectedDate,
@@ -629,7 +636,6 @@ function buildAnalyticsKpiCards(analytics) {
   const needsClarification = Number(kpi.needs_clarification || 0);
   const hasActivity = Boolean(analytics.has_activity);
   const hasAbsenceData = Boolean(analytics.has_data);
-  const hasRiskData = Number(summary.risk_students_total || 0) > 0;
   const target = (condition, id, actionLabel) => (condition
     ? { href: `#${id}`, target_id: id, action_label: actionLabel }
     : {});
@@ -667,13 +673,6 @@ function buildAnalyticsKpiCards(analytics) {
       hint: 'приходы по расписанию',
       border_class: Number(summary.on_time_days || 0) ? 'border-emerald-500' : 'border-gray-300',
       ...target(Boolean(lateness.has_activity), 'lateness-analytics', 'Смотреть приходы'),
-    },
-    {
-      label: 'Проблемные случаи',
-      value: summary.risk_students_label || `${Number(summary.risk_students_total || 0)} учеников`,
-      hint: 'сигналы за месяц',
-      border_class: hasRiskData ? 'border-red-500' : 'border-emerald-500',
-      ...target(hasRiskData, 'risk-students', 'Открыть список'),
     },
     {
       label: 'Дни отсутствия',
@@ -804,6 +803,82 @@ function orderClassesByPreference(classes, preferredClassIds = []) {
 function normalizeAttendanceFilter(value) {
   const candidate = String(value || 'all').trim();
   return attendanceFilterIds.has(candidate) ? candidate : 'all';
+}
+
+function buildAttendanceSummaryFilters(summary, context = {}) {
+  if (!summary) return [];
+  const filters = [
+    {
+      id: 'all',
+      label: 'В классе',
+      value: Number(summary.students_total || 0),
+      value_class: 'text-gray-900',
+      detail: '',
+      detail_class: 'text-gray-500',
+    },
+    {
+      id: 'current',
+      label: 'Отсутствующие',
+      value: Number(summary.absent_students || 0),
+      value_class: 'text-gray-900',
+      detail: `внимание: ${Number(summary.needs_attention_count || 0)}`,
+      detail_class: Number(summary.needs_attention_count || 0) ? 'text-red-700' : 'text-gray-500',
+    },
+    {
+      id: 'missing',
+      label: 'Без причины',
+      value: Number(summary.without_reason_count || 0),
+      value_class: 'text-amber-700',
+      detail: '',
+      detail_class: 'text-gray-500',
+    },
+  ];
+
+  return filters.map((filter) => {
+    const active = context.activeFilter === filter.id;
+    return {
+      ...filter,
+      active,
+      card_class: active
+        ? 'border-indigo-500 bg-indigo-50 shadow-sm'
+        : 'border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50/40',
+      href: attendanceUrl({
+        classId: context.classId,
+        date: context.date,
+        filter: filter.id,
+      }),
+    };
+  });
+}
+
+function buildAttendanceFilterTable({ activeFilter, classId, date, absences = [] } = {}) {
+  const visible = activeFilter === 'current' || activeFilter === 'missing';
+  const title = activeFilter === 'missing' ? 'Без причины' : 'Отсутствующие';
+  const filteredAbsences = visible
+    ? absences.filter((absence) => activeFilter !== 'missing' || isWithoutReasonCode(absence.reason_code))
+    : [];
+
+  return {
+    visible,
+    title,
+    count: filteredAbsences.length,
+    empty_label: activeFilter === 'missing'
+      ? 'За выбранный день отсутствий без причины нет.'
+      : 'За выбранный день отсутствующих нет.',
+    rows: filteredAbsences.map((absence) => ({
+      ...absence,
+      href: attendanceUrl({
+        classId,
+        studentId: absence.student_id,
+        date,
+        filter: activeFilter,
+      }),
+      reason_class: isWithoutReasonCode(absence.reason_code)
+        ? 'bg-amber-100 text-amber-800'
+        : 'bg-slate-100 text-slate-700',
+      attention_class: absence.needs_attention ? 'bg-red-100 text-red-800' : 'bg-green-50 text-green-700',
+    })),
+  };
 }
 
 function buildFilters(activeFilter, context = {}) {
