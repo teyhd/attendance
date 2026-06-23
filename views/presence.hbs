@@ -1,4 +1,4 @@
-<section data-presence-root data-date="{{board.date}}" class="space-y-3">
+<section id="presence-top" data-presence-root data-date="{{board.date}}" class="space-y-3">
   <div class="sticky top-2 z-20 space-y-2">
     <div class="rounded-md border border-gray-200 bg-white p-3 shadow-sm">
       <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
@@ -6,6 +6,7 @@
           <h1 class="text-xl font-semibold text-gray-950">Ручной ввод</h1>
           <div class="mt-1 text-sm text-gray-600">{{board.date_label}} · {{board.totals.present}} / {{board.totals.students}}</div>
         </div>
+        <a href="#presence-top" class="inline-flex w-fit rounded border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:border-gray-900 hover:text-gray-950">Наверх</a>
       </div>
 
       {{#if board.classes.length}}
@@ -69,7 +70,7 @@
   const cancelButton = root.querySelector('[data-presence-cancel]');
   const flashBase = 'flex items-center gap-3 rounded-md border px-3 py-2 text-sm shadow-sm';
 
-  const eventLabel = (type) => type === 'departure' ? 'Ушёл' : 'Пришёл';
+  const eventLabel = (type) => type === 'departure' ? 'Ушёл' : 'Присутствует';
   const cardToneClasses = [
     'border-red-300', 'bg-red-50', 'hover:bg-red-100',
     'border-amber-300', 'bg-amber-50', 'hover:bg-amber-100',

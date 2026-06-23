@@ -644,9 +644,8 @@ function buildAnalyticsKpiCards(analytics) {
     {
       label: 'Посещаемость',
       value: `${Number(summary.attendance_percent || 0)}%`,
-      hint: `${Number(summary.presence_days || 0)} приходов из ${Number(summary.expected_presence_days || 0)}`,
       border_class: Number(summary.attendance_percent || 0) ? 'border-emerald-500' : 'border-gray-300',
-      ...target(hasActivity, 'lateness-analytics', 'Смотреть приходы'),
+      ...target(hasActivity, 'lateness-analytics', 'Смотреть присутствие'),
     },
     {
       label: 'Отсутствующие',
@@ -670,9 +669,9 @@ function buildAnalyticsKpiCards(analytics) {
     {
       label: 'Вовремя',
       value: Number(summary.on_time_days || 0),
-      hint: 'приходы по расписанию',
+      hint: 'присутствие по расписанию',
       border_class: Number(summary.on_time_days || 0) ? 'border-emerald-500' : 'border-gray-300',
-      ...target(Boolean(lateness.has_activity), 'lateness-analytics', 'Смотреть приходы'),
+      ...target(Boolean(lateness.has_activity), 'lateness-analytics', 'Смотреть присутствие'),
     },
     {
       label: 'Дни отсутствия',

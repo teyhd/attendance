@@ -134,6 +134,7 @@ test('lateness groups late, on-time, and schedule-gap arrivals by class', () => 
     arrivals: [
       arrival({ id: 'late', student_id: '10', arrival_at: '2026-05-04 09:10:00' }),
       arrival({ id: 'late-ontime', student_id: '10', attendance_date: '2026-05-06', arrival_at: '2026-05-06 08:59:00' }),
+      arrival({ id: 'late-gap', student_id: '10', attendance_date: '2026-05-07', arrival_at: '2026-05-07 09:01:00' }),
       arrival({ id: 'ontime', student_id: '11', student_name: 'On time', arrival_at: '2026-05-04 09:01:00' }),
       arrival({ id: 'gap', student_id: '12', student_name: 'Gap', attendance_date: '2026-05-05', arrival_at: '2026-05-05 09:01:00' }),
     ],
@@ -143,11 +144,13 @@ test('lateness groups late, on-time, and schedule-gap arrivals by class', () => 
 
   const statuses = new Map(analytics.students.map((row) => [row.student_id, row.status_code]));
   const onTimeDays = new Map(analytics.students.map((row) => [row.student_id, row.on_time_days]));
+  const dataGaps = new Map(analytics.students.map((row) => [row.student_id, row.data_gaps]));
   assert.equal(statuses.get('10'), 'late');
   assert.equal(statuses.get('11'), 'arrived');
   assert.equal(statuses.get('12'), 'gap');
   assert.equal(onTimeDays.get('10'), 1);
   assert.equal(onTimeDays.get('11'), 1);
+  assert.equal(dataGaps.get('10'), 1);
   assert.equal(analytics.on_time_days_total, 2);
   assert.equal(analytics.students_on_time_total, 2);
   assert.equal(analytics.classes.length, 1);
@@ -155,7 +158,7 @@ test('lateness groups late, on-time, and schedule-gap arrivals by class', () => 
   assert.equal(analytics.classes[0].students_late, 1);
   assert.equal(analytics.classes[0].students_on_time, 2);
   assert.equal(analytics.classes[0].students_arrived, 1);
-  assert.equal(analytics.classes[0].students_gap, 1);
+  assert.equal(analytics.classes[0].students_gap, 2);
 });
 
 test('individual schedule replaces class lesson in the same slot', () => {

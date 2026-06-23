@@ -40,7 +40,7 @@
           <a href="{{href}}" data-kpi-card data-target-id="{{target_id}}" class="block border-l-4 {{border_class}} border rounded bg-white p-3 transition hover:-translate-y-0.5 hover:shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2">
             <div class="text-xs text-gray-500">{{label}}</div>
             <div class="mt-1 text-2xl font-semibold text-gray-900">{{value}}</div>
-            <div class="mt-1 text-xs text-gray-500">{{hint}}</div>
+            {{#if hint}}<div class="mt-1 text-xs text-gray-500">{{hint}}</div>{{/if}}
             {{#if details}}
               <div class="mt-2 flex flex-wrap gap-1">
                 {{#each details}}
@@ -54,7 +54,7 @@
           <div class="border-l-4 {{border_class}} border rounded bg-white p-3">
             <div class="text-xs text-gray-500">{{label}}</div>
             <div class="mt-1 text-2xl font-semibold text-gray-900">{{value}}</div>
-            <div class="mt-1 text-xs text-gray-500">{{hint}}</div>
+            {{#if hint}}<div class="mt-1 text-xs text-gray-500">{{hint}}</div>{{/if}}
             {{#if details}}
               <div class="mt-2 flex flex-wrap gap-1">
                 {{#each details}}
@@ -193,7 +193,7 @@
 
       {{#if analytics.learning.data_gaps_total}}
         <div class="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-          Отметки без опубликованного расписания: {{analytics.learning.uncovered_absence_periods}}. Дней-пробелов: {{analytics.learning.data_gaps_total}}.
+          Отметки без опубликованного расписания: {{analytics.learning.uncovered_absence_periods}}. Дней без расписания: {{analytics.learning.data_gaps_total}}.
         </div>
       {{/if}}
 
@@ -318,7 +318,7 @@
 
         {{#if analytics.lateness.data_gaps_total}}
           <div class="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-            Пробелы расписания по приходам: {{analytics.lateness.data_gaps_total}}. Покрытие: {{analytics.lateness.coverage.coverage_percent}}%.
+            Без расписания по присутствию: {{analytics.lateness.data_gaps_total}}. Покрытие: {{analytics.lateness.coverage.coverage_percent}}%.
           </div>
         {{/if}}
 
@@ -331,12 +331,12 @@
                   <button type="button" data-lateness-filter="all" class="rounded border px-2.5 py-1.5 text-xs font-medium">Все</button>
                   <button type="button" data-lateness-filter="late" class="rounded border px-2.5 py-1.5 text-xs font-medium">Опоздали</button>
                   <button type="button" data-lateness-filter="on_time" class="rounded border px-2.5 py-1.5 text-xs font-medium">Вовремя</button>
-                  <button type="button" data-lateness-filter="gap" class="rounded border px-2.5 py-1.5 text-xs font-medium">Пробелы</button>
+                  <button type="button" data-lateness-filter="gap" class="rounded border px-2.5 py-1.5 text-xs font-medium">Без расписания</button>
                 </div>
                 <label class="sr-only" for="lateness-sort">Сортировка</label>
                 <select id="lateness-sort" data-lateness-sort class="rounded border-gray-300 text-sm focus:border-indigo-500 focus:ring-indigo-500">
                   <option value="late_first">Сначала опоздавшие</option>
-                  <option value="arrived_first">Сначала пришедшие</option>
+                  <option value="arrived_first">Сначала присутствующие</option>
                   <option value="minutes">Минуты опоздания</option>
                   <option value="name">Имя</option>
                 </select>
@@ -352,7 +352,7 @@
                         <span><span data-lateness-class-visible>{{students_total}}</span> / {{students_total}}</span>
                         <span>опозд.: {{students_late}}</span>
                         <span>вовремя: {{students_on_time}}</span>
-                        {{#if students_gap}}<span class="text-red-700">пробелы: {{students_gap}}</span>{{/if}}
+                        {{#if students_gap}}<span class="text-red-700">без расписания: {{students_gap}}</span>{{/if}}
                       </div>
                     </div>
                     <div class="divide-y divide-gray-100" data-lateness-student-list>
@@ -365,16 +365,17 @@
                           data-lateness-on-time-days="{{on_time_days}}"
                           data-lateness-late-days="{{late_days}}"
                           data-lateness-minutes="{{total_late_minutes}}"
+                          data-lateness-gaps="{{data_gaps}}"
                           class="grid gap-2 px-3 py-2 text-sm sm:grid-cols-[minmax(0,1fr)_auto]"
                         >
                           <div class="min-w-0">
                             <button type="button" class="font-medium text-gray-900 hover:text-indigo-700" data-student-analytics-open data-student-id="{{student_id}}">{{student_name}}</button>
                             <div class="mt-1 flex flex-wrap gap-1 text-xs">
                               <span class="rounded-full px-2 py-0.5 {{status_class}}">{{status_label}}</span>
-                              <span class="rounded-full bg-gray-100 px-2 py-0.5 text-gray-700">приходы: {{arrival_days}}</span>
+                              <span class="rounded-full bg-gray-100 px-2 py-0.5 text-gray-700">присутствие: {{arrival_days}}</span>
                               <span class="rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">вовремя: {{on_time_days}}</span>
                               <span class="rounded-full bg-amber-50 px-2 py-0.5 text-amber-800">опозд.: {{late_days}}</span>
-                              {{#if data_gaps}}<span class="rounded-full bg-red-50 px-2 py-0.5 text-red-700">пробелы: {{data_gaps}}</span>{{/if}}
+                              {{#if data_gaps}}<span class="rounded-full bg-red-50 px-2 py-0.5 text-red-700">без расписания: {{data_gaps}}</span>{{/if}}
                             </div>
                           </div>
                           <div class="text-left text-xs text-gray-600 sm:text-right">
@@ -388,7 +389,7 @@
                 {{/each}}
               </div>
             {{else}}
-              <p class="mt-2 text-sm text-gray-500">Приходов за период нет.</p>
+              <p class="mt-2 text-sm text-gray-500">Присутствия за период нет.</p>
             {{/if}}
           </div>
 
@@ -754,6 +755,7 @@
   function rowMatches(row) {
     if (activeFilter === 'all') return true;
     if (activeFilter === 'on_time') return numberAttr(row, 'latenessOnTimeDays') > 0;
+    if (activeFilter === 'gap') return numberAttr(row, 'latenessGaps') > 0;
     return row.dataset.latenessStatus === activeFilter;
   }
 
@@ -925,7 +927,7 @@
       </div>
       ${attendance.metric_label ? `<button type="button" class="mt-3 rounded border border-gray-200 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50" data-student-tab="days" data-student-days-mode="all">${escapeHtml(attendance.metric_label)}</button>` : ''}
       ${learning.data_gaps_total ? `<div class="mt-3 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Есть дни без опубликованного расписания: ${escapeHtml(learning.data_gaps_total)}.</div>` : ''}
-      ${lateness.data_gaps_total ? `<div class="mt-3 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Пробелы расписания по приходам: ${escapeHtml(lateness.data_gaps_total)}.</div>` : ''}
+      ${lateness.data_gaps_total ? `<div class="mt-3 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Без расписания по присутствию: ${escapeHtml(lateness.data_gaps_total)}.</div>` : ''}
       <div class="mt-4 grid gap-4 lg:grid-cols-2">
         <div>
           <h3 class="text-sm font-semibold text-gray-900">Предметы</h3>
@@ -951,7 +953,7 @@
           <thead class="text-xs text-gray-500">
             <tr class="border-b">
               <th class="py-2 pr-3 text-left font-medium">Дата</th>
-              <th class="py-2 pr-3 text-left font-medium">Приход</th>
+              <th class="py-2 pr-3 text-left font-medium">Присутствие</th>
               <th class="py-2 pr-3 text-left font-medium">Урок</th>
               <th class="py-2 pr-3 text-right font-medium">Мин.</th>
               <th class="py-2 pr-3 text-right font-medium">Пропущено</th>
@@ -1149,7 +1151,7 @@
             <div class="font-medium text-gray-900">${escapeHtml(day.date_label)}</div>
             <div class="mt-1 flex flex-wrap gap-1 text-xs">
               <span class="rounded-full px-2 py-0.5 ${escapeHtml(day.status_class)}">${escapeHtml(day.status_label)}</span>
-              ${day.arrival_time ? `<span class="rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">приход: ${escapeHtml(day.arrival_time)}</span>` : ''}
+              ${day.arrival_time ? `<span class="rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">присутствие: ${escapeHtml(day.arrival_time)}</span>` : ''}
               ${day.departure_time ? `<span class="rounded-full bg-sky-50 px-2 py-0.5 text-sky-700">уход: ${escapeHtml(day.departure_time)}</span>` : ''}
             </div>
           </div>

@@ -2973,12 +2973,12 @@ function presenceStateFromEvent(latestEvent) {
     status_badge_label: statusWord,
     status_detail: statusTime,
     next_event_type: isPresent ? PRESENCE_EVENT_TYPES.DEPARTURE : PRESENCE_EVENT_TYPES.ARRIVAL,
-    next_action_label: isPresent ? 'Ушёл' : 'Пришёл',
+    next_action_label: isPresent ? 'Ушёл' : 'Присутствует',
   };
 }
 
 function presenceEventTypeLabel(eventType) {
-  return eventType === PRESENCE_EVENT_TYPES.DEPARTURE ? 'Ушёл' : 'Пришёл';
+  return eventType === PRESENCE_EVENT_TYPES.DEPARTURE ? 'Ушёл' : 'Присутствует';
 }
 
 function formatPresenceEventDateTime(value) {

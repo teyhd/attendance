@@ -438,7 +438,7 @@ function buildLatenessClassRows(studentRows) {
     const lateStudents = bucket.students.filter((student) => Number(student.late_days || 0) > 0).length;
     const arrivedStudents = bucket.students.filter((student) => student.status_code === 'arrived').length;
     const onTimeStudents = bucket.students.filter((student) => Number(student.on_time_days || 0) > 0).length;
-    const gapStudents = bucket.students.filter((student) => student.status_code === 'gap').length;
+    const gapStudents = bucket.students.filter((student) => Number(student.data_gaps || 0) > 0).length;
     bucket.students = bucket.students.toSorted(compareStudentRows);
     return {
       ...bucket,
@@ -477,7 +477,7 @@ function latenessStudentStatus({ lateDays, arrivalDays, dataGaps }) {
   }
   return {
     code: 'none',
-    label: 'Нет приходов',
+    label: 'Нет присутствия',
     className: 'bg-gray-100 text-gray-600',
   };
 }
@@ -488,10 +488,10 @@ function latenessStudentDetailLabel({ lateDays, arrivalDays, totalMinutes, misse
     return `${lastLate?.date_label || ''} ${totalMinutes} мин.${lessonPart}`.trim();
   }
   if (dataGaps > 0) {
-    return `Пробелы расписания: ${dataGaps}`;
+    return `Без расписания: ${dataGaps}`;
   }
   if (arrivalDays > 0) {
-    return `Приходов: ${arrivalDays}, без опозданий`;
+    return `Дней присутствия: ${arrivalDays}, без опозданий`;
   }
   return '';
 }
