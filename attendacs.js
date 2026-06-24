@@ -9,7 +9,15 @@ import 'dotenv/config';
 import * as db from './vendor/db.mjs';
 import { isWithoutReasonCode } from './vendor/absence-reasons.mjs';
 import { buildAttendanceActions } from './vendor/attendance-ui.mjs';
-import { requireApiAuth, requirePageAuth, requirePermission, setupAuthRoutes } from './vendor/auth.mjs';
+import {
+  getAuthUserFromRequest,
+  requireApiAuth,
+  requireOwnAttendanceAuth,
+  requirePageAuth,
+  requirePermission,
+  setupAuthRoutes,
+} from './vendor/auth.mjs';
+import { sanitizeStudentMonthlyAnalytics } from './vendor/student-analytics-view.mjs';
 
 import express from 'express';
 import exphbs from 'express-handlebars';
@@ -140,6 +148,10 @@ setupAuthRoutes(app);
 await db.ensureAttendanceSchema();
 
 app.get('/', (req, res) => {
+  const user = getAuthUserFromRequest(req);
+  if (user?.permissions?.view_own_attendance) {
+    return res.redirect('/attendance/me');
+  }
   res.redirect('/attendance');
 });
 
@@ -274,6 +286,19 @@ app.get('/attendance', requirePageAuth, asyncHandler(async (req, res) => {
     success: req.query.success,
     error: req.query.error,
     canManage,
+  });
+}));
+
+app.get('/attendance/me', requireOwnAttendanceAuth, asyncHandler(async (req, res) => {
+  const analytics = sanitizeStudentMonthlyAnalytics(
+    await db.getStudentMonthlyAnalytics(req.authUser.id, { month: req.query.month }),
+  );
+
+  res.render('student-analytics', {
+    title: 'Моя посещаемость',
+    currentUser: req.authUser,
+    activePage: 'student-attendance',
+    analytics,
   });
 }));
 
@@ -432,6 +457,11 @@ app.get('/api/attendance/students/:id/analytics', requireApiAuth, asyncHandler(a
   });
 }));
 
+app.get('/api/attendance/me/analytics', requireOwnAttendanceAuth, asyncHandler(async (req, res) => {
+  const analytics = await db.getStudentMonthlyAnalytics(req.authUser.id, { month: req.query.month });
+  return res.json(sanitizeStudentMonthlyAnalytics(analytics));
+}));
+
 // Monthly read model for reports and integrations. It is read-only and does not write diary marks.
 app.get('/api/attendance/analytics/monthly', requireApiAuth, asyncHandler(async (req, res) => {
   const analytics = await db.getMonthlyAttendanceAnalytics({
@@ -539,6 +569,7 @@ function shouldEnableUxRocket(req) {
 
 function roleLabel(user) {
   const role = String(user?.role || '').trim();
+  if (role === 'student') return 'Ученик';
   if (role === 'admin') return 'Админ';
   if (role === 'tutor') return 'Тьютор';
   if (role === 'mentor') return 'Наставник';

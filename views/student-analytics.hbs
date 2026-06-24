@@ -1,0 +1,259 @@
+<section class="space-y-4">
+  <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+    <div>
+      <h1 class="text-2xl font-semibold text-gray-900">Моя посещаемость</h1>
+      <div class="mt-1 text-sm text-gray-600">{{analytics.month_label}}{{#if analytics.student.class_name}} · {{analytics.student.class_name}}{{/if}}</div>
+    </div>
+    <form method="get" action="/attendance/me" class="flex flex-col gap-2 sm:flex-row sm:items-end">
+      <label class="text-sm text-gray-700">
+        <span class="mb-1 block">Месяц</span>
+        <input name="month" value="{{analytics.month}}" type="month" class="w-full sm:w-40 rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500" />
+      </label>
+      <button type="submit" class="rounded bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">Показать</button>
+    </form>
+  </div>
+
+  <div class="grid grid-cols-2 gap-3 lg:grid-cols-5">
+    <div class="rounded border border-gray-200 bg-white p-3 shadow">
+      <div class="text-xs text-gray-500">Присутствовал</div>
+      <div class="mt-1 text-2xl font-semibold text-emerald-700">{{analytics.kpi.present_days}}/{{analytics.kpi.school_days_total}}</div>
+    </div>
+    <div class="rounded border border-gray-200 bg-white p-3 shadow">
+      <div class="text-xs text-gray-500">Уважительно</div>
+      <div class="mt-1 text-2xl font-semibold text-gray-900">{{analytics.kpi.excused_absence_days}}</div>
+    </div>
+    <div class="rounded border border-gray-200 bg-white p-3 shadow">
+      <div class="text-xs text-gray-500">Без причины</div>
+      <div class="mt-1 text-2xl font-semibold {{#if analytics.kpi.unexcused_absence_days}}text-amber-700{{else}}text-gray-900{{/if}}">{{analytics.kpi.unexcused_absence_days}}</div>
+    </div>
+    <div class="rounded border border-gray-200 bg-white p-3 shadow">
+      <div class="text-xs text-gray-500">Пропущено уроков</div>
+      <div class="mt-1 text-2xl font-semibold {{#if analytics.kpi.missed_lessons}}text-indigo-700{{else}}text-gray-900{{/if}}">{{analytics.kpi.missed_lessons}}</div>
+    </div>
+    <div class="rounded border border-gray-200 bg-white p-3 shadow">
+      <div class="text-xs text-gray-500">Опоздания</div>
+      <div class="mt-1 text-2xl font-semibold {{#if analytics.kpi.late_days}}text-amber-700{{else}}text-gray-900{{/if}}">{{analytics.kpi.late_days}}</div>
+    </div>
+  </div>
+
+  <div data-student-page-tabs class="space-y-4">
+    <div class="flex flex-wrap gap-2 border-b border-gray-200">
+      <button type="button" data-student-page-tab="overview" class="rounded-t border border-b-0 px-3 py-2 text-sm font-medium">Обзор</button>
+      <button type="button" data-student-page-tab="days" class="rounded-t border border-b-0 px-3 py-2 text-sm font-medium">Дни</button>
+      <button type="button" data-student-page-tab="absences" class="rounded-t border border-b-0 px-3 py-2 text-sm font-medium">Отсутствия</button>
+      <button type="button" data-student-page-tab="lessons" class="rounded-t border border-b-0 px-3 py-2 text-sm font-medium">Уроки</button>
+      <button type="button" data-student-page-tab="late" class="rounded-t border border-b-0 px-3 py-2 text-sm font-medium">Опоздания</button>
+    </div>
+
+    <section data-student-page-panel="overview" class="space-y-4">
+      <div class="grid gap-4 lg:grid-cols-2">
+        <div class="rounded-lg bg-white p-4 shadow">
+          <div class="flex items-center justify-between gap-2">
+            <h2 class="text-sm font-semibold text-gray-900">Предметы</h2>
+            <span class="text-xs text-gray-500">{{analytics.learning.missed_lessons_total}} уроков</span>
+          </div>
+          <div class="mt-3 space-y-3">
+            {{#each analytics.learning.subjects}}
+              <div>
+                <div class="flex items-center justify-between gap-2 text-sm">
+                  <span class="font-medium text-gray-900">{{subject_name}}</span>
+                  <span class="text-gray-500">{{missed_lessons}}</span>
+                </div>
+                <div class="mt-1 h-2 overflow-hidden rounded-full bg-gray-100">
+                  <div class="h-2 rounded-full bg-indigo-600" style="width: {{bar_width}}%;"></div>
+                </div>
+              </div>
+            {{else}}
+              <div class="text-sm text-gray-500">Пропущенных уроков по предметам нет.</div>
+            {{/each}}
+          </div>
+        </div>
+
+        <div class="rounded-lg bg-white p-4 shadow">
+          <h2 class="text-sm font-semibold text-gray-900">Сводка месяца</h2>
+          <div class="mt-3 grid grid-cols-2 gap-2 text-sm">
+            <div class="rounded border border-gray-200 p-3">
+              <div class="text-xs text-gray-500">Дней отсутствия</div>
+              <div class="mt-1 text-xl font-semibold text-gray-900">{{analytics.kpi.absence_days}}</div>
+            </div>
+            <div class="rounded border border-gray-200 p-3">
+              <div class="text-xs text-gray-500">Периодов</div>
+              <div class="mt-1 text-xl font-semibold text-gray-900">{{analytics.kpi.periods}}</div>
+            </div>
+            <div class="rounded border border-gray-200 p-3">
+              <div class="text-xs text-gray-500">Неполных дней</div>
+              <div class="mt-1 text-xl font-semibold {{#if analytics.kpi.incomplete_days}}text-sky-700{{else}}text-gray-900{{/if}}">{{analytics.kpi.incomplete_days}}</div>
+            </div>
+            <div class="rounded border border-gray-200 p-3">
+              <div class="text-xs text-gray-500">Минут опозданий</div>
+              <div class="mt-1 text-xl font-semibold {{#if analytics.kpi.late_minutes}}text-amber-700{{else}}text-gray-900{{/if}}">{{analytics.kpi.late_minutes}}</div>
+            </div>
+          </div>
+          {{#if analytics.kpi.data_gaps}}
+            <div class="mt-3 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Есть отметки без опубликованного расписания: {{analytics.kpi.data_gaps}}</div>
+          {{/if}}
+        </div>
+      </div>
+    </section>
+
+    <section data-student-page-panel="days" class="hidden rounded-lg bg-white p-4 shadow">
+      <div class="grid gap-2 md:grid-cols-2">
+        {{#each analytics.attendance.days}}
+          <div class="rounded border border-gray-200 p-3 text-sm">
+            <div class="flex items-start justify-between gap-2">
+              <div>
+                <div class="font-medium text-gray-900">{{date_label}}</div>
+                <div class="mt-1 flex flex-wrap gap-1 text-xs">
+                  <span class="rounded-full px-2 py-0.5 {{status_class}}">{{status_label}}</span>
+                  {{#if arrival_time}}<span class="rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">приход: {{arrival_time}}</span>{{/if}}
+                  {{#if departure_time}}<span class="rounded-full bg-sky-50 px-2 py-0.5 text-sky-700">уход: {{departure_time}}</span>{{/if}}
+                </div>
+              </div>
+            </div>
+            {{#if reason_label}}<div class="mt-2 text-sm text-gray-700">{{absence_state_label}} · {{reason_label}}</div>{{/if}}
+            {{#if comment_label}}<div class="mt-1 text-xs text-gray-500">{{comment_label}}</div>{{/if}}
+          </div>
+        {{else}}
+          <div class="rounded border border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">Учебных дней за период нет.</div>
+        {{/each}}
+      </div>
+    </section>
+
+    <section data-student-page-panel="absences" class="hidden rounded-lg bg-white p-4 shadow">
+      <div class="space-y-3">
+        {{#each analytics.periods}}
+          <div class="rounded border border-gray-200 p-3">
+            <div class="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div class="font-medium text-gray-900">{{period_label}}</div>
+                <div class="mt-1 flex flex-wrap gap-1 text-xs">
+                  <span class="rounded-full {{#if is_without_reason}}bg-amber-50 text-amber-800{{else}}bg-indigo-50 text-indigo-700{{/if}} px-2 py-0.5">{{reason_name}}</span>
+                </div>
+              </div>
+            </div>
+            {{#if comment}}<div class="mt-2 text-sm text-gray-600">{{comment}}</div>{{/if}}
+          </div>
+        {{else}}
+          <div class="rounded border border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">Отметок за месяц нет.</div>
+        {{/each}}
+      </div>
+    </section>
+
+    <section data-student-page-panel="lessons" class="hidden rounded-lg bg-white p-4 shadow">
+      <div class="overflow-x-auto">
+        <table class="min-w-full text-sm">
+          <thead class="text-xs text-gray-500">
+            <tr class="border-b">
+              <th class="py-2 pr-3 text-left font-medium">Дата</th>
+              <th class="py-2 pr-3 text-left font-medium">Урок</th>
+              <th class="py-2 pr-3 text-left font-medium">Время</th>
+              <th class="py-2 pr-3 text-left font-medium">Предмет</th>
+              <th class="py-2 pr-3 text-left font-medium">Педагог</th>
+              <th class="py-2 text-left font-medium">Причина</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100">
+            {{#each analytics.learning.lessons}}
+              <tr>
+                <td class="py-2 pr-3 align-top text-gray-900">{{date_label}}</td>
+                <td class="py-2 pr-3 align-top text-gray-900">{{lesson_number}}</td>
+                <td class="py-2 pr-3 align-top text-gray-700">{{time_label}}</td>
+                <td class="py-2 pr-3 align-top">
+                  <div class="font-medium text-gray-900">{{subject_name}}</div>
+                  {{#if subject_type}}<div class="text-xs text-gray-500">{{subject_type}}</div>{{/if}}
+                </td>
+                <td class="py-2 pr-3 align-top text-gray-700">{{teacher_name}}</td>
+                <td class="py-2 align-top text-gray-700">
+                  <div class="font-medium text-gray-900">{{reason_name}}</div>
+                  {{#if comment}}<div class="text-xs text-gray-500">{{comment}}</div>{{/if}}
+                </td>
+              </tr>
+            {{else}}
+              <tr>
+                <td colspan="6" class="py-4 text-sm text-gray-500">Пропущенных уроков по опубликованному расписанию нет.</td>
+              </tr>
+            {{/each}}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section data-student-page-panel="late" class="hidden rounded-lg bg-white p-4 shadow">
+      <div class="overflow-x-auto">
+        <table class="min-w-full text-sm">
+          <thead class="text-xs text-gray-500">
+            <tr class="border-b">
+              <th class="py-2 pr-3 text-left font-medium">Дата</th>
+              <th class="py-2 pr-3 text-left font-medium">Приход</th>
+              <th class="py-2 pr-3 text-left font-medium">Первый урок</th>
+              <th class="py-2 pr-3 text-right font-medium">Мин.</th>
+              <th class="py-2 text-left font-medium">Пропущено</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100">
+            {{#each analytics.lateness.events}}
+              <tr>
+                <td class="py-2 pr-3 align-top text-gray-900">{{date_label}}</td>
+                <td class="py-2 pr-3 align-top text-gray-900">{{arrival_time}}</td>
+                <td class="py-2 pr-3 align-top text-gray-700">
+                  <div>{{first_lesson_time}} · {{first_subject_name}}</div>
+                  <div class="text-xs text-gray-500">урок {{first_lesson_number}}</div>
+                </td>
+                <td class="py-2 pr-3 align-top text-right font-medium text-amber-700">{{late_minutes}}</td>
+                <td class="py-2 align-top text-gray-700">
+                  {{missed_lessons}}
+                  {{#if missed_subject_names}}<div class="text-xs text-gray-500">{{missed_subject_names}}</div>{{/if}}
+                  {{#if missed_lessons_list}}
+                    <div class="mt-1 space-y-0.5 text-xs text-gray-500">
+                      {{#each missed_lessons_list}}
+                        <div>{{time_label}} · {{subject_name}}{{#if room_name}} · {{room_name}}{{/if}}</div>
+                      {{/each}}
+                    </div>
+                  {{/if}}
+                </td>
+              </tr>
+            {{else}}
+              <tr>
+                <td colspan="5" class="py-4 text-sm text-gray-500">Опозданий по опубликованному расписанию нет.</td>
+              </tr>
+            {{/each}}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+</section>
+
+<script>
+(() => {
+  const root = document.querySelector('[data-student-page-tabs]');
+  if (!root) return;
+
+  const buttons = Array.from(root.querySelectorAll('[data-student-page-tab]'));
+  const panels = Array.from(root.querySelectorAll('[data-student-page-panel]'));
+  const available = new Set(buttons.map((button) => button.dataset.studentPageTab));
+
+  function activate(tab, updateHash = false) {
+    const next = available.has(tab) ? tab : 'overview';
+    buttons.forEach((button) => {
+      const active = button.dataset.studentPageTab === next;
+      button.classList.toggle('bg-white', active);
+      button.classList.toggle('border-gray-200', active);
+      button.classList.toggle('text-gray-900', active);
+      button.classList.toggle('shadow-sm', active);
+      button.classList.toggle('bg-gray-50', !active);
+      button.classList.toggle('border-transparent', !active);
+      button.classList.toggle('text-gray-600', !active);
+      button.classList.toggle('hover:bg-white', !active);
+    });
+    panels.forEach((panel) => panel.classList.toggle('hidden', panel.dataset.studentPagePanel !== next));
+    if (updateHash) window.history.replaceState(null, '', `#${next}`);
+  }
+
+  buttons.forEach((button) => {
+    button.addEventListener('click', () => activate(button.dataset.studentPageTab, true));
+  });
+
+  activate(window.location.hash.slice(1));
+})();
+</script>

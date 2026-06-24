@@ -42,6 +42,9 @@ export function setupAuthRoutes(app) {
   app.get('/api/auth/login', authLoginHandler);
   app.get('/api/cb', authCallbackHandler);
   app.get('/api/auth/logout', authLogoutHandler);
+  app.post('/api/auth/logout', authLogoutHandler);
+  app.get('/api/auth/local-logout', authLocalLogoutHandler);
+  app.post('/api/auth/local-logout', authLocalLogoutHandler);
   app.get('/api/me', currentUserHandler);
 }
 
@@ -57,6 +60,31 @@ export function requirePageAuth(req, res, next) {
   }
   if (!authConfigured() && !cfg.authDisabled) {
     return res.status(503).send('SSO не настроен');
+  }
+  return res.redirect('/api/auth/login');
+}
+
+export function requireOwnAttendanceAuth(req, res, next) {
+  const cfg = getAuthConfig();
+  const user = getAuthUserFromRequest(req);
+  if (user?.permissions?.view_own_attendance) {
+    req.authUser = user;
+    return next();
+  }
+  if (user && !user.permissions?.view_own_attendance) {
+    if (wantsJson(req)) {
+      return res.status(403).json({ error: 'forbidden' });
+    }
+    return res.status(403).send('Нет доступа к личной посещаемости');
+  }
+  if (!authConfigured() && !cfg.authDisabled) {
+    if (wantsJson(req)) {
+      return res.status(503).json({ error: 'auth_not_configured' });
+    }
+    return res.status(503).send('SSO не настроен');
+  }
+  if (wantsJson(req)) {
+    return res.status(401).json({ authenticated: false, login_url: '/api/auth/login' });
   }
   return res.redirect('/api/auth/login');
 }
@@ -116,7 +144,7 @@ export function getAuthUserFromRequest(req) {
     rawRoleId,
     role: payload.role || roleName(rawRoleId),
     permissions: attendancePermissions(rawRoleId),
-    landing: payload.landing || '/attendance',
+    landing: payload.landing || landingPath(rawRoleId),
   };
 }
 
@@ -127,6 +155,7 @@ async function authLoginHandler(req, res) {
 
   const cfg = getAuthConfig();
   const state = crypto.randomBytes(16).toString('hex');
+  clearAuthCookies(req, res);
   res.cookie(stateCookieName, state, cookieOptions(req, { maxAge: 10 * 60 * 1000 }));
 
   const url = new URL(`${cfg.ssoBaseURL}/authorize`);
@@ -160,6 +189,7 @@ async function authCallbackHandler(req, res) {
     const user = buildUserContext(claims, cfg);
     const sessionValue = createSessionValue(user, cfg);
 
+    clearAuthCookies(req, res);
     res.cookie(cfg.sessionCookieName, sessionValue, cookieOptions(req, { maxAge: cfg.sessionTTL }));
     res.clearCookie(stateCookieName, cookieOptions(req));
     res.redirect(user.landing || '/attendance');
@@ -170,13 +200,20 @@ async function authCallbackHandler(req, res) {
 
 function authLogoutHandler(req, res) {
   const cfg = getAuthConfig();
-  res.clearCookie(cfg.sessionCookieName, cookieOptions(req));
-  res.clearCookie(stateCookieName, cookieOptions(req));
+  clearAuthCookies(req, res);
 
   const url = new URL(`${cfg.ssoBaseURL}/logout`);
   url.searchParams.set('client_id', cfg.clientID);
   url.searchParams.set('post_logout_redirect_uri', appBaseURL(cfg.callbackURL) || 'https://stud.platoniks.ru');
   res.redirect(url.toString());
+}
+
+function authLocalLogoutHandler(req, res) {
+  clearAuthCookies(req, res);
+
+  const returnTo = localReturnPath(req.query.return_to || req.query.next || req.query.redirect);
+  if (returnTo) return res.redirect(returnTo);
+  return res.status(204).end();
 }
 
 function currentUserHandler(req, res) {
@@ -230,7 +267,7 @@ function buildUserContext(claims, cfg) {
     name: String(claims.name || `uid:${userID}`),
     rawRoleId,
     role,
-    landing: '/attendance',
+    landing: landingPath(rawRoleId),
     permissions,
   };
 }
@@ -241,6 +278,7 @@ export function attendancePermissions(roleID) {
   const canManage = [3, 4, 5].includes(role);
   return {
     use_attendance: canUse,
+    view_own_attendance: role === 1,
     mark_absence: canManage,
     manage_presence: role === 5,
   };
@@ -256,6 +294,10 @@ function roleName(roleID) {
     case 6: return 'parent';
     default: return Number(roleID) > 0 ? 'staff' : 'guest';
   }
+}
+
+function landingPath(roleID) {
+  return Number(roleID) === 1 ? '/attendance/me' : '/attendance';
 }
 
 function extractServiceRoleID(rightClaim, serviceID) {
@@ -332,6 +374,18 @@ function cookieOptions(req, extra = {}) {
     sameSite: 'lax',
     ...extra,
   };
+}
+
+function clearAuthCookies(req, res) {
+  const cfg = getAuthConfig();
+  res.clearCookie(cfg.sessionCookieName, cookieOptions(req));
+  res.clearCookie(stateCookieName, cookieOptions(req));
+}
+
+function localReturnPath(value) {
+  const raw = String(value || '').trim();
+  if (!raw || !raw.startsWith('/') || raw.startsWith('//')) return '';
+  return raw;
 }
 
 function appBaseURL(callbackURL) {
