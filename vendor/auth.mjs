@@ -279,6 +279,7 @@ export function attendancePermissions(roleID) {
   return {
     use_attendance: canUse,
     view_own_attendance: role === 1,
+    view_adult_attendance: role === 5,
     mark_absence: canManage,
     manage_presence: role === 5,
   };

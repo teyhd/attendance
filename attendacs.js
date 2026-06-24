@@ -147,6 +147,9 @@ setupAuthRoutes(app);
 
 await db.ensureAttendanceSchema();
 
+const AUDIENCE_CHILDREN = 'children';
+const AUDIENCE_ADULTS = 'adults';
+
 app.get('/', (req, res) => {
   const user = getAuthUserFromRequest(req);
   if (user?.permissions?.view_own_attendance) {
@@ -303,33 +306,62 @@ app.get('/attendance/me', requireOwnAttendanceAuth, asyncHandler(async (req, res
 }));
 
 app.get('/attendance/analytics', requirePageAuth, asyncHandler(async (req, res) => {
+  const audience = normalizePageAudience(req.query.audience, req.authUser);
+  const canManage = Boolean(req.authUser?.permissions?.mark_absence);
+  const audienceTabs = buildAudienceTabs('/attendance/analytics', audience, req.query, req.authUser);
+
+  if (audience === AUDIENCE_ADULTS) {
+    const analytics = await db.getAdultAttendanceAnalytics({
+      month: req.query.month,
+      departmentId: req.query.department,
+    });
+
+    return res.render('analytics', {
+      title: 'Аналитика посещаемости',
+      currentUser: req.authUser,
+      activePage: 'analytics',
+      audience,
+      audienceTabs,
+      analytics,
+      classOptions: [],
+      departmentOptions: analytics.available_departments,
+      kpiCards: buildAdultAnalyticsKpiCards(analytics),
+      canManage,
+    });
+  }
+
   const mentorClassIds = await db.getMentorClassIds(req.authUser?.id);
   const classId = req.query.class || mentorClassIds[0] || undefined;
   const analytics = await db.getMonthlyAttendanceAnalytics({
     month: req.query.month,
     classId,
   });
-  const canManage = Boolean(req.authUser?.permissions?.mark_absence);
 
   res.render('analytics', {
     title: 'Аналитика посещаемости',
     currentUser: req.authUser,
     activePage: 'analytics',
+    audience,
+    audienceTabs,
     analytics,
     classOptions: orderClassesByPreference(analytics.available_classes, mentorClassIds),
+    departmentOptions: [],
     kpiCards: buildAnalyticsKpiCards(analytics),
     canManage,
   });
 }));
 
 app.get('/attendance/presence', requirePageAuth, requirePermission('manage_presence'), asyncHandler(async (req, res) => {
+  const audience = normalizePageAudience(req.query.audience, req.authUser);
   const selectedDate = formatDateInput(new Date());
-  const board = await db.getPresenceBoard({ date: selectedDate });
+  const board = await db.getPresenceBoard({ date: selectedDate, audience });
 
   res.render('presence', {
     title: 'Ручной ввод',
     currentUser: req.authUser,
     activePage: 'presence',
+    audience,
+    audienceTabs: buildAudienceTabs('/attendance/presence', audience, req.query, req.authUser),
     board,
   });
 }));
@@ -464,6 +496,18 @@ app.get('/api/attendance/me/analytics', requireOwnAttendanceAuth, asyncHandler(a
 
 // Monthly read model for reports and integrations. It is read-only and does not write diary marks.
 app.get('/api/attendance/analytics/monthly', requireApiAuth, asyncHandler(async (req, res) => {
+  const audience = normalizeApiAudience(req.query.audience);
+  if (audience === AUDIENCE_ADULTS) {
+    if (!canUseAudience(req.authUser, audience)) {
+      return res.status(403).json({ error: 'forbidden' });
+    }
+    const analytics = await db.getAdultAttendanceAnalytics({
+      month: req.query.month,
+      departmentId: req.query.departmentId || req.query.department,
+    });
+    return res.json(analytics);
+  }
+
   const analytics = await db.getMonthlyAttendanceAnalytics({
     month: req.query.month,
     classId: req.query.classId || req.query.class,
@@ -486,7 +530,11 @@ app.post('/api/attendance/absences', requireApiAuth, requirePermission('mark_abs
 
 app.post('/api/attendance/presence/toggle', requireApiAuth, requirePermission('manage_presence'), asyncHandler(async (req, res) => {
   try {
-    const result = await db.togglePresenceEvent(presenceInputFromBody(req.body, req.authUser));
+    const input = presenceInputFromBody(req.body, req.authUser);
+    if (!canUseAudience(req.authUser, input.audience)) {
+      return res.status(403).json({ error: 'forbidden' });
+    }
+    const result = await db.togglePresenceEvent(input);
     res.status(result.duplicate ? 200 : 201).json({
       event: toPublicPresenceEvent(result.event),
       state: result.state,
@@ -499,7 +547,11 @@ app.post('/api/attendance/presence/toggle', requireApiAuth, requirePermission('m
 
 app.post('/api/attendance/presence/events/:id/cancel', requireApiAuth, requirePermission('manage_presence'), asyncHandler(async (req, res) => {
   try {
-    const result = await db.cancelPresenceEvent(req.params.id, req.authUser?.id);
+    const audience = normalizeApiAudience(req.body?.audience);
+    if (!canUseAudience(req.authUser, audience)) {
+      return res.status(403).json({ error: 'forbidden' });
+    }
+    const result = await db.cancelPresenceEvent(req.params.id, req.authUser?.id, { audience });
     if (!result) {
       return res.status(404).json({ error: 'not_found' });
     }
@@ -577,6 +629,44 @@ function roleLabel(user) {
   return user?.permissions?.mark_absence ? 'Сотрудник · запись' : 'Сотрудник · чтение';
 }
 
+function normalizePageAudience(value, user) {
+  const audience = normalizeApiAudience(value);
+  return canUseAudience(user, audience) ? audience : AUDIENCE_CHILDREN;
+}
+
+function normalizeApiAudience(value) {
+  return String(value || '').trim() === AUDIENCE_ADULTS ? AUDIENCE_ADULTS : AUDIENCE_CHILDREN;
+}
+
+function canUseAudience(user, audience) {
+  if (audience === AUDIENCE_ADULTS) {
+    return Boolean(user?.permissions?.view_adult_attendance);
+  }
+  return Boolean(user?.permissions?.use_attendance);
+}
+
+function buildAudienceTabs(basePath, activeAudience, query = {}, user = null) {
+  if (!user?.permissions?.view_adult_attendance) return [];
+  return [
+    { id: AUDIENCE_CHILDREN, label: 'Дети' },
+    { id: AUDIENCE_ADULTS, label: 'Взрослые' },
+  ].map((item) => ({
+    ...item,
+    active: item.id === activeAudience,
+    href: audienceUrl(basePath, item.id, query),
+  }));
+}
+
+function audienceUrl(basePath, audience, query = {}) {
+  const params = new URLSearchParams();
+  params.set('audience', audience);
+  if (query.month) params.set('month', query.month);
+  if (audience === AUDIENCE_CHILDREN && query.class) params.set('class', query.class);
+  if (audience === AUDIENCE_ADULTS && query.department) params.set('department', query.department);
+  const text = params.toString();
+  return text ? `${basePath}?${text}` : basePath;
+}
+
 function filterStudents(students, q) {
   if (!q) return students;
   const needle = q.toLocaleLowerCase('ru');
@@ -603,6 +693,7 @@ function presenceInputFromBody(body, user) {
     studentId: body.studentId ?? body.student_id,
     classId: body.classId ?? body.class_id,
     idempotencyKey: body.idempotencyKey ?? body.idempotency_key,
+    audience: normalizeApiAudience(body.audience),
     actorId: user?.id || null,
   };
 }
@@ -651,6 +742,7 @@ function toPublicPresenceEvent(event) {
     attendance_date: event.attendance_date,
     actor_id: event.actor_id ? Number(event.actor_id) : null,
     source: event.source,
+    audience: event.audience || AUDIENCE_CHILDREN,
     cancelled_at: event.cancelled_at || null,
     cancelled_by: event.cancelled_by ? Number(event.cancelled_by) : null,
     created_at: event.created_at,
@@ -710,6 +802,58 @@ function buildAnalyticsKpiCards(analytics) {
       hint: 'ученик-день',
       border_class: 'border-indigo-500',
       ...target(hasAbsenceData, 'absence-calendar', 'Смотреть календарь'),
+    },
+  ];
+}
+
+function buildAdultAnalyticsKpiCards(analytics) {
+  const kpi = analytics.kpi || {};
+  const summary = analytics.class_summary || {};
+  const withoutReason = Number(kpi.without_reason || 0);
+  const needsAttention = Number(kpi.needs_attention || 0);
+  const needsClarification = Number(kpi.needs_clarification || 0);
+  const hasPeople = Number(kpi.people_total || 0) > 0;
+  const hasAbsenceData = Boolean(analytics.has_data);
+
+  return [
+    {
+      label: 'Присутствие',
+      value: `${Number(kpi.attendance_percent || 0)}%`,
+      hint: 'по рабочим дням',
+      border_class: Number(kpi.attendance_percent || 0) ? 'border-emerald-500' : 'border-gray-300',
+      ...(hasPeople ? { href: '#adult-people', target_id: 'adult-people', action_label: 'Смотреть сотрудников' } : {}),
+    },
+    {
+      label: 'Сегодня пришли',
+      value: summary.present_today_label || Number(kpi.present_today || 0),
+      hint: 'сейчас в школе',
+      border_class: Number(kpi.present_today || 0) ? 'border-emerald-500' : 'border-gray-300',
+      ...(hasPeople ? { href: '#adult-people', target_id: 'adult-people', action_label: 'Открыть список' } : {}),
+    },
+    {
+      label: 'Сегодня ушли',
+      value: summary.departed_today_label || Number(kpi.departed_today || 0),
+      hint: 'последняя отметка',
+      border_class: Number(kpi.departed_today || 0) ? 'border-slate-500' : 'border-gray-300',
+    },
+    {
+      label: 'Отсутствуют',
+      value: summary.absent_today_label || Number(kpi.absent_today || 0),
+      hint: 'сегодня',
+      border_class: Number(kpi.absent_today || 0) ? 'border-amber-500' : 'border-emerald-500',
+      details: [
+        { label: `без причины: ${withoutReason}`, tone_class: withoutReason ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-600' },
+        { label: `внимание: ${needsAttention}`, tone_class: needsAttention ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-600' },
+        { label: `уточнить: ${needsClarification}`, tone_class: needsClarification ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-100 text-gray-600' },
+      ],
+      ...(hasAbsenceData ? { href: '#adult-today-absences', target_id: 'adult-today-absences', action_label: 'Открыть отсутствия' } : {}),
+    },
+    {
+      label: 'Дни отсутствия',
+      value: Number(kpi.absence_days || 0),
+      hint: 'сотрудник-день',
+      border_class: 'border-indigo-500',
+      ...(hasAbsenceData ? { href: '#adult-calendar', target_id: 'adult-calendar', action_label: 'Смотреть календарь' } : {}),
     },
   ];
 }

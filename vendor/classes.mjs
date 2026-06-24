@@ -24,6 +24,11 @@ export function studentCountLabel(value) {
   return `${count} ${studentWord(count)}`;
 }
 
+export function personCountLabel(value) {
+  const count = Number(value || 0);
+  return `${count} ${personWord(count)}`;
+}
+
 function studentWord(value) {
   const abs = Math.abs(Number(value || 0));
   const mod100 = abs % 100;
@@ -32,4 +37,14 @@ function studentWord(value) {
   if (mod10 === 1) return 'ученик';
   if (mod10 >= 2 && mod10 <= 4) return 'ученика';
   return 'учеников';
+}
+
+function personWord(value) {
+  const abs = Math.abs(Number(value || 0));
+  const mod100 = abs % 100;
+  const mod10 = abs % 10;
+  if (mod100 >= 11 && mod100 <= 14) return 'сотрудников';
+  if (mod10 === 1) return 'сотрудник';
+  if (mod10 >= 2 && mod10 <= 4) return 'сотрудника';
+  return 'сотрудников';
 }

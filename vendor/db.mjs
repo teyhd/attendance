@@ -8,7 +8,7 @@ import {
   normalizeAnalyticsMonth,
   percentOf,
 } from './analytics.mjs';
-import { buildActiveClassList, studentCountLabel } from './classes.mjs';
+import { buildActiveClassList, personCountLabel, studentCountLabel } from './classes.mjs';
 import {
   OTHER_REASON_CODE,
   WITHOUT_REASON_CODE,
@@ -57,6 +57,10 @@ const REASON_CELL_PALETTES = {
   attention: { bg: '#fee2e2', border: '#fecaca', text: '#991b1b', strongBg: '#dc2626', strongText: '#ffffff' },
   default: { bg: '#ecfeff', border: '#67e8f9', text: '#155e75', strongBg: '#0f766e', strongText: '#ffffff' },
 };
+const AUDIENCE_CHILDREN = 'children';
+const AUDIENCE_ADULTS = 'adults';
+const ADULT_CLASS_LINKED_DEPARTMENT_ID = 'class-linked';
+const ADULT_CLASS_LINKED_DEPARTMENT_NAME = 'Без кафедры';
 
 const sets = {
   host: process.env.MDBHOST,
@@ -367,14 +371,88 @@ export async function getStudentById(id) {
   return rows[0] || null;
 }
 
-export async function getPresenceBoard({ date } = {}) {
+export async function getAdultDepartments() {
+  const [rows] = await usr.query(
+    `SELECT
+        CASE
+          WHEN k.type = 1 THEN '${ADULT_CLASS_LINKED_DEPARTMENT_ID}'
+          ELSE CAST(k.id AS CHAR)
+        END AS id,
+        CASE
+          WHEN k.type = 1 THEN '${ADULT_CLASS_LINKED_DEPARTMENT_NAME}'
+          ELSE k.name
+        END AS name,
+        COUNT(u.id) AS students_count,
+        COUNT(u.id) AS people_count
+       FROM sso.kaf_name k
+       JOIN sso.users u
+         ON u.kaf = k.id
+        AND COALESCE(u.type, 0) <> 1
+        AND u.status = 1
+      WHERE k.id > 0
+      GROUP BY id, name`,
+  );
+
+  return rows
+    .map((row) => ({
+      id: String(row.id || ''),
+      name: String(row.name || ''),
+      students_count: Number(row.students_count || 0),
+      people_count: Number(row.people_count || row.students_count || 0),
+    }))
+    .filter((item) => item.id && item.name && item.people_count > 0)
+    .sort((left, right) => left.name.localeCompare(right.name, 'ru', { numeric: true, sensitivity: 'base' }));
+}
+
+export async function getAdultsByDepartment(departmentId) {
+  const selectedDepartmentId = String(departmentId || '').trim();
+  const where = [
+    'COALESCE(u.type, 0) <> 1',
+    'u.status = 1',
+  ];
+  const params = [];
+  if (selectedDepartmentId === ADULT_CLASS_LINKED_DEPARTMENT_ID) {
+    where.push('k.type = 1');
+  } else {
+    where.push('u.kaf = ?');
+    params.push(selectedDepartmentId);
+  }
+
+  const [rows] = await usr.query(
+    `SELECT
+        CAST(u.id AS CHAR) AS id,
+        COALESCE(NULLIF(u.display_name_custom, ''), NULLIF(u.nickname, ''), NULLIF(u.msgnickname, ''), u.name) AS name,
+        CAST(u.kaf AS CHAR) AS classId,
+        CASE
+          WHEN k.type = 1 THEN '${ADULT_CLASS_LINKED_DEPARTMENT_ID}'
+          ELSE CAST(u.kaf AS CHAR)
+        END AS department_id,
+        CASE
+          WHEN k.type = 1 THEN '${ADULT_CLASS_LINKED_DEPARTMENT_NAME}'
+          ELSE k.name
+        END AS department_name,
+        CAST(u.type AS CHAR) AS user_type
+       FROM sso.users u
+       JOIN sso.kaf_name k ON k.id = u.kaf
+      WHERE ${where.join(' AND ')}
+      ORDER BY
+        COALESCE(NULLIF(u.display_name_custom, ''), NULLIF(u.nickname, ''), NULLIF(u.msgnickname, ''), u.name),
+        u.id`,
+    params,
+  );
+  return rows;
+}
+
+export async function getPresenceBoard({ date, audience = AUDIENCE_CHILDREN } = {}) {
   const selectedDate = normalizeDateOnly(date || todayDate());
+  const normalizedAudience = normalizeDataAudience(audience);
+  const isAdults = normalizedAudience === AUDIENCE_ADULTS;
   const nowSql = sqlNow();
   const [classes, students, events, absences, schoolDay] = await Promise.all([
-    getClasses(),
-    getPresenceStudents(),
-    listPresenceEventsForDate(selectedDate),
-    listPresenceAbsencesForDate(selectedDate),
+    isAdults ? getAdultDepartments() : getClasses(),
+    getPresenceStudents(normalizedAudience),
+    listPresenceEventsForDate(selectedDate, normalizedAudience),
+    listPresenceAbsencesForDate(selectedDate, normalizedAudience),
     getSchoolDayBounds(selectedDate),
   ]);
   const latestByStudent = latestPresenceEventMap(events);
@@ -384,14 +462,17 @@ export async function getPresenceBoard({ date } = {}) {
     String(classItem.id),
     {
       ...classItem,
-      anchor: `presence-class-${classItem.id}`,
-      students_label: studentCountLabel(classItem.students_count),
+      anchor: `presence-${normalizedAudience}-${classItem.id}`,
+      students_label: isAdults
+        ? personCountLabel(classItem.people_count ?? classItem.students_count)
+        : studentCountLabel(classItem.students_count),
       students: [],
     },
   ]));
 
   for (const student of students) {
-    const classBucket = classBuckets.get(String(student.classId));
+    const groupId = String(student.groupId || student.classId);
+    const classBucket = classBuckets.get(groupId);
     if (!classBucket) continue;
     const latestEvent = latestByStudent.get(String(student.id)) || null;
     const absence = presenceAbsenceForStudent(absencesByStudent.get(String(student.id)), selectedDate, nowSql);
@@ -402,7 +483,7 @@ export async function getPresenceBoard({ date } = {}) {
         latestEvent,
         absence,
         firstArrival,
-        schoolDay,
+        schoolDay: isAdults ? null : schoolDay,
       }),
     });
   }
@@ -416,6 +497,8 @@ export async function getPresenceBoard({ date } = {}) {
   }, { classes: 0, students: 0, present: 0 });
 
   return {
+    audience: normalizedAudience,
+    is_adult: isAdults,
     date: selectedDate,
     date_label: formatDateLabel(selectedDate),
     classes: boardClasses,
@@ -423,8 +506,9 @@ export async function getPresenceBoard({ date } = {}) {
   };
 }
 
-export async function togglePresenceEvent({ studentId, classId, actorId, idempotencyKey } = {}) {
-  const student = await assertPresenceStudent(studentId, classId);
+export async function togglePresenceEvent({ studentId, classId, actorId, idempotencyKey, audience = AUDIENCE_CHILDREN } = {}) {
+  const normalizedAudience = normalizeDataAudience(audience);
+  const student = await assertPresencePerson(studentId, classId, normalizedAudience);
   const nowSql = sqlNow();
   const attendanceDate = dateOnlyFromSql(nowSql);
   const normalizedIdempotencyKey = normalizeIdempotencyKey(idempotencyKey);
@@ -503,7 +587,8 @@ export async function togglePresenceEvent({ studentId, classId, actorId, idempot
   }
 }
 
-export async function cancelPresenceEvent(eventId, actorId) {
+export async function cancelPresenceEvent(eventId, actorId, { audience = AUDIENCE_CHILDREN } = {}) {
+  const normalizedAudience = normalizeDataAudience(audience);
   const id = toPositiveInt(eventId, 'eventId');
   const conn = await usr.getConnection();
   let lockAcquired = false;
@@ -516,6 +601,9 @@ export async function cancelPresenceEvent(eventId, actorId) {
     if (!event) {
       await conn.commit();
       return null;
+    }
+    if (event.audience !== normalizedAudience) {
+      throw new ValidationError('Отметка относится к другому разделу', 409);
     }
 
     lockStudentId = event.student_id;
@@ -838,7 +926,37 @@ export async function getAttendanceSummary({ classId, date } = {}) {
   };
 }
 
-async function getPresenceStudents() {
+async function getPresenceStudents(audience = AUDIENCE_CHILDREN) {
+  const normalizedAudience = normalizeDataAudience(audience);
+  if (normalizedAudience === AUDIENCE_ADULTS) {
+    const [rows] = await usr.query(
+      `SELECT
+          CAST(u.id AS CHAR) AS id,
+          COALESCE(NULLIF(u.display_name_custom, ''), NULLIF(u.nickname, ''), NULLIF(u.msgnickname, ''), u.name) AS name,
+          CAST(u.kaf AS CHAR) AS classId,
+          k.name AS className,
+          CASE
+            WHEN k.type = 1 THEN '${ADULT_CLASS_LINKED_DEPARTMENT_ID}'
+            ELSE CAST(u.kaf AS CHAR)
+          END AS groupId,
+          CASE
+            WHEN k.type = 1 THEN '${ADULT_CLASS_LINKED_DEPARTMENT_NAME}'
+            ELSE k.name
+          END AS groupName,
+          CAST(u.type AS CHAR) AS user_type
+         FROM sso.users u
+         JOIN sso.kaf_name k ON k.id = u.kaf
+        WHERE COALESCE(u.type, 0) <> 1
+          AND u.status = 1
+          AND u.kaf > 0
+        ORDER BY
+          k.name,
+          COALESCE(NULLIF(u.display_name_custom, ''), NULLIF(u.nickname, ''), NULLIF(u.msgnickname, ''), u.name),
+          u.id`,
+    );
+    return rows;
+  }
+
   const [rows] = await usr.query(
     `SELECT
         CAST(u.id AS CHAR) AS id,
@@ -861,18 +979,27 @@ async function getPresenceStudents() {
   return rows;
 }
 
-async function listPresenceEventsForDate(date) {
+async function listPresenceEventsForDate(date, audience = AUDIENCE_CHILDREN) {
+  const normalizedAudience = normalizeDataAudience(audience);
+  const audienceWhere = normalizedAudience === AUDIENCE_ADULTS
+    ? 'COALESCE(u.type, 0) <> 1 AND u.status = 1'
+    : 'u.type = 1 AND u.status = 1';
   const [rows] = await usr.query(
     `${presenceEventSelectSql()}
       WHERE e.attendance_date = ?
         AND e.cancelled_at IS NULL
+        AND ${audienceWhere}
       ORDER BY e.student_id, e.occurred_at, e.id`,
     [date],
   );
   return rows.map(mapPresenceEvent);
 }
 
-async function listPresenceAbsencesForDate(date) {
+async function listPresenceAbsencesForDate(date, audience = AUDIENCE_CHILDREN) {
+  const normalizedAudience = normalizeDataAudience(audience);
+  const audienceWhere = normalizedAudience === AUDIENCE_ADULTS
+    ? 'COALESCE(u.type, 0) <> 1'
+    : 'u.type = 1 AND k.type = 1';
   const dayStart = `${date} 00:00:00`;
   const dayEnd = `${date} 23:59:59`;
   const [rows] = await usr.query(
@@ -880,9 +1007,8 @@ async function listPresenceAbsencesForDate(date) {
       WHERE p.deleted_at IS NULL
         AND COALESCE(p.ends_at, ?) >= ?
         AND p.starts_at <= ?
-        AND u.type = 1
         AND u.status = 1
-        AND k.type = 1
+        AND ${audienceWhere}
       ORDER BY p.starts_at, p.id`,
     [FAR_FUTURE, dayStart, dayEnd],
   );
@@ -961,42 +1087,65 @@ function isLateArrival(firstArrival, schoolDay) {
   return ((arrivalMs - startsMs) / 60_000) > LATE_THRESHOLD_MINUTES;
 }
 
-export async function getTodayAbsenceOverview({ date, now, classId } = {}) {
+export async function getTodayAbsenceOverview({ date, now, classId, audience = AUDIENCE_CHILDREN } = {}) {
   const selectedDate = normalizeDateOnly(date || todayDate());
   const nowSql = normalizeDateTime(now || sqlNow(), { field: 'now', required: true });
+  const normalizedAudience = normalizeDataAudience(audience);
+  const isAdults = normalizedAudience === AUDIENCE_ADULTS;
   const selectedClassId = String(classId || '').trim();
   const dayStart = `${selectedDate} 00:00:00`;
   const dayEnd = `${selectedDate} 23:59:59`;
-  const studentWhere = [
-    'type = 1',
-    'status = 1',
-    'kaf IS NOT NULL',
-  ];
+  const studentWhere = isAdults
+    ? ['COALESCE(u.type, 0) <> 1', 'u.status = 1', 'u.kaf IS NOT NULL']
+    : ['type = 1', 'status = 1', 'kaf IS NOT NULL'];
   const studentParams = [];
-  const absenceWhere = [
-    'p.deleted_at IS NULL',
-    'u.type = 1',
-    'u.status = 1',
-    'COALESCE(p.ends_at, ?) >= ?',
-    'p.starts_at <= ?',
-  ];
+  const absenceWhere = isAdults
+    ? [
+      'p.deleted_at IS NULL',
+      'COALESCE(u.type, 0) <> 1',
+      'u.status = 1',
+      'COALESCE(p.ends_at, ?) >= ?',
+      'p.starts_at <= ?',
+    ]
+    : [
+      'p.deleted_at IS NULL',
+      'u.type = 1',
+      'u.status = 1',
+      'COALESCE(p.ends_at, ?) >= ?',
+      'p.starts_at <= ?',
+    ];
   const absenceParams = [FAR_FUTURE, dayStart, dayEnd];
 
   if (selectedClassId && selectedClassId !== 'all') {
-    studentWhere.push('kaf = ?');
-    studentParams.push(selectedClassId);
-    absenceWhere.push('p.class_id = ?');
-    absenceParams.push(selectedClassId);
+    if (isAdults && selectedClassId === ADULT_CLASS_LINKED_DEPARTMENT_ID) {
+      studentWhere.push('k.type = 1');
+      absenceWhere.push('k.type = 1');
+    } else {
+      studentWhere.push(isAdults ? 'u.kaf = ?' : 'kaf = ?');
+      studentParams.push(selectedClassId);
+      absenceWhere.push('p.class_id = ?');
+      absenceParams.push(selectedClassId);
+    }
   }
 
-  const [studentCountRows, absenceRows] = await Promise.all([
-    usr.query(
-      `SELECT CAST(kaf AS CHAR) AS class_id, COUNT(*) AS students_total
+  const studentCountSql = isAdults
+    ? `SELECT
+         CASE
+           WHEN k.type = 1 THEN '${ADULT_CLASS_LINKED_DEPARTMENT_ID}'
+           ELSE CAST(k.id AS CHAR)
+         END AS class_id,
+         COUNT(*) AS students_total
+       FROM sso.users u
+       JOIN sso.kaf_name k ON k.id = u.kaf
+       WHERE ${studentWhere.join(' AND ')}
+       GROUP BY class_id`
+    : `SELECT CAST(kaf AS CHAR) AS class_id, COUNT(*) AS students_total
          FROM sso.users
         WHERE ${studentWhere.join(' AND ')}
-        GROUP BY kaf`,
-      studentParams,
-    ),
+        GROUP BY kaf`;
+
+  const [studentCountRows, absenceRows] = await Promise.all([
+    usr.query(studentCountSql, studentParams),
     usr.query(
       `${absenceSelectSql()}
         WHERE ${absenceWhere.join(' AND ')}
@@ -1010,7 +1159,12 @@ export async function getTodayAbsenceOverview({ date, now, classId } = {}) {
   );
   const classBuckets = new Map();
 
-  for (const absence of absenceRows[0].map(mapAbsencePeriod)) {
+  for (const row of absenceRows[0]) {
+    const absence = mapAbsencePeriod(row);
+    if (isAdults && Number(row.class_type) === 1) {
+      absence.class_id = ADULT_CLASS_LINKED_DEPARTMENT_ID;
+      absence.class_name = ADULT_CLASS_LINKED_DEPARTMENT_NAME;
+    }
     const classId = String(absence.class_id || '');
     const studentId = String(absence.student_id || '');
     if (!classId || !studentId) continue;
@@ -1044,8 +1198,10 @@ export async function getTodayAbsenceOverview({ date, now, classId } = {}) {
       absent_now: absentNow,
       without_reason: withoutReason,
       needs_attention: needsAttention,
-      href: attendanceHref({ classId: classBucket.class_id, date: selectedDate }),
-      summary_label: `Класс ${classBucket.class_name} · ${students.length} сегодня · ${absentNow} сейчас`,
+      href: isAdults ? '' : attendanceHref({ classId: classBucket.class_id, date: selectedDate }),
+      summary_label: isAdults
+        ? `${classBucket.class_name} · ${students.length} сегодня · ${absentNow} сейчас`
+        : `Класс ${classBucket.class_name} · ${students.length} сегодня · ${absentNow} сейчас`,
       students,
     };
   }).sort((a, b) => compareClassNames(a.class_name, b.class_name));
@@ -1060,6 +1216,8 @@ export async function getTodayAbsenceOverview({ date, now, classId } = {}) {
   ));
 
   return {
+    audience: normalizedAudience,
+    is_adult: isAdults,
     date: selectedDate,
     date_label: formatDateLabel(selectedDate),
     now: nowSql,
@@ -1177,6 +1335,8 @@ export async function getMonthlyAttendanceAnalytics({ month, classId, risk, reas
     students,
     periods,
   });
+  analytics.audience = AUDIENCE_CHILDREN;
+  analytics.is_adult = false;
   analytics.learning = buildLearningAnalytics({
     range,
     students,
@@ -1253,6 +1413,94 @@ export async function getMonthlyAttendanceAnalytics({ month, classId, risk, reas
     absent_today_label: studentCountLabel(classSummary.absent_today),
     risk_students_label: studentCountLabel(classSummary.risk_students_total),
   };
+  return analytics;
+}
+
+export async function getAdultAttendanceAnalytics({ month, departmentId } = {}) {
+  const selectedMonth = normalizeAnalyticsMonth(month);
+  const range = buildMonthRange(selectedMonth);
+  const departments = await getAdultDepartments();
+  const selectedDepartment = normalizeAnalyticsDepartment(departments, departmentId);
+  const departmentFilter = selectedDepartment.id === 'all' ? null : selectedDepartment.id;
+  const [people, periods, publishedSchoolDays, activeWeekdays, arrivals, presenceEvents, todayAbsences] = await Promise.all([
+    getMonthlyAdultAnalyticsPeople(departmentFilter),
+    getMonthlyAdultAnalyticsPeriods(range, departmentFilter),
+    getPublishedScheduleDays(range),
+    getActiveScheduleWeekdays(),
+    getMonthlyFirstPresenceArrivals(range, departmentFilter, null, AUDIENCE_ADULTS),
+    getMonthlyPresenceEvents(range, departmentFilter, null, AUDIENCE_ADULTS),
+    getTodayAbsenceOverview({ classId: departmentFilter, audience: AUDIENCE_ADULTS }),
+  ]);
+
+  const analytics = buildMonthlyAnalytics({
+    range,
+    classes: departments,
+    selectedClass: selectedDepartment,
+    students: people,
+    periods,
+  });
+  const adultStats = buildAdultPresenceStats({
+    range,
+    departments,
+    people,
+    periods,
+    arrivals,
+    presenceEvents,
+  });
+  const classSummary = buildClassPresenceSummary({
+    range,
+    studentsTotal: people.length,
+    arrivals,
+    todayAbsences,
+    publishedSchoolDays,
+    activeWeekdays,
+    absenceDays: analytics.kpi?.absence_days,
+    needsAttention: analytics.kpi?.needs_attention,
+    needsClarification: analytics.kpi?.needs_clarification,
+    withoutReason: analytics.kpi?.without_reason,
+  });
+
+  analytics.audience = AUDIENCE_ADULTS;
+  analytics.is_adult = true;
+  analytics.department_id = selectedDepartment.id;
+  analytics.department_name = selectedDepartment.name;
+  analytics.available_departments = [
+    { id: 'all', name: 'Все кафедры', selected: selectedDepartment.id === 'all' },
+    ...departments.map((item) => ({
+      id: item.id,
+      name: item.name,
+      people_count: Number(item.people_count || item.students_count || 0),
+      selected: String(item.id) === String(selectedDepartment.id),
+    })),
+  ];
+  analytics.people = adultStats.people;
+  analytics.departments = adultStats.departments;
+  analytics.class_summary = {
+    ...classSummary,
+    present_today: adultStats.present_today,
+    departed_today: adultStats.departed_today,
+    present_today_label: personCountLabel(adultStats.present_today),
+    departed_today_label: personCountLabel(adultStats.departed_today),
+    absent_today_label: personCountLabel(classSummary.absent_today),
+  };
+  analytics.has_activity = Boolean(
+    analytics.has_data
+    || arrivals.length
+    || presenceEvents.length
+    || todayAbsences?.has_absences
+  );
+  analytics.today_absences = todayAbsences;
+  analytics.kpi = {
+    ...analytics.kpi,
+    people_total: people.length,
+    present_days: classSummary.presence_days,
+    expected_presence_days: classSummary.expected_presence_days,
+    attendance_percent: classSummary.attendance_percent,
+    present_today: adultStats.present_today,
+    departed_today: adultStats.departed_today,
+    absent_today: classSummary.absent_today,
+  };
+
   return analytics;
 }
 
@@ -1496,6 +1744,45 @@ async function getMonthlyAnalyticsStudents(classId) {
   return rows;
 }
 
+async function getMonthlyAdultAnalyticsPeople(departmentId) {
+  const where = [
+    'COALESCE(u.type, 0) <> 1',
+    'u.status = 1',
+    'u.kaf > 0',
+  ];
+  const params = [];
+  if (departmentId) {
+    if (String(departmentId) === ADULT_CLASS_LINKED_DEPARTMENT_ID) {
+      where.push('k.type = 1');
+    } else {
+      where.push('u.kaf = ?');
+      params.push(departmentId);
+    }
+  }
+
+  const [rows] = await usr.query(
+      `SELECT
+        CAST(u.id AS CHAR) AS student_id,
+        COALESCE(NULLIF(u.display_name_custom, ''), NULLIF(u.nickname, ''), NULLIF(u.msgnickname, ''), u.name) AS student_name,
+        CASE
+          WHEN k.type = 1 THEN '${ADULT_CLASS_LINKED_DEPARTMENT_ID}'
+          ELSE CAST(u.kaf AS CHAR)
+        END AS class_id,
+        CASE
+          WHEN k.type = 1 THEN '${ADULT_CLASS_LINKED_DEPARTMENT_NAME}'
+          ELSE k.name
+        END AS class_name,
+        CAST(u.kaf AS CHAR) AS actual_class_id,
+        CAST(u.type AS CHAR) AS user_type
+       FROM sso.users u
+       JOIN sso.kaf_name k ON k.id = u.kaf
+      WHERE ${where.join(' AND ')}
+      ORDER BY k.name, student_name, u.id`,
+    params,
+  );
+  return rows;
+}
+
 async function getMonthlyAnalyticsPeriods(range, classId, studentId = null) {
   const where = [
     'p.deleted_at IS NULL',
@@ -1548,19 +1835,27 @@ async function getMonthlyAnalyticsPeriods(range, classId, studentId = null) {
   return rows;
 }
 
-async function getMonthlyFirstPresenceArrivals(range, classId, studentId = null) {
+async function getMonthlyFirstPresenceArrivals(range, classId, studentId = null, audience = AUDIENCE_CHILDREN) {
+  const normalizedAudience = normalizeDataAudience(audience);
   const where = [
     'e.event_type = ?',
     'e.cancelled_at IS NULL',
     'e.attendance_date BETWEEN ? AND ?',
-    'u.type = 1',
     'u.status = 1',
-    'k.type = 1',
   ];
+  if (normalizedAudience === AUDIENCE_ADULTS) {
+    where.push('COALESCE(u.type, 0) <> 1');
+  } else {
+    where.push('u.type = 1', 'k.type = 1');
+  }
   const params = [PRESENCE_EVENT_TYPES.ARRIVAL, range.start_date, range.end_date];
   if (classId) {
-    where.push('e.class_id = ?');
-    params.push(classId);
+    if (normalizedAudience === AUDIENCE_ADULTS && String(classId) === ADULT_CLASS_LINKED_DEPARTMENT_ID) {
+      where.push('k.type = 1');
+    } else {
+      where.push('e.class_id = ?');
+      params.push(classId);
+    }
   }
   if (studentId) {
     where.push('e.student_id = ?');
@@ -1596,18 +1891,88 @@ async function getMonthlyFirstPresenceArrivals(range, classId, studentId = null)
   return rows;
 }
 
-async function getMonthlyPresenceEvents(range, classId, studentId = null) {
+async function getMonthlyAdultAnalyticsPeriods(range, departmentId, personId = null) {
+  const where = [
+    'p.deleted_at IS NULL',
+    'p.starts_at <= ?',
+    'COALESCE(p.ends_at, p.starts_at) >= ?',
+    'COALESCE(u.type, 0) <> 1',
+    'u.status = 1',
+  ];
+  const params = [range.start_at, range.end_at, range.end_at, range.start_at];
+  if (departmentId) {
+    if (String(departmentId) === ADULT_CLASS_LINKED_DEPARTMENT_ID) {
+      where.push('k.type = 1');
+    } else {
+      where.push('p.class_id = ?');
+      params.push(departmentId);
+    }
+  }
+  if (personId) {
+    where.push('p.student_id = ?');
+    params.push(personId);
+  }
+
+  const [rows] = await usr.query(
+    `SELECT
+        CAST(p.id AS CHAR) AS id,
+        CAST(p.student_id AS CHAR) AS student_id,
+        CASE
+          WHEN k.type = 1 THEN '${ADULT_CLASS_LINKED_DEPARTMENT_ID}'
+          ELSE CAST(p.class_id AS CHAR)
+        END AS class_id,
+        COALESCE(NULLIF(u.display_name_custom, ''), NULLIF(u.nickname, ''), NULLIF(u.msgnickname, ''), u.name) AS student_name,
+        CASE
+          WHEN k.type = 1 THEN '${ADULT_CLASS_LINKED_DEPARTMENT_NAME}'
+          ELSE k.name
+        END AS class_name,
+        CAST(p.class_id AS CHAR) AS actual_class_id,
+        DATE_FORMAT(p.starts_at, '%Y-%m-%d %H:%i:%s') AS starts_at,
+        DATE_FORMAT(p.ends_at, '%Y-%m-%d %H:%i:%s') AS ends_at,
+        ROUND(GREATEST(0, TIMESTAMPDIFF(MINUTE,
+          GREATEST(p.starts_at, ?),
+          LEAST(COALESCE(p.ends_at, TIMESTAMP(DATE(p.starts_at), '23:59:59')), ?)
+        ) / 60), 4) AS period_hours,
+        p.reason_code,
+        r.name AS reason_name,
+        r.is_excused,
+        p.comment,
+        p.source,
+        p.confirmation_status,
+        p.attention_status,
+        DATE_FORMAT(p.created_at, '%Y-%m-%d %H:%i:%s') AS created_at,
+        DATE_FORMAT(p.updated_at, '%Y-%m-%d %H:%i:%s') AS updated_at
+       FROM attendance.absence_periods p
+       JOIN attendance.absence_reasons r ON r.code = p.reason_code
+       JOIN sso.users u ON u.id = p.student_id
+       JOIN sso.kaf_name k ON k.id = p.class_id
+      WHERE ${where.join(' AND ')}
+      ORDER BY p.starts_at, p.id`,
+    params,
+  );
+  return rows;
+}
+
+async function getMonthlyPresenceEvents(range, classId, studentId = null, audience = AUDIENCE_CHILDREN) {
+  const normalizedAudience = normalizeDataAudience(audience);
   const where = [
     'e.cancelled_at IS NULL',
     'e.attendance_date BETWEEN ? AND ?',
-    'u.type = 1',
     'u.status = 1',
-    'k.type = 1',
   ];
+  if (normalizedAudience === AUDIENCE_ADULTS) {
+    where.push('COALESCE(u.type, 0) <> 1');
+  } else {
+    where.push('u.type = 1', 'k.type = 1');
+  }
   const params = [range.start_date, range.end_date];
   if (classId) {
-    where.push('e.class_id = ?');
-    params.push(classId);
+    if (normalizedAudience === AUDIENCE_ADULTS && String(classId) === ADULT_CLASS_LINKED_DEPARTMENT_ID) {
+      where.push('k.type = 1');
+    } else {
+      where.push('e.class_id = ?');
+      params.push(classId);
+    }
   }
   if (studentId) {
     where.push('e.student_id = ?');
@@ -2010,6 +2375,177 @@ function normalizeAnalyticsClass(classes, classId) {
     if (found) return { id: String(found.id), name: found.name };
   }
   return { id: 'all', name: 'Все классы' };
+}
+
+function normalizeAnalyticsDepartment(departments, departmentId) {
+  const raw = String(departmentId || 'all').trim();
+  if (raw && raw !== 'all') {
+    const found = departments.find((item) => String(item.id) === raw);
+    if (found) return { id: String(found.id), name: found.name };
+  }
+  return { id: 'all', name: 'Все кафедры' };
+}
+
+function buildAdultPresenceStats({ range, departments = [], people = [], periods = [], arrivals = [], presenceEvents = [] } = {}) {
+  const today = todayDate();
+  const peopleById = new Map();
+  const departmentBuckets = new Map();
+  const departmentNames = new Map(departments.map((item) => [String(item.id), item.name]));
+
+  const ensureDepartmentBucket = (departmentId, departmentName = '') => {
+    const id = String(departmentId || '');
+    if (!departmentBuckets.has(id)) {
+      departmentBuckets.set(id, {
+        department_id: id,
+        department_name: departmentName || departmentNames.get(id) || '',
+        people_total: 0,
+        presentDays: new Set(),
+        absenceDays: new Set(),
+        periods: 0,
+        without_reason: 0,
+        needs_attention: 0,
+        present_today: 0,
+        departed_today: 0,
+      });
+    }
+    return departmentBuckets.get(id);
+  };
+
+  for (const person of people) {
+    const personId = String(person.student_id || person.id || '');
+    const departmentId = String(person.class_id || person.department_id || '');
+    if (!personId || !departmentId) continue;
+    const departmentName = person.class_name || person.department_name || departmentNames.get(departmentId) || '';
+    peopleById.set(personId, {
+      person_id: personId,
+      person_name: person.student_name || person.name || '',
+      department_id: departmentId,
+      department_name: departmentName,
+      presentDays: new Set(),
+      absenceDays: new Set(),
+      periods: 0,
+      without_reason: 0,
+      needs_attention: 0,
+      latestEvent: null,
+      todayEvent: null,
+    });
+    ensureDepartmentBucket(departmentId, departmentName).people_total += 1;
+  }
+
+  for (const arrival of arrivals || []) {
+    const person = peopleById.get(String(arrival.student_id || ''));
+    if (!person) continue;
+    const day = dateOnlyFromSql(arrival.attendance_date || arrival.arrival_at || arrival.occurred_at);
+    if (!range.days.includes(day)) continue;
+    const key = `${person.person_id}|${day}`;
+    person.presentDays.add(day);
+    ensureDepartmentBucket(person.department_id, person.department_name).presentDays.add(key);
+  }
+
+  for (const event of presenceEvents || []) {
+    const person = peopleById.get(String(event.student_id || ''));
+    if (!person) continue;
+    const current = String(event.occurred_at || '');
+    const latest = String(person.latestEvent?.occurred_at || '');
+    if (!person.latestEvent || current >= latest) {
+      person.latestEvent = event;
+    }
+    if (event.attendance_date === today) {
+      const todayLatest = String(person.todayEvent?.occurred_at || '');
+      if (!person.todayEvent || current >= todayLatest) {
+        person.todayEvent = event;
+      }
+    }
+  }
+
+  for (const period of periods || []) {
+    const person = peopleById.get(String(period.student_id || ''));
+    if (!person) continue;
+    const department = ensureDepartmentBucket(person.department_id, person.department_name);
+    const days = expandDateRangeWithinMonth(period.starts_at, period.ends_at || period.starts_at, range);
+    person.periods += 1;
+    department.periods += 1;
+    if (isWithoutReasonCode(period.reason_code)) {
+      person.without_reason += 1;
+      department.without_reason += 1;
+    }
+    if (period.attention_status === 'needs_attention') {
+      person.needs_attention += 1;
+      department.needs_attention += 1;
+    }
+    for (const day of days) {
+      const key = `${person.person_id}|${day}`;
+      person.absenceDays.add(day);
+      department.absenceDays.add(key);
+    }
+  }
+
+  const peopleRows = Array.from(peopleById.values())
+    .map((person) => {
+      const latestEvent = person.latestEvent;
+      const todayEvent = person.todayEvent;
+      const todayStatus = todayEvent?.event_type === PRESENCE_EVENT_TYPES.ARRIVAL
+        ? 'present'
+        : todayEvent?.event_type === PRESENCE_EVENT_TYPES.DEPARTURE
+          ? 'departed'
+          : 'none';
+      return {
+        person_id: person.person_id,
+        person_name: person.person_name,
+        department_id: person.department_id,
+        department_name: person.department_name,
+        present_days: person.presentDays.size,
+        absence_days: person.absenceDays.size,
+        periods: person.periods,
+        without_reason: person.without_reason,
+        needs_attention: person.needs_attention,
+        today_status: todayStatus,
+        today_status_label: todayEvent ? presenceEventTypeLabel(todayEvent.event_type) : 'Нет отметки',
+        today_time_label: todayEvent ? formatPresenceEventDateTime(todayEvent.occurred_at) : '',
+        last_event_label: latestEvent
+          ? `${presenceEventTypeLabel(latestEvent.event_type)} ${formatPresenceEventDateTime(latestEvent.occurred_at)}`.trim()
+          : '',
+      };
+    })
+    .sort((left, right) => (
+      left.department_name.localeCompare(right.department_name, 'ru', { numeric: true, sensitivity: 'base' })
+      || left.person_name.localeCompare(right.person_name, 'ru', { numeric: true, sensitivity: 'base' })
+    ));
+
+  for (const person of peopleRows) {
+    const department = ensureDepartmentBucket(person.department_id, person.department_name);
+    if (person.today_status === 'present') department.present_today += 1;
+    if (person.today_status === 'departed') department.departed_today += 1;
+  }
+
+  const departmentsRows = Array.from(departmentBuckets.values())
+    .filter((department) => (
+      department.people_total > 0
+      || department.presentDays.size > 0
+      || department.absenceDays.size > 0
+      || department.periods > 0
+    ))
+    .map((department) => ({
+      department_id: department.department_id,
+      department_name: department.department_name,
+      people_total: department.people_total,
+      present_days: department.presentDays.size,
+      absence_days: department.absenceDays.size,
+      periods: department.periods,
+      without_reason: department.without_reason,
+      needs_attention: department.needs_attention,
+      present_today: department.present_today,
+      departed_today: department.departed_today,
+      people_label: personCountLabel(department.people_total),
+    }))
+    .sort((left, right) => left.department_name.localeCompare(right.department_name, 'ru', { numeric: true, sensitivity: 'base' }));
+
+  return {
+    people: peopleRows,
+    departments: departmentsRows,
+    present_today: departmentsRows.reduce((sum, row) => sum + Number(row.present_today || 0), 0),
+    departed_today: departmentsRows.reduce((sum, row) => sum + Number(row.departed_today || 0), 0),
+  };
 }
 
 function buildClassDistributionChart(classRows) {
@@ -2530,6 +3066,7 @@ function absenceSelectSql() {
       CAST(p.class_id AS CHAR) AS class_id,
       COALESCE(NULLIF(u.display_name_custom, ''), NULLIF(u.nickname, ''), NULLIF(u.msgnickname, ''), u.name) AS student_name,
       k.name AS class_name,
+      k.type AS class_type,
       DATE_FORMAT(p.starts_at, '%Y-%m-%d %H:%i:%s') AS starts_at,
       DATE_FORMAT(p.ends_at, '%Y-%m-%d %H:%i:%s') AS ends_at,
       p.reason_code,
@@ -2563,6 +3100,7 @@ function mapAbsencePeriod(row) {
     class_id: row.class_id,
     student_name: row.student_name || '',
     class_name: row.class_name || '',
+    class_type: row.class_type == null ? '' : String(row.class_type),
     starts_at: startsAt,
     ends_at: endsAt,
     starts_at_input: toDateTimeLocal(startsAt),
@@ -2821,6 +3359,44 @@ function toEventPayload(absence) {
   };
 }
 
+async function assertPresencePerson(studentId, classId, audience = AUDIENCE_CHILDREN) {
+  const normalizedAudience = normalizeDataAudience(audience);
+  if (normalizedAudience === AUDIENCE_ADULTS) {
+    return assertPresenceAdult(studentId, classId);
+  }
+  return assertPresenceStudent(studentId, classId);
+}
+
+async function assertPresenceAdult(studentId, classId) {
+  const normalizedStudentId = toPositiveInt(studentId, 'studentId');
+  const normalizedClassId = toPositiveInt(classId, 'classId');
+  const [rows] = await usr.query(
+    `SELECT
+        CAST(u.id AS CHAR) AS id,
+        COALESCE(NULLIF(u.display_name_custom, ''), NULLIF(u.nickname, ''), NULLIF(u.msgnickname, ''), u.name) AS name,
+        CAST(u.kaf AS CHAR) AS classId
+       FROM sso.users u
+       JOIN sso.kaf_name k ON k.id = u.kaf
+      WHERE u.id = ?
+        AND COALESCE(u.type, 0) <> 1
+        AND u.status = 1
+      LIMIT 1`,
+    [normalizedStudentId],
+  );
+  const person = rows[0] || null;
+  if (!person) {
+    throw new ValidationError('Сотрудник не найден');
+  }
+  if (String(person.classId) !== String(normalizedClassId)) {
+    throw new ValidationError('Кафедра не совпадает с кафедрой сотрудника');
+  }
+  return {
+    id: normalizedStudentId,
+    classId: normalizedClassId,
+    name: person.name || '',
+  };
+}
+
 async function assertPresenceStudent(studentId, classId) {
   const normalizedStudentId = toPositiveInt(studentId, 'studentId');
   const normalizedClassId = toPositiveInt(classId, 'classId');
@@ -2836,6 +3412,10 @@ async function assertPresenceStudent(studentId, classId) {
     classId: normalizedClassId,
     name: student.name || '',
   };
+}
+
+function normalizeDataAudience(value) {
+  return String(value || '').trim() === AUDIENCE_ADULTS ? AUDIENCE_ADULTS : AUDIENCE_CHILDREN;
 }
 
 async function acquirePresenceLock(conn, studentId, date) {
@@ -2920,6 +3500,7 @@ function presenceEventSelectSql() {
       DATE_FORMAT(e.created_at, '%Y-%m-%d %H:%i:%s') AS created_at,
       DATE_FORMAT(e.updated_at, '%Y-%m-%d %H:%i:%s') AS updated_at,
       COALESCE(NULLIF(u.display_name_custom, ''), NULLIF(u.nickname, ''), NULLIF(u.msgnickname, ''), u.name) AS student_name,
+      u.type AS user_type,
       k.name AS class_name
     FROM attendance.presence_events e
     LEFT JOIN sso.users u ON u.id = e.student_id
@@ -2947,6 +3528,8 @@ function mapPresenceEvent(row) {
     attendance_date: row.attendance_date || dateOnlyFromSql(occurredAt),
     actor_id: row.actor_id,
     source: row.source || 'tablet',
+    audience: Number(row.user_type) === 1 ? AUDIENCE_CHILDREN : AUDIENCE_ADULTS,
+    user_type: row.user_type == null ? '' : String(row.user_type),
     cancelled_at: row.cancelled_at || '',
     cancelled_by: row.cancelled_by,
     idempotency_key: row.idempotency_key || '',

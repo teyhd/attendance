@@ -24,6 +24,11 @@ lib-cov
 coverage
 *.lcov
 
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
 # nyc test coverage
 .nyc_output
 
@@ -76,6 +81,13 @@ web_modules/
 AGENTS.local.md
 *.local.md
 .codex-local/
+
+# Face recognition module runtime data
+face_module/data/
+face_module/logs/
+face_module/*.env
+face_module/models/*.onnx
+*.npz
 
 # Secrets and private credentials
 *.pem
