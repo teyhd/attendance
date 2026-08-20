@@ -331,11 +331,13 @@ app.get('/attendance/analytics', requirePageAuth, asyncHandler(async (req, res) 
   }
 
   const mentorClassIds = await db.getMentorClassIds(req.authUser?.id);
-  const classId = req.query.class || mentorClassIds[0] || undefined;
+  const availableClasses = await db.getClasses();
+  const classId = req.query.class || mentorClassIds[0] || availableClasses[0]?.id || undefined;
   const analytics = await db.getMonthlyAttendanceAnalytics({
     month: req.query.month,
     classId,
   });
+  analytics.journal_school_day = await db.getSchoolDayBounds(formatDateInput(new Date()));
 
   res.render('analytics', {
     title: 'Аналитика посещаемости',
@@ -463,6 +465,17 @@ app.get('/api/attendance/absences', requireApiAuth, asyncHandler(async (req, res
   res.json({ items: periods.map(toPublicAbsence) });
 }));
 
+app.get('/api/attendance/presence/events', requireApiAuth, asyncHandler(async (req, res) => {
+  const events = await db.listPresenceEvents({
+    from: req.query.from,
+    to: req.query.to,
+    classId: req.query.classId,
+    studentId: req.query.studentId,
+    limit: req.query.limit,
+  });
+  res.json({ items: events.map(toPublicPresenceEvent) });
+}));
+
 // Read model for Diary and analytics: class counters for one school day.
 app.get('/api/attendance/summary', requireApiAuth, asyncHandler(async (req, res) => {
   if (!req.query.classId) {
@@ -542,6 +555,24 @@ app.post('/api/attendance/presence/toggle', requireApiAuth, requirePermission('m
     });
   } catch (err) {
     sendApiError(res, err);
+  }
+}));
+
+app.post('/api/attendance/presence/late', requireApiAuth, requirePermission('mark_absence'), asyncHandler(async (req, res) => {
+  try {
+    const result = await db.createManualLatePresenceEvent({
+      studentId: req.body.studentId ?? req.body.student_id,
+      classId: req.body.classId ?? req.body.class_id,
+      occurredAt: req.body.occurredAt ?? req.body.occurred_at,
+      idempotencyKey: req.body.idempotencyKey ?? req.body.idempotency_key,
+      actorId: req.authUser?.id || null,
+    });
+    return res.status(result.duplicate ? 200 : 201).json({
+      event: toPublicPresenceEvent(result.event),
+      duplicate: Boolean(result.duplicate),
+    });
+  } catch (err) {
+    return sendApiError(res, err);
   }
 }));
 

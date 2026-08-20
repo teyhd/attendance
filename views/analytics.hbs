@@ -227,14 +227,9 @@
       </section>
     </div>
   {{else}}
-  {{#unless analytics.has_activity}}
-    <div class="bg-white shadow rounded-lg p-6">
-      <div class="text-base font-semibold text-gray-900">За выбранный месяц данных нет</div>
-      <div class="mt-1 text-sm text-gray-500">Отчет готов к чтению, когда появятся записи посещаемости.</div>
-    </div>
-  {{else}}
-    <div data-analytics-tabs data-default-tab="summary" class="space-y-4">
+    <div data-analytics-tabs data-default-tab="journal" class="space-y-4">
       <div class="no-print flex flex-wrap gap-2 border-b border-gray-200">
+        <button type="button" data-analytics-tab="journal" class="rounded-t border border-b-0 px-3 py-2 text-sm font-medium">Журнал</button>
         <button type="button" data-analytics-tab="summary" class="rounded-t border border-b-0 px-3 py-2 text-sm font-medium">Сводка</button>
         <button type="button" data-analytics-tab="lessons" class="rounded-t border border-b-0 px-3 py-2 text-sm font-medium">Уроки</button>
         <button type="button" data-analytics-tab="lateness" class="rounded-t border border-b-0 px-3 py-2 text-sm font-medium">Опоздания</button>
@@ -739,8 +734,61 @@
           </div>
         {{/if}}
       </section>
+
+      <section data-analytics-panel="journal" id="attendance-journal" class="hidden bg-white shadow rounded-lg p-3 sm:p-4">
+        <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 class="text-base font-semibold text-gray-900">Журнал отметок</h2>
+            <p class="mt-1 hidden text-sm text-gray-500 sm:block">Выберите класс и откройте ученика: доступна вся история пропусков, а также ручные отметки.</p>
+          </div>
+          {{#if analytics.student_attendance.enabled}}
+            <span class="text-sm text-gray-500">{{analytics.student_attendance.students.length}} учеников</span>
+          {{/if}}
+        </div>
+
+        <div class="mt-2 grid gap-1 sm:mt-4 sm:flex sm:flex-wrap sm:gap-2" style="grid-template-columns: repeat(10, minmax(0, 1fr));" aria-label="Классы">
+          {{#each classOptions}}
+            {{#unless (eq id "all")}}
+              <a href="/attendance/analytics?month={{../analytics.month}}&class={{id}}#analytics-journal" title="{{name}}" class="h-7 min-w-0 truncate rounded border px-0 text-center text-[10px] font-medium leading-6 sm:h-auto sm:min-w-fit sm:px-3 sm:py-2 sm:text-sm sm:leading-normal {{#if selected}}border-indigo-600 bg-indigo-600 text-white{{else}}border-gray-300 bg-white text-gray-700 hover:border-indigo-400 hover:text-indigo-700{{/if}}">{{name}}</a>
+            {{/unless}}
+          {{/each}}
+        </div>
+
+        {{#if analytics.student_attendance.enabled}}
+          <div class="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <label class="block sm:max-w-sm sm:flex-1">
+              <span class="sr-only">Найти ученика</span>
+              <input type="search" data-journal-search placeholder="Найти ученика" class="w-full rounded border-gray-300 text-sm focus:border-indigo-500 focus:ring-indigo-500" />
+            </label>
+            <div class="text-sm text-gray-500">Класс {{analytics.class_name}}</div>
+          </div>
+          {{#if analytics.student_attendance.students}}
+            <div class="mt-3 divide-y divide-gray-100" data-journal-students>
+              {{#each analytics.student_attendance.students}}
+                <div data-journal-student data-journal-name="{{student_name}}" class="flex flex-col gap-2 py-3 md:flex-row md:items-center md:justify-between">
+                  <button type="button" class="min-w-0 text-left text-sm font-medium text-gray-900 hover:text-indigo-700" data-student-analytics-open data-student-id="{{student_id}}" data-student-open-tab="history">
+                    <span class="block truncate">{{student_name}}</span>
+                    <span class="mt-1 block text-xs font-normal text-gray-500">{{metric_label}}</span>
+                  </button>
+                  <div class="flex flex-wrap gap-2">
+                    <button type="button" class="rounded border border-indigo-200 px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-50" data-student-analytics-open data-student-id="{{student_id}}" data-student-open-tab="history">История</button>
+                    {{#if @root.canManage}}
+                      <button type="button" class="rounded border border-amber-200 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-50" data-quick-absence data-student-id="{{student_id}}">Отсутствует</button>
+                      <button type="button" class="rounded border border-sky-200 px-3 py-1.5 text-xs font-medium text-sky-800 hover:bg-sky-50" data-quick-late data-student-id="{{student_id}}">Опоздал</button>
+                    {{/if}}
+                  </div>
+                </div>
+              {{/each}}
+            </div>
+            <div data-journal-empty class="mt-3 hidden rounded border border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">Никого не найдено.</div>
+          {{else}}
+            <div class="mt-3 rounded border border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">В классе нет активных учеников.</div>
+          {{/if}}
+        {{else}}
+          <div class="mt-4 rounded border border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">Выберите конкретный класс, чтобы открыть список учеников.</div>
+        {{/if}}
+      </section>
     </div>
-  {{/unless}}
   {{/if}}
 </section>
 
@@ -1009,6 +1057,24 @@
 })();
 
 (() => {
+  const search = document.querySelector('[data-journal-search]');
+  const rows = Array.from(document.querySelectorAll('[data-journal-student]'));
+  const empty = document.querySelector('[data-journal-empty]');
+  if (!search || !rows.length) return;
+
+  search.addEventListener('input', () => {
+    const query = search.value.trim().toLocaleLowerCase('ru');
+    let visible = 0;
+    rows.forEach((row) => {
+      const matches = !query || String(row.dataset.journalName || '').toLocaleLowerCase('ru').includes(query);
+      row.classList.toggle('hidden', !matches);
+      if (matches) visible += 1;
+    });
+    empty?.classList.toggle('hidden', visible > 0);
+  });
+})();
+
+(() => {
   const source = document.getElementById('analytics-data');
   const dialog = document.getElementById('student-analytics-dialog');
   if (!source || !dialog) return;
@@ -1020,7 +1086,14 @@
   const body = dialog.querySelector('[data-student-modal-body]');
   const closeButton = dialog.querySelector('[data-student-modal-close]');
   const canManagePage = dialog.dataset.canManage === '1';
-  const state = { payload: null, tab: 'overview', dayMode: 'all' };
+  const state = {
+    payload: null,
+    tab: 'overview',
+    dayMode: 'all',
+    history: null,
+    historyError: '',
+    quickAction: '',
+  };
 
   const tabItems = [
     ['overview', 'Обзор'],
@@ -1028,6 +1101,7 @@
     ['lessons', 'Уроки'],
     ['periods', 'Отметки'],
     ['days', 'Дни'],
+    ['history', 'Вся история'],
   ];
 
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
@@ -1050,6 +1124,9 @@
     state.payload = null;
     state.tab = options.tab || 'overview';
     state.dayMode = options.mode || 'all';
+    state.history = null;
+    state.historyError = '';
+    state.quickAction = options.quickAction || '';
     title.textContent = 'Аналитика';
     subtitle.textContent = '';
     tabs.innerHTML = '';
@@ -1062,6 +1139,7 @@
       });
       if (!response.ok) throw new Error('Не удалось загрузить аналитику ученика');
       state.payload = await response.json();
+      if (state.tab === 'history') await ensureHistory();
       render();
     } catch (err) {
       body.innerHTML = `<div class="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">${escapeHtml(err.message || err)}</div>`;
@@ -1078,9 +1156,11 @@
       <button type="button" data-student-tab="${id}" class="rounded-t border border-b-0 px-3 py-2 text-sm ${state.tab === id ? 'bg-white font-semibold text-gray-900' : 'bg-gray-50 text-gray-600 hover:bg-white'}">${label}</button>
     `).join('');
     body.innerHTML = `${message ? status(message) : ''}${renderActiveTab(payload, canManage)}`;
+    focusQuickAction();
   }
 
   function renderActiveTab(payload, canManage) {
+    if (state.tab === 'history') return renderHistory(payload, canManage);
     if (state.tab === 'late') return renderLate(payload);
     if (state.tab === 'lessons') return renderLessons(payload);
     if (state.tab === 'periods') return renderPeriods(payload, canManage);
@@ -1242,6 +1322,200 @@
     `;
   }
 
+  function renderHistory(payload, canManage) {
+    const history = state.history;
+    const periods = history?.periods || [];
+    const presenceEvents = history?.presence_events || [];
+    const reasons = payload.reason_options || [];
+    const student = payload.student || {};
+    const defaultReason = reasons.find((item) => item.code === 'without_reason')?.code || reasons[0]?.code || '';
+    return `
+      ${canManage ? `
+        <div class="grid gap-4 xl:grid-cols-2">
+          <form class="space-y-3 rounded border border-amber-200 bg-amber-50/60 p-3" data-create-absence>
+            <input type="hidden" name="studentId" value="${attr(student.id)}" />
+            <input type="hidden" name="classId" value="${attr(student.class_id)}" />
+            <input type="hidden" name="source" value="mentor" />
+            <div>
+              <h3 class="text-sm font-semibold text-gray-900">Отметить отсутствие</h3>
+              <p class="mt-1 text-xs text-gray-600">По умолчанию — учебный день целиком. При необходимости измените период.</p>
+            </div>
+            <div class="grid gap-2 sm:grid-cols-2">
+              <label class="text-sm text-gray-700">
+                <span class="mb-1 block">Начало</span>
+                <input name="from" type="datetime-local" value="${attr(defaultSchoolStart())}" required class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500" />
+              </label>
+              <label class="text-sm text-gray-700">
+                <span class="mb-1 block">Окончание</span>
+                <input name="to" type="datetime-local" value="${attr(defaultSchoolEnd())}" required class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500" />
+              </label>
+            </div>
+            <label class="block text-sm text-gray-700">
+              <span class="mb-1 block">Причина</span>
+              <select name="reason" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
+                ${reasons.map((reason) => `<option value="${attr(reason.code)}" ${reason.code === defaultReason ? 'selected' : ''}>${escapeHtml(reason.name)}</option>`).join('')}
+              </select>
+            </label>
+            <label class="block text-sm text-gray-700">
+              <span class="mb-1 block">Комментарий</span>
+              <textarea name="comment" rows="2" maxlength="1000" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500"></textarea>
+            </label>
+            <button type="submit" class="rounded bg-amber-600 px-3 py-2 text-sm font-medium text-white hover:bg-amber-700">Сохранить отсутствие</button>
+          </form>
+
+          <form class="space-y-3 rounded border border-sky-200 bg-sky-50/60 p-3" data-create-late>
+            <input type="hidden" name="studentId" value="${attr(student.id)}" />
+            <input type="hidden" name="classId" value="${attr(student.class_id)}" />
+            <div>
+              <h3 class="text-sm font-semibold text-gray-900">Отметить опоздание</h3>
+              <p class="mt-1 text-xs text-gray-600">Будет создана ручная отметка о приходе в указанное время.</p>
+            </div>
+            <label class="block text-sm text-gray-700">
+              <span class="mb-1 block">Время прихода</span>
+              <input name="occurredAt" type="datetime-local" value="${attr(defaultLateTime())}" required class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500" />
+            </label>
+            <button type="submit" class="rounded bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700">Сохранить опоздание</button>
+          </form>
+        </div>
+      ` : ''}
+
+      <div class="mt-5 border-t border-gray-200 pt-4">
+        <div class="flex items-center justify-between gap-3">
+          <h3 class="text-sm font-semibold text-gray-900">Вся история отметок</h3>
+          ${history ? `<span class="text-xs text-gray-500">${number(periods.length) + number(presenceEvents.length)} записей</span>` : ''}
+        </div>
+        ${state.historyError
+          ? `<div class="mt-3 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">${escapeHtml(state.historyError)}</div>`
+          : history === null
+            ? '<div class="mt-3 rounded border border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">Загружаю историю...</div>'
+            : `
+              <div class="mt-3">
+                <h4 class="text-sm font-medium text-gray-900">Отсутствия</h4>
+                ${periods.length
+                  ? `<div class="mt-2 space-y-3">${periods.map((period) => renderHistoryPeriod(period, reasons, canManage)).join('')}</div>`
+                  : '<div class="mt-2 rounded border border-gray-200 bg-gray-50 p-3 text-sm text-gray-500">Отметок об отсутствии пока нет.</div>'}
+              </div>
+              <div class="mt-4">
+                <h4 class="text-sm font-medium text-gray-900">Приходы и уходы</h4>
+                ${presenceEvents.length
+                  ? `<div class="mt-2 space-y-2">${presenceEvents.map(renderPresenceHistoryEvent).join('')}</div>`
+                  : '<div class="mt-2 rounded border border-gray-200 bg-gray-50 p-3 text-sm text-gray-500">Отметок прихода и ухода пока нет.</div>'}
+              </div>
+            `}
+      </div>
+    `;
+  }
+
+  function renderHistoryPeriod(period, reasons, canManage) {
+    const formPeriod = {
+      ...period,
+      starts_at_input: dateTimeInput(period.starts_at),
+      ends_at_input: dateTimeInput(period.ends_at),
+    };
+    return `
+      <div class="rounded border border-gray-200 p-3">
+        <div class="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <div class="font-medium text-gray-900">${escapeHtml(periodLabel(period))}</div>
+            <div class="mt-1 flex flex-wrap gap-1 text-xs">
+              <span class="rounded-full bg-gray-100 px-2 py-0.5 text-gray-700">${escapeHtml(period.reason_name || period.reason_code || '')}</span>
+              <span class="rounded-full bg-blue-50 px-2 py-0.5 text-blue-700">${escapeHtml(period.confirmation_label || '')}</span>
+              <span class="rounded-full ${period.needs_attention ? 'bg-red-100 text-red-800' : 'bg-green-50 text-green-700'} px-2 py-0.5">${escapeHtml(period.attention_label || '')}</span>
+            </div>
+            ${period.comment ? `<div class="mt-1 text-sm text-gray-600">${escapeHtml(period.comment)}</div>` : ''}
+          </div>
+          ${canManage ? `<button type="button" data-delete-absence="${attr(period.id)}" class="w-fit rounded border border-red-200 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50">Удалить</button>` : ''}
+        </div>
+        ${canManage ? renderEditForm(formPeriod, reasons) : ''}
+      </div>
+    `;
+  }
+
+  function renderPresenceHistoryEvent(event) {
+    const manualLate = event.source === 'mentor_manual_late';
+    const label = manualLate ? 'Опоздал · вручную' : (event.event_type === 'departure' ? 'Ушёл' : 'Пришёл');
+    const tone = manualLate
+      ? 'bg-amber-50 text-amber-800'
+      : event.event_type === 'departure'
+        ? 'bg-slate-100 text-slate-700'
+        : 'bg-emerald-50 text-emerald-700';
+    return `
+      <div class="flex flex-col gap-1 rounded border border-gray-200 px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between">
+        <span class="font-medium text-gray-900">${escapeHtml(event.occurred_label || event.occurred_at || '')}</span>
+        <span class="w-fit rounded-full px-2 py-0.5 text-xs ${tone}">${escapeHtml(label)}</span>
+      </div>
+    `;
+  }
+
+  function defaultSchoolStart() {
+    return analytics.journal_school_day?.start_input || `${localDate()}T09:00`;
+  }
+
+  function defaultSchoolEnd() {
+    return analytics.journal_school_day?.end_input || `${localDate()}T19:00`;
+  }
+
+  function defaultLateTime() {
+    const now = new Date();
+    const pad = (value) => String(value).padStart(2, '0');
+    return `${localDate()}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  }
+
+  function localDate() {
+    const now = new Date();
+    const pad = (value) => String(value).padStart(2, '0');
+    return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  }
+
+  function dateTimeInput(value) {
+    return String(value || '').slice(0, 16).replace(' ', 'T');
+  }
+
+  function periodLabel(period) {
+    const start = String(period?.starts_at || '');
+    const end = String(period?.ends_at || '');
+    const date = (value) => {
+      const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+      return match ? `${match[3]}.${match[2]}.${match[1]}` : '';
+    };
+    const time = (value) => String(value || '').match(/[ T](\d{2}:\d{2})/)?.[1] || '';
+    if (!end) return `с ${date(start)} ${time(start)}`.trim();
+    return date(start) === date(end)
+      ? `${date(start)} · ${time(start)} — ${time(end)}`
+      : `${date(start)} ${time(start)} — ${date(end)} ${time(end)}`;
+  }
+
+  function focusQuickAction() {
+    if (!state.quickAction) return;
+    const selector = state.quickAction === 'late' ? '[data-create-late]' : '[data-create-absence]';
+    const target = body.querySelector(selector);
+    state.quickAction = '';
+    target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    target?.querySelector('input:not([type="hidden"]), select, textarea')?.focus();
+  }
+
+  async function ensureHistory(force = false) {
+    if (!state.payload?.student?.id || (!force && state.history !== null)) return;
+    state.history = null;
+    state.historyError = '';
+    try {
+      const studentId = encodeURIComponent(state.payload.student.id);
+      const [periodResponse, presenceResponse] = await Promise.all([
+        fetch(`/api/attendance/absences?studentId=${studentId}&limit=500`, { headers: { Accept: 'application/json' } }),
+        fetch(`/api/attendance/presence/events?studentId=${studentId}&limit=500`, { headers: { Accept: 'application/json' } }),
+      ]);
+      if (!periodResponse.ok || !presenceResponse.ok) throw new Error('Не удалось загрузить историю отметок');
+      const [periodPayload, presencePayload] = await Promise.all([periodResponse.json(), presenceResponse.json()]);
+      state.history = {
+        periods: Array.isArray(periodPayload.items) ? periodPayload.items : [],
+        presence_events: Array.isArray(presencePayload.items) ? presencePayload.items : [],
+      };
+    } catch (err) {
+      state.history = { periods: [], presence_events: [] };
+      state.historyError = err.message || String(err);
+    }
+  }
+
   function renderEditForm(period, reasons) {
     return `
       <details class="mt-3">
@@ -1387,6 +1661,18 @@
   }
 
   document.addEventListener('click', (event) => {
+    const quickAbsence = event.target.closest('[data-quick-absence]');
+    if (quickAbsence) {
+      event.preventDefault();
+      openStudent(quickAbsence.dataset.studentId, { tab: 'history', quickAction: 'absence' });
+      return;
+    }
+    const quickLate = event.target.closest('[data-quick-late]');
+    if (quickLate) {
+      event.preventDefault();
+      openStudent(quickLate.dataset.studentId, { tab: 'history', quickAction: 'late' });
+      return;
+    }
     const button = event.target.closest('[data-student-analytics-open]');
     if (button) {
       event.preventDefault();
@@ -1408,15 +1694,19 @@
   dialog.addEventListener('click', (event) => {
     if (event.target === dialog) dialog.close();
     if (event.target.closest('[data-student-modal-close]')) dialog.close();
+    const deleteButton = event.target.closest('[data-delete-absence]');
+    if (deleteButton) {
+      deleteAbsence(deleteButton.dataset.deleteAbsence);
+      return;
+    }
     const dayMode = event.target.closest('[data-student-days-mode]');
     if (dayMode) {
       state.dayMode = dayMode.dataset.studentDaysMode || 'all';
     }
     const tab = event.target.closest('[data-student-tab]');
     if (tab) {
-      state.tab = tab.dataset.studentTab;
+      selectTab(tab.dataset.studentTab);
       if (tab.dataset.studentDaysMode) state.dayMode = tab.dataset.studentDaysMode;
-      render();
       return;
     }
     if (dayMode) {
@@ -1427,7 +1717,9 @@
   dialog.addEventListener('submit', async (event) => {
     const resolveForm = event.target.closest('[data-resolve-absence]');
     const editForm = event.target.closest('[data-edit-absence]');
-    if (!resolveForm && !editForm) return;
+    const createForm = event.target.closest('[data-create-absence]');
+    const lateForm = event.target.closest('[data-create-late]');
+    if (!resolveForm && !editForm && !createForm && !lateForm) return;
     event.preventDefault();
 
     try {
@@ -1438,7 +1730,7 @@
           headers: { Accept: 'application/json' },
         });
         if (!response.ok) throw new Error('Не удалось закрыть внимание');
-      } else {
+      } else if (editForm) {
         const id = editForm.dataset.editAbsence;
         const payload = Object.fromEntries(new FormData(editForm).entries());
         const response = await fetch(`/api/attendance/absences/${encodeURIComponent(id)}`, {
@@ -1450,12 +1742,66 @@
           const error = await response.json().catch(() => ({}));
           throw new Error(error.message || 'Не удалось сохранить отметку');
         }
+      } else if (createForm) {
+        const payload = Object.fromEntries(new FormData(createForm).entries());
+        const response = await fetch('/api/attendance/absences', {
+          method: 'POST',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({}));
+          throw new Error(error.message || 'Не удалось добавить отсутствие');
+        }
+      } else if (lateForm) {
+        const payload = Object.fromEntries(new FormData(lateForm).entries());
+        payload.idempotencyKey = newIdempotencyKey();
+        const response = await fetch('/api/attendance/presence/late', {
+          method: 'POST',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({}));
+          throw new Error(error.message || 'Не удалось добавить опоздание');
+        }
       }
-      render('Сохранено. Обновляю отчет...');
-      setTimeout(() => window.location.reload(), 700);
+      if (state.tab === 'history') await ensureHistory(true);
+      render('Сохранено.');
     } catch (err) {
       setInlineError(err.message || String(err));
     }
   });
+
+  async function selectTab(tab) {
+    state.tab = tab || 'overview';
+    render();
+    if (state.tab === 'history') {
+      await ensureHistory();
+      render();
+    }
+  }
+
+  async function deleteAbsence(id) {
+    if (!id || !window.confirm('Удалить эту отметку?')) return;
+    try {
+      const response = await fetch(`/api/attendance/absences/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: { Accept: 'application/json' },
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.message || 'Не удалось удалить отметку');
+      }
+      await ensureHistory(true);
+      render('Отметка удалена.');
+    } catch (err) {
+      setInlineError(err.message || String(err));
+    }
+  }
+
+  function newIdempotencyKey() {
+    return window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
 })();
 </script>

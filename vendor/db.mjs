@@ -587,6 +587,81 @@ export async function togglePresenceEvent({ studentId, classId, actorId, idempot
   }
 }
 
+export async function createManualLatePresenceEvent({ studentId, classId, occurredAt, actorId, idempotencyKey } = {}) {
+  const student = await assertPresenceStudent(studentId, classId);
+  const normalizedOccurredAt = normalizeDateTime(occurredAt, { field: 'времени опоздания', required: true });
+  const attendanceDate = dateOnlyFromSql(normalizedOccurredAt);
+  const nowSql = sqlNow();
+  const normalizedIdempotencyKey = normalizeIdempotencyKey(idempotencyKey);
+
+  if (normalizedOccurredAt > nowSql) {
+    throw new ValidationError('Время опоздания не может быть в будущем');
+  }
+
+  const conn = await usr.getConnection();
+  let lockAcquired = false;
+
+  try {
+    await conn.beginTransaction();
+    lockAcquired = await acquirePresenceLock(conn, student.id, attendanceDate);
+    if (!lockAcquired) {
+      throw new ValidationError('Повторите нажатие через секунду', 409);
+    }
+
+    if (normalizedIdempotencyKey) {
+      const existing = await getPresenceEventByIdempotencyKey(conn, normalizedIdempotencyKey);
+      if (existing) {
+        await conn.commit();
+        return { event: existing, duplicate: true };
+      }
+    }
+
+    const [arrivals] = await conn.query(
+      `SELECT id
+         FROM attendance.presence_events
+        WHERE student_id = ?
+          AND attendance_date = ?
+          AND event_type = 'arrival'
+          AND cancelled_at IS NULL
+        LIMIT 1
+        FOR UPDATE`,
+      [student.id, attendanceDate],
+    );
+    if (arrivals.length) {
+      throw new ValidationError('У ученика уже есть отметка о приходе за эту дату', 409);
+    }
+
+    const [result] = await conn.query(
+      `INSERT INTO attendance.presence_events
+        (student_id, class_id, event_type, occurred_at, attendance_date, actor_id, source, idempotency_key)
+       VALUES (?, ?, 'arrival', ?, ?, ?, 'mentor_manual_late', ?)`,
+      [
+        student.id,
+        student.classId,
+        normalizedOccurredAt,
+        attendanceDate,
+        actorId || null,
+        normalizedIdempotencyKey,
+      ],
+    );
+    const event = await getPresenceEventById(conn, result.insertId);
+    await conn.commit();
+    return { event, duplicate: false };
+  } catch (err) {
+    await conn.rollback();
+    if (isDuplicateKeyError(err) && normalizedIdempotencyKey) {
+      const event = await getPresenceEventByIdempotencyKey(usr, normalizedIdempotencyKey);
+      if (event) return { event, duplicate: true };
+    }
+    throw err;
+  } finally {
+    if (lockAcquired) {
+      await releasePresenceLock(conn, student.id, attendanceDate);
+    }
+    conn.release();
+  }
+}
+
 export async function cancelPresenceEvent(eventId, actorId, { audience = AUDIENCE_CHILDREN } = {}) {
   const normalizedAudience = normalizeDataAudience(audience);
   const id = toPositiveInt(eventId, 'eventId');
@@ -716,6 +791,45 @@ export async function listAbsencePeriods(filters = {}) {
   );
 
   return rows.map(mapAbsencePeriod);
+}
+
+export async function listPresenceEvents(filters = {}) {
+  const where = ['e.cancelled_at IS NULL'];
+  const params = [];
+
+  if (filters.studentId) {
+    where.push('e.student_id = ?');
+    params.push(toPositiveInt(filters.studentId, 'studentId'));
+  }
+
+  if (filters.classId) {
+    where.push('e.class_id = ?');
+    params.push(toPositiveInt(filters.classId, 'classId'));
+  }
+
+  if (filters.from) {
+    const from = normalizeDateTime(filters.from, { field: 'from', required: true });
+    where.push('e.occurred_at >= ?');
+    params.push(from);
+  }
+
+  if (filters.to) {
+    const to = normalizeDateTime(filters.to, { field: 'to', required: true, dateOnlyEnd: true });
+    where.push('e.occurred_at <= ?');
+    params.push(to);
+  }
+
+  const limit = Number.isFinite(Number(filters.limit)) ? Math.max(1, Math.min(500, Number(filters.limit))) : 250;
+  params.push(limit);
+
+  const [rows] = await usr.query(
+    `${presenceEventSelectSql()}
+      WHERE ${where.join(' AND ')}
+      ORDER BY e.occurred_at DESC, e.id DESC
+      LIMIT ?`,
+    params,
+  );
+  return rows.map(mapPresenceEvent);
 }
 
 export async function getAbsencePeriodById(id) {
@@ -1068,7 +1182,7 @@ function presenceBoardState({ latestEvent, absence, firstArrival, schoolDay } = 
       status_detail: [absence.reason_name, absence.period_label].filter(Boolean).join(' · '),
     };
   }
-  if (state.is_present && isLateArrival(firstArrival, schoolDay)) {
+  if (state.is_present && (firstArrival?.source === 'mentor_manual_late' || isLateArrival(firstArrival, schoolDay))) {
     return {
       ...state,
       status_code: 'late',
