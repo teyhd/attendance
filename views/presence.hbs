@@ -1,25 +1,23 @@
 <style>
-  @media (max-width: 639px) {
-    [data-presence-class-list] {
-      display: grid;
-      grid-template-columns: repeat(10, minmax(0, 1fr));
-      gap: 0.25rem;
-      margin-top: 0.5rem;
-      overflow-x: visible;
-      padding-bottom: 0;
-    }
+  [data-presence-class-list].is-two-rows {
+    display: grid;
+    grid-template-columns: repeat(10, minmax(0, 1fr));
+    gap: 0.25rem;
+    margin-top: 0.5rem;
+    overflow-x: visible;
+    padding-bottom: 0;
+  }
 
-    [data-presence-class-list] > a {
-      height: 1.75rem;
-      min-width: 0;
-      overflow: hidden;
-      padding: 0;
-      text-align: center;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font-size: 10px;
-      line-height: 1.5rem;
-    }
+  [data-presence-class-list].is-two-rows > a {
+    height: 1.75rem;
+    min-width: 0;
+    overflow: hidden;
+    padding: 0;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 10px;
+    line-height: 1.5rem;
   }
 </style>
 
@@ -102,7 +100,16 @@
   const flash = root.querySelector('[data-presence-flash]');
   const flashText = root.querySelector('[data-presence-flash-text]');
   const cancelButton = root.querySelector('[data-presence-cancel]');
+  const classList = root.querySelector('[data-presence-class-list]');
   const flashBase = 'flex items-center gap-3 rounded-md border px-3 py-2 text-sm shadow-sm';
+
+  const syncClassListLayout = () => {
+    if (!classList) return;
+    classList.classList.remove('is-two-rows');
+    classList.classList.toggle('is-two-rows', classList.scrollWidth > classList.clientWidth + 1);
+  };
+  window.requestAnimationFrame(syncClassListLayout);
+  window.addEventListener('resize', syncClassListLayout);
 
   const eventLabel = (type) => type === 'departure' ? 'Ушёл' : 'Присутствует';
   const cardToneClasses = [
