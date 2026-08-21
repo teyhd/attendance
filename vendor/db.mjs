@@ -59,6 +59,8 @@ const REASON_CELL_PALETTES = {
 };
 const AUDIENCE_CHILDREN = 'children';
 const AUDIENCE_ADULTS = 'adults';
+const STAFF_USER_TYPES = [2, 3, 4, 5];
+const STAFF_USER_TYPES_SQL = STAFF_USER_TYPES.join(', ');
 const ADULT_CLASS_LINKED_DEPARTMENT_ID = 'class-linked';
 const ADULT_CLASS_LINKED_DEPARTMENT_NAME = 'Без кафедры';
 
@@ -387,7 +389,7 @@ export async function getAdultDepartments() {
        FROM sso.kaf_name k
        JOIN sso.users u
          ON u.kaf = k.id
-        AND COALESCE(u.type, 0) <> 1
+        AND u.type IN (${STAFF_USER_TYPES_SQL})
         AND u.status = 1
       WHERE k.id > 0
       GROUP BY id, name`,
@@ -407,7 +409,7 @@ export async function getAdultDepartments() {
 export async function getAdultsByDepartment(departmentId) {
   const selectedDepartmentId = String(departmentId || '').trim();
   const where = [
-    'COALESCE(u.type, 0) <> 1',
+    `u.type IN (${STAFF_USER_TYPES_SQL})`,
     'u.status = 1',
   ];
   const params = [];
@@ -1060,7 +1062,7 @@ async function getPresenceStudents(audience = AUDIENCE_CHILDREN) {
           CAST(u.type AS CHAR) AS user_type
          FROM sso.users u
          JOIN sso.kaf_name k ON k.id = u.kaf
-        WHERE COALESCE(u.type, 0) <> 1
+        WHERE u.type IN (${STAFF_USER_TYPES_SQL})
           AND u.status = 1
           AND u.kaf > 0
         ORDER BY
@@ -1096,7 +1098,7 @@ async function getPresenceStudents(audience = AUDIENCE_CHILDREN) {
 async function listPresenceEventsForDate(date, audience = AUDIENCE_CHILDREN) {
   const normalizedAudience = normalizeDataAudience(audience);
   const audienceWhere = normalizedAudience === AUDIENCE_ADULTS
-    ? 'COALESCE(u.type, 0) <> 1 AND u.status = 1'
+    ? `u.type IN (${STAFF_USER_TYPES_SQL}) AND u.status = 1`
     : 'u.type = 1 AND u.status = 1';
   const [rows] = await usr.query(
     `${presenceEventSelectSql()}
@@ -1112,7 +1114,7 @@ async function listPresenceEventsForDate(date, audience = AUDIENCE_CHILDREN) {
 async function listPresenceAbsencesForDate(date, audience = AUDIENCE_CHILDREN) {
   const normalizedAudience = normalizeDataAudience(audience);
   const audienceWhere = normalizedAudience === AUDIENCE_ADULTS
-    ? 'COALESCE(u.type, 0) <> 1'
+    ? `u.type IN (${STAFF_USER_TYPES_SQL})`
     : 'u.type = 1 AND k.type = 1';
   const dayStart = `${date} 00:00:00`;
   const dayEnd = `${date} 23:59:59`;
@@ -3492,7 +3494,7 @@ async function assertPresenceAdult(studentId, classId) {
        FROM sso.users u
        JOIN sso.kaf_name k ON k.id = u.kaf
       WHERE u.id = ?
-        AND COALESCE(u.type, 0) <> 1
+        AND u.type IN (${STAFF_USER_TYPES_SQL})
         AND u.status = 1
       LIMIT 1`,
     [normalizedStudentId],
@@ -3530,6 +3532,10 @@ async function assertPresenceStudent(studentId, classId) {
 
 function normalizeDataAudience(value) {
   return String(value || '').trim() === AUDIENCE_ADULTS ? AUDIENCE_ADULTS : AUDIENCE_CHILDREN;
+}
+
+function isStaffUserType(value) {
+  return STAFF_USER_TYPES.includes(Number(value));
 }
 
 async function acquirePresenceLock(conn, studentId, date) {
@@ -3642,7 +3648,9 @@ function mapPresenceEvent(row) {
     attendance_date: row.attendance_date || dateOnlyFromSql(occurredAt),
     actor_id: row.actor_id,
     source: row.source || 'tablet',
-    audience: Number(row.user_type) === 1 ? AUDIENCE_CHILDREN : AUDIENCE_ADULTS,
+    audience: Number(row.user_type) === 1
+      ? AUDIENCE_CHILDREN
+      : (isStaffUserType(row.user_type) ? AUDIENCE_ADULTS : ''),
     user_type: row.user_type == null ? '' : String(row.user_type),
     cancelled_at: row.cancelled_at || '',
     cancelled_by: row.cancelled_by,
