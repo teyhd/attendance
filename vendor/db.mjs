@@ -24,6 +24,11 @@ import { buildLearningAnalytics } from './learning-analytics.mjs';
 import { LATE_THRESHOLD_MINUTES, buildLateAnalytics } from './late-analytics.mjs';
 import { buildRiskWorklist } from './risk-worklist.mjs';
 import { buildStudentAttendanceAnalytics } from './student-attendance-analytics.mjs';
+import {
+  buildFeedbackAttendanceSnapshots,
+  buildFeedbackDateRange,
+  normalizeFeedbackAssignments,
+} from './feedback-snapshots.mjs';
 
 const FAR_FUTURE = '9999-12-31 23:59:59';
 const SCHOOL_DAY_FALLBACK_START = '09:00:00';
@@ -1806,6 +1811,37 @@ export async function getStudentMonthlyAnalytics(studentId, { month } = {}) {
   };
 }
 
+export async function getFeedbackAttendanceSnapshots({ periodStart, periodEnd, assignments } = {}) {
+  let range;
+  let normalizedAssignments;
+  try {
+    range = buildFeedbackDateRange(periodStart, periodEnd);
+    normalizedAssignments = normalizeFeedbackAssignments(assignments);
+  } catch (error) {
+    throw new ValidationError(error.message);
+  }
+
+  const studentIds = Array.from(new Set(normalizedAssignments.map((item) => item.studentId)));
+  const students = await getFeedbackStudents(studentIds);
+  const classIds = Array.from(new Set(students.map((item) => Number(item.class_id)).filter(Number.isInteger)));
+  const [periods, scheduleRows, publishedSchoolDays, activeWeekdays] = await Promise.all([
+    getFeedbackPeriods(range, studentIds),
+    getFeedbackScheduleRows(range, studentIds, classIds),
+    getPublishedScheduleDays(range),
+    getActiveScheduleWeekdays(),
+  ]);
+
+  return buildFeedbackAttendanceSnapshots({
+    range,
+    assignments: normalizedAssignments,
+    students,
+    periods,
+    scheduleRows,
+    publishedSchoolDays,
+    activeWeekdays,
+  });
+}
+
 export async function getSchoolDayBounds(date) {
   const selectedDate = normalizeDateOnly(date || todayDate());
   const weekday = weekdayFromDate(selectedDate);
@@ -1856,6 +1892,114 @@ async function getMonthlyAnalyticsStudents(classId) {
       WHERE ${where.join(' AND ')}
       ORDER BY k.id, student_name`,
     params,
+  );
+  return rows;
+}
+
+async function getFeedbackStudents(studentIds) {
+  const ids = uniquePositiveIds(studentIds);
+  if (!ids.length) return [];
+  const [rows] = await usr.query(
+    `SELECT
+        CAST(u.id AS CHAR) AS student_id,
+        COALESCE(NULLIF(u.display_name_custom, ''), NULLIF(u.nickname, ''), NULLIF(u.msgnickname, ''), u.name) AS student_name,
+        CAST(u.kaf AS CHAR) AS class_id,
+        k.name AS class_name
+       FROM sso.users u
+       JOIN sso.kaf_name k ON k.id = u.kaf AND k.type = 1
+      WHERE u.type = 1
+        AND u.status = 1
+        AND u.id IN (${sqlPlaceholders(ids)})`,
+    ids,
+  );
+  return rows;
+}
+
+async function getFeedbackPeriods(range, studentIds) {
+  const ids = uniquePositiveIds(studentIds);
+  if (!ids.length) return [];
+  const [rows] = await usr.query(
+    `SELECT
+        CAST(p.id AS CHAR) AS id,
+        CAST(p.student_id AS CHAR) AS student_id,
+        CAST(p.class_id AS CHAR) AS class_id,
+        DATE_FORMAT(p.starts_at, '%Y-%m-%d %H:%i:%s') AS starts_at,
+        DATE_FORMAT(p.ends_at, '%Y-%m-%d %H:%i:%s') AS ends_at,
+        p.reason_code,
+        r.name AS reason_name
+       FROM attendance.absence_periods p
+       LEFT JOIN attendance.absence_reasons r ON r.code = p.reason_code
+      WHERE p.deleted_at IS NULL
+        AND p.starts_at <= ?
+        AND COALESCE(p.ends_at, '${FAR_FUTURE}') >= ?
+        AND p.student_id IN (${sqlPlaceholders(ids)})
+      ORDER BY p.student_id, p.starts_at, p.id`,
+    [range.end_at, range.start_at, ...ids],
+  );
+  return rows;
+}
+
+async function getFeedbackScheduleRows(range, studentIds, classIds) {
+  const ids = uniquePositiveIds(studentIds);
+  const classes = uniquePositiveIds(classIds);
+  if (!ids.length) return [];
+  const lessonDateSql = 'DATE(DATE_ADD(w.week_start, INTERVAL (ts.day_of_week - 1) DAY))';
+  const scopeConditions = [`e.student_id IN (${sqlPlaceholders(ids)})`, 'sgm.student_id IS NOT NULL'];
+  const scopeParams = [...ids];
+  if (classes.length) {
+    scopeConditions.push(`e.class_id IN (${sqlPlaceholders(classes)})`);
+    scopeParams.push(...classes);
+  }
+
+  const [rows] = await usr.query(
+    `SELECT
+        CAST(e.id AS CHAR) AS entry_id,
+        CAST(w.id AS CHAR) AS week_id,
+        CAST(v.id AS CHAR) AS week_version_id,
+        DATE_FORMAT(w.week_start, '%Y-%m-%d') AS week_start,
+        DATE_FORMAT(${lessonDateSql}, '%Y-%m-%d') AS lesson_date,
+        ts.day_of_week,
+        CAST(ts.id AS CHAR) AS slot_id,
+        ts.slot_number,
+        TIME_FORMAT(ts.start_time, '%H:%i:%s') AS start_time,
+        TIME_FORMAT(ts.end_time, '%H:%i:%s') AS end_time,
+        CAST(e.class_id AS CHAR) AS class_id,
+        k.name AS class_name,
+        CAST(CASE
+          WHEN e.student_id IS NOT NULL THEN e.student_id
+          WHEN e.group_id IS NOT NULL THEN sgm.student_id
+          ELSE NULL
+        END AS CHAR) AS student_id,
+        CAST(e.subject_id AS CHAR) AS subject_id,
+        COALESCE(NULLIF(e.custom_subject_name, ''), s.name, '') AS subject_name,
+        st.name AS subject_type,
+        CAST(e.teacher_id AS CHAR) AS teacher_id,
+        COALESCE(NULLIF(t.display_name_custom, ''), NULLIF(t.nickname, ''), NULLIF(t.msgnickname, ''), t.name) AS teacher_name,
+        CAST(e.room_id AS CHAR) AS room_id,
+        r.name AS room_name,
+        e.activity_type,
+        COALESCE(at.slot_part, 'FULL') AS slot_part,
+        e.is_paid,
+        CAST(e.lesson_type_id AS CHAR) AS lesson_type_id
+       FROM school_local.schedule_entries e
+       JOIN school_local.schedule_week_versions v
+         ON v.id = e.week_version_id AND v.state = 'published'
+       JOIN school_local.schedule_weeks w ON w.id = v.week_id
+       JOIN school_local.schedule_publications p
+         ON p.week_id = v.week_id AND p.published_version_id = v.id AND p.is_current = 1
+       JOIN school_local.schedule_time_slots ts ON ts.id = e.slot_id AND ts.is_active = 1
+       LEFT JOIN school_local.schedule_group_members sgm
+         ON sgm.group_id = e.group_id AND sgm.student_id IN (${sqlPlaceholders(ids)})
+       LEFT JOIN sso.kaf_name k ON k.id = e.class_id
+       LEFT JOIN school_local.info_subjects s ON s.id = e.subject_id
+       LEFT JOIN school_local.info_subjects_types st ON st.id = s.type
+       LEFT JOIN sso.users t ON t.id = e.teacher_id
+       LEFT JOIN school_local.info_rooms r ON r.id = e.room_id
+       LEFT JOIN school_local.activity_types at ON at.code = e.activity_type
+      WHERE ${lessonDateSql} BETWEEN ? AND ?
+        AND (${scopeConditions.join(' OR ')})
+      ORDER BY lesson_date, ts.slot_number, e.class_id, student_id, subject_name`,
+    [...ids, range.start_date, range.end_date, ...scopeParams],
   );
   return rows;
 }
@@ -3774,6 +3918,16 @@ function daysAgoDateTime(days) {
   date.setDate(date.getDate() - days);
   const pad = (n) => String(n).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} 00:00:00`;
+}
+
+function uniquePositiveIds(values) {
+  return Array.from(new Set((values || [])
+    .map(Number)
+    .filter((value) => Number.isSafeInteger(value) && value > 0)));
+}
+
+function sqlPlaceholders(values) {
+  return values.map(() => '?').join(', ');
 }
 
 function presenceDaysLabel(presentDays, windowDays) {

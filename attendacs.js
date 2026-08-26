@@ -18,6 +18,7 @@ import {
   setupAuthRoutes,
 } from './vendor/auth.mjs';
 import { sanitizeStudentMonthlyAnalytics } from './vendor/student-analytics-view.mjs';
+import { verifyInternalServiceRequest } from './vendor/internal-service-auth.mjs';
 
 import express from 'express';
 import exphbs from 'express-handlebars';
@@ -142,10 +143,24 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
+app.use(express.json({
+  limit: '1mb',
+  verify(req, res, buffer) {
+    req.rawJsonBody = buffer.toString('utf8');
+  },
+}));
 setupAuthRoutes(app);
 
 await db.ensureAttendanceSchema();
+
+app.post('/internal/v1/feedback-snapshots', requireProgressService, asyncHandler(async (req, res) => {
+  try {
+    const items = await db.getFeedbackAttendanceSnapshots(req.body || {});
+    return res.json({ items });
+  } catch (err) {
+    return sendApiError(res, err);
+  }
+}));
 
 const AUDIENCE_CHILDREN = 'children';
 const AUDIENCE_ADULTS = 'adults';
@@ -627,7 +642,7 @@ app.post('/api/attendance/absences/:id/resolve', requireApiAuth, requirePermissi
 app.use((err, req, res, next) => {
   mlog('Ошибка обработки запроса', err?.stack || err);
   if (res.headersSent) return next(err);
-  if (req.path?.startsWith('/api/')) {
+  if (req.path?.startsWith('/api/') || req.path?.startsWith('/internal/')) {
     if (err?.status && err.status < 500) {
       return res.status(err.status).json({ error: 'validation_error', message: err.message });
     }
@@ -642,6 +657,20 @@ app.listen(PORT, () => {
 
 function asyncHandler(fn) {
   return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+}
+
+function requireProgressService(req, res, next) {
+  const verification = verifyInternalServiceRequest({
+    serviceName: req.get('x-service-name'),
+    timestamp: req.get('x-service-timestamp'),
+    signature: req.get('x-service-signature'),
+    rawBody: req.rawJsonBody,
+    serviceKey: process.env.ATTENDANCE_SERVICE_KEY,
+  });
+  if (!verification.ok) {
+    return res.status(verification.status).json({ error: verification.error });
+  }
+  return next();
 }
 
 function shouldEnableUxRocket(req) {

@@ -58,6 +58,7 @@ export function normalizeScheduleLesson(row) {
     subject_name: subjectName,
     subject_type: row.subject_type || '',
     teacher_id: row.teacher_id ? String(row.teacher_id) : '',
+    teacher_ids: row.teacher_id ? [String(row.teacher_id)] : [],
     teacher_name: String(row.teacher_name || '').trim(),
     room_id: row.room_id ? String(row.room_id) : '',
     room_name: String(row.room_name || '').trim(),
@@ -162,6 +163,10 @@ function dedupeAndMarkConflicts(lessons) {
     const existing = bySubjectInterval.get(key);
     existing.entry_ids.push(...lesson.entry_ids);
     existing.teacher_name = joinDistinct(existing.teacher_name, lesson.teacher_name);
+    existing.teacher_ids = Array.from(new Set([
+      ...(existing.teacher_ids || []),
+      ...(lesson.teacher_ids || []),
+    ]));
     existing.room_name = joinDistinct(existing.room_name, lesson.room_name);
     existing.scope = existing.scope === lesson.scope ? existing.scope : 'mixed';
   }
