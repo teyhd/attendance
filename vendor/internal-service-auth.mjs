@@ -8,11 +8,12 @@ export function verifyInternalServiceRequest({
   signature,
   rawBody,
   serviceKey,
+  allowedServices = ['progress'],
   now = Date.now(),
   maxSkewMs = INTERNAL_REQUEST_MAX_SKEW_MS,
 } = {}) {
   if (!serviceKey) return { ok: false, status: 503, error: 'service_not_configured' };
-  if (serviceName !== 'progress') return { ok: false, status: 403, error: 'service_forbidden' };
+  if (!allowedServices.includes(serviceName)) return { ok: false, status: 403, error: 'service_forbidden' };
   if (!/^\d{13}$/.test(String(timestamp || ''))) {
     return { ok: false, status: 401, error: 'invalid_timestamp' };
   }

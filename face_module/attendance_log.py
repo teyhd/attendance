@@ -342,7 +342,7 @@ class AttendanceLogger:
             """
             SELECT
                 CAST(id AS CHAR) AS id,
-                COALESCE(NULLIF(display_name_custom, ''), NULLIF(nickname, ''), NULLIF(msgnickname, ''), name) AS name,
+                name,
                 CAST(kaf AS CHAR) AS class_id
             FROM sso.users
             WHERE id = %s

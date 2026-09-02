@@ -9,6 +9,7 @@ import 'dotenv/config';
 import * as db from './vendor/db.mjs';
 import { isWithoutReasonCode } from './vendor/absence-reasons.mjs';
 import { buildAttendanceActions } from './vendor/attendance-ui.mjs';
+import { canManagePresenceClass } from './vendor/presence.mjs';
 import {
   getAuthUserFromRequest,
   requireApiAuth,
@@ -162,6 +163,34 @@ app.post('/internal/v1/feedback-snapshots', requireProgressService, asyncHandler
   }
 }));
 
+app.post('/internal/v2/attendance/analytics/query', requireAnalyticsService, asyncHandler(async (req, res) => {
+  try {
+    return res.json(await db.getAttendanceAnalyticsQuery(req.body || {}));
+  } catch (err) {
+    return sendApiError(res, err);
+  }
+}));
+
+app.post('/internal/v1/attendance/lesson-facts', requireDiaryService, asyncHandler(async (req, res) => {
+  try {
+    const result = await db.upsertLessonAttendanceFacts({
+      sourceService: req.internalService,
+      items: req.body?.items,
+    });
+    return res.json(result);
+  } catch (err) {
+    return sendApiError(res, err);
+  }
+}));
+
+app.post('/internal/v1/attendance/lessons/resolve', requireDiaryService, asyncHandler(async (req, res) => {
+  try {
+    return res.json(await db.resolveLessonAttendanceRequests(req.body || {}));
+  } catch (err) {
+    return sendApiError(res, err);
+  }
+}));
+
 const AUDIENCE_CHILDREN = 'children';
 const AUDIENCE_ADULTS = 'adults';
 
@@ -309,7 +338,7 @@ app.get('/attendance', requirePageAuth, asyncHandler(async (req, res) => {
 
 app.get('/attendance/me', requireOwnAttendanceAuth, asyncHandler(async (req, res) => {
   const analytics = sanitizeStudentMonthlyAnalytics(
-    await db.getStudentMonthlyAnalytics(req.authUser.id, { month: req.query.month }),
+    await db.getStudentMonthlyAnalytics(req.authUser.id, { month: req.query.month, metricVersion: 2 }),
   );
 
   res.render('student-analytics', {
@@ -323,12 +352,14 @@ app.get('/attendance/me', requireOwnAttendanceAuth, asyncHandler(async (req, res
 app.get('/attendance/analytics', requirePageAuth, asyncHandler(async (req, res) => {
   const audience = normalizePageAudience(req.query.audience, req.authUser);
   const canManage = Boolean(req.authUser?.permissions?.mark_absence);
+  const canManagePresence = Boolean(req.authUser?.permissions?.manage_presence);
   const audienceTabs = buildAudienceTabs('/attendance/analytics', audience, req.query, req.authUser);
 
   if (audience === AUDIENCE_ADULTS) {
     const analytics = await db.getAdultAttendanceAnalytics({
       month: req.query.month,
       departmentId: req.query.department,
+      metricVersion: 2,
     });
 
     return res.render('analytics', {
@@ -342,6 +373,7 @@ app.get('/attendance/analytics', requirePageAuth, asyncHandler(async (req, res) 
       departmentOptions: analytics.available_departments,
       kpiCards: buildAdultAnalyticsKpiCards(analytics),
       canManage,
+      canManagePresence,
     });
   }
 
@@ -351,6 +383,7 @@ app.get('/attendance/analytics', requirePageAuth, asyncHandler(async (req, res) 
   const analytics = await db.getMonthlyAttendanceAnalytics({
     month: req.query.month,
     classId,
+    metricVersion: 2,
   });
   analytics.journal_school_day = await db.getSchoolDayBounds(formatDateInput(new Date()));
 
@@ -365,13 +398,15 @@ app.get('/attendance/analytics', requirePageAuth, asyncHandler(async (req, res) 
     departmentOptions: [],
     kpiCards: buildAnalyticsKpiCards(analytics),
     canManage,
+    canManagePresence,
   });
 }));
 
 app.get('/attendance/presence', requirePageAuth, requirePermission('manage_presence'), asyncHandler(async (req, res) => {
   const audience = normalizePageAudience(req.query.audience, req.authUser);
   const selectedDate = formatDateInput(new Date());
-  const board = await db.getPresenceBoard({ date: selectedDate, audience });
+  const classIds = await getPresenceClassScope(req.authUser, audience);
+  const board = await db.getPresenceBoard({ date: selectedDate, audience, classIds });
 
   res.render('presence', {
     title: 'Ручной ввод',
@@ -491,6 +526,22 @@ app.get('/api/attendance/presence/events', requireApiAuth, asyncHandler(async (r
   res.json({ items: events.map(toPublicPresenceEvent) });
 }));
 
+app.get('/api/attendance/conflicts', requireApiAuth, requirePermission('manage_presence'), asyncHandler(async (req, res) => {
+  const audience = normalizeApiAudience(req.query.audience);
+  if (!canUseAudience(req.authUser, audience)) return res.status(403).json({ error: 'forbidden' });
+  const classIds = await getPresenceClassScope(req.authUser, audience);
+  const conflicts = await db.listAttendanceConflicts({
+    audience,
+    classIds,
+    studentId: req.query.studentId,
+    from: req.query.from,
+    to: req.query.to,
+    status: req.query.status,
+    limit: req.query.limit,
+  });
+  return res.json({ items: conflicts.map(toPublicAttendanceConflict) });
+}));
+
 // Read model for Diary and analytics: class counters for one school day.
 app.get('/api/attendance/summary', requireApiAuth, asyncHandler(async (req, res) => {
   if (!req.query.classId) {
@@ -514,7 +565,37 @@ app.get('/api/attendance/students/:id/analytics', requireApiAuth, asyncHandler(a
   return res.json({
     ...analytics,
     can_manage: Boolean(req.authUser?.permissions?.mark_absence),
+    can_manage_presence: await canManageStudentPresence(req.authUser, analytics.student?.class_id),
   });
+}));
+
+app.get('/api/v2/attendance/students/:id/analytics', requireApiAuth, asyncHandler(async (req, res) => {
+  const analytics = await db.getStudentMonthlyAnalytics(req.params.id, { month: req.query.month, metricVersion: 2 });
+  return res.json({
+    ...analytics,
+    can_manage: Boolean(req.authUser?.permissions?.mark_absence),
+    can_manage_presence: await canManageStudentPresence(req.authUser, analytics.student?.class_id),
+  });
+}));
+
+app.get('/api/v2/attendance/people/:id/analytics', requireApiAuth, asyncHandler(async (req, res) => {
+  const personType = req.query.personType === 'employee' ? 'employee' : 'student';
+  const audience = personType === 'employee' ? AUDIENCE_ADULTS : AUDIENCE_CHILDREN;
+  if (!canUseAudience(req.authUser, audience)) return res.status(403).json({ error: 'forbidden' });
+  try {
+    const payload = await db.getAttendanceAnalyticsQuery({
+      period: { from: req.query.from, to: req.query.to },
+      items: [{
+        key: 'person',
+        personId: req.params.id,
+        personType,
+        subjectId: req.query.subjectId,
+      }],
+    });
+    return res.json(payload.items[0]);
+  } catch (err) {
+    return sendApiError(res, err);
+  }
 }));
 
 app.get('/api/attendance/me/analytics', requireOwnAttendanceAuth, asyncHandler(async (req, res) => {
@@ -547,6 +628,27 @@ app.get('/api/attendance/analytics/monthly', requireApiAuth, asyncHandler(async 
   return res.json(analytics);
 }));
 
+app.get('/api/v2/attendance/analytics/monthly', requireApiAuth, asyncHandler(async (req, res) => {
+  const audience = normalizeApiAudience(req.query.audience);
+  if (!canUseAudience(req.authUser, audience)) return res.status(403).json({ error: 'forbidden' });
+  if (audience === AUDIENCE_ADULTS) {
+    return res.json(await db.getAdultAttendanceAnalytics({
+      month: req.query.month,
+      departmentId: req.query.departmentId || req.query.department,
+      metricVersion: 2,
+    }));
+  }
+  return res.json(await db.getMonthlyAttendanceAnalytics({
+    month: req.query.month,
+    classId: req.query.classId || req.query.class,
+    risk: req.query.risk,
+    reason: req.query.reason,
+    q: req.query.q,
+    sort: req.query.sort,
+    metricVersion: 2,
+  }));
+}));
+
 app.post('/api/attendance/absences', requireApiAuth, requirePermission('mark_absence'), asyncHandler(async (req, res) => {
   try {
     const absence = await db.createAbsencePeriod(absenceInputFromBody(req.body, req.authUser));
@@ -562,10 +664,15 @@ app.post('/api/attendance/presence/toggle', requireApiAuth, requirePermission('m
     if (!canUseAudience(req.authUser, input.audience)) {
       return res.status(403).json({ error: 'forbidden' });
     }
+    const classIds = await getPresenceClassScope(req.authUser, input.audience);
+    if (!canManagePresenceClass(classIds, input.classId)) {
+      return res.status(403).json({ error: 'forbidden' });
+    }
     const result = await db.togglePresenceEvent(input);
     res.status(result.duplicate ? 200 : 201).json({
       event: toPublicPresenceEvent(result.event),
       state: result.state,
+      conflicts: (result.conflicts || []).map(toPublicAttendanceConflict),
       duplicate: Boolean(result.duplicate),
     });
   } catch (err) {
@@ -584,6 +691,8 @@ app.post('/api/attendance/presence/late', requireApiAuth, requirePermission('mar
     });
     return res.status(result.duplicate ? 200 : 201).json({
       event: toPublicPresenceEvent(result.event),
+      state: result.state,
+      conflicts: (result.conflicts || []).map(toPublicAttendanceConflict),
       duplicate: Boolean(result.duplicate),
     });
   } catch (err) {
@@ -597,7 +706,12 @@ app.post('/api/attendance/presence/events/:id/cancel', requireApiAuth, requirePe
     if (!canUseAudience(req.authUser, audience)) {
       return res.status(403).json({ error: 'forbidden' });
     }
-    const result = await db.cancelPresenceEvent(req.params.id, req.authUser?.id, { audience });
+    const classIds = await getPresenceClassScope(req.authUser, audience);
+    const result = await db.cancelPresenceEvent(req.params.id, req.authUser?.id, {
+      audience,
+      classIds,
+      allowAutomaticLatest: isAdmin(req.authUser),
+    });
     if (!result) {
       return res.status(404).json({ error: 'not_found' });
     }
@@ -605,7 +719,26 @@ app.post('/api/attendance/presence/events/:id/cancel', requireApiAuth, requirePe
       cancelled: true,
       event: toPublicPresenceEvent(result.event),
       state: result.state,
+      conflicts: (result.conflicts || []).map(toPublicAttendanceConflict),
     });
+  } catch (err) {
+    return sendApiError(res, err);
+  }
+}));
+
+app.post('/api/attendance/conflicts/:id/resolve', requireApiAuth, requirePermission('manage_presence'), asyncHandler(async (req, res) => {
+  try {
+    const audience = normalizeApiAudience(req.body?.audience);
+    if (!canUseAudience(req.authUser, audience)) return res.status(403).json({ error: 'forbidden' });
+    const classIds = await getPresenceClassScope(req.authUser, audience);
+    const conflict = await db.resolveAttendanceConflict(
+      req.params.id,
+      req.body?.resolution,
+      req.authUser?.id,
+      { audience, classIds },
+    );
+    if (!conflict) return res.status(404).json({ error: 'not_found' });
+    return res.json({ conflict: toPublicAttendanceConflict(conflict) });
   } catch (err) {
     return sendApiError(res, err);
   }
@@ -660,17 +793,42 @@ function asyncHandler(fn) {
 }
 
 function requireProgressService(req, res, next) {
+  return verifyAttendanceService(req, res, next, ['progress']);
+}
+
+function requireAnalyticsService(req, res, next) {
+  return verifyAttendanceService(req, res, next, ['progress', 'diary']);
+}
+
+function requireDiaryService(req, res, next) {
+  return verifyAttendanceService(req, res, next, ['diary']);
+}
+
+function verifyAttendanceService(req, res, next, allowedServices) {
+  const serviceName = String(req.get('x-service-name') || '').trim().toLowerCase();
   const verification = verifyInternalServiceRequest({
-    serviceName: req.get('x-service-name'),
+    serviceName,
     timestamp: req.get('x-service-timestamp'),
     signature: req.get('x-service-signature'),
     rawBody: req.rawJsonBody,
-    serviceKey: process.env.ATTENDANCE_SERVICE_KEY,
+    serviceKey: internalServiceKey(serviceName),
+    allowedServices,
   });
   if (!verification.ok) {
     return res.status(verification.status).json({ error: verification.error });
   }
+  req.internalService = serviceName;
   return next();
+}
+
+function internalServiceKey(serviceName) {
+  if (serviceName === 'progress') {
+    return process.env.ATTENDANCE_PROGRESS_SERVICE_KEY || process.env.ATTENDANCE_SERVICE_KEY;
+  }
+  if (serviceName === 'diary') {
+    return process.env.ATTENDANCE_DIARY_SERVICE_KEY || process.env.ATTENDANCE_SERVICE_KEY;
+  }
+  return '';
 }
 
 function shouldEnableUxRocket(req) {
@@ -703,6 +861,22 @@ function canUseAudience(user, audience) {
     return Boolean(user?.permissions?.view_adult_attendance);
   }
   return Boolean(user?.permissions?.use_attendance);
+}
+
+async function getPresenceClassScope(user, audience) {
+  if (isAdmin(user)) return null;
+  if (String(user?.role || '') !== 'mentor' || audience !== AUDIENCE_CHILDREN) return [];
+  return db.getMentorClassIds(user?.id);
+}
+
+async function canManageStudentPresence(user, classId) {
+  if (!user?.permissions?.manage_presence) return false;
+  const classIds = await getPresenceClassScope(user, AUDIENCE_CHILDREN);
+  return canManagePresenceClass(classIds, classId);
+}
+
+function isAdmin(user) {
+  return Number(user?.rawRoleId) === 5;
 }
 
 function buildAudienceTabs(basePath, activeAudience, query = {}, user = null) {
@@ -813,6 +987,41 @@ function toPublicPresenceEvent(event) {
 function buildAnalyticsKpiCards(analytics) {
   const kpi = analytics.kpi || {};
   const summary = analytics.class_summary || {};
+  if (Number(analytics.metric_version || 1) === 2) {
+    const hasScheduled = Number(kpi.scheduled_minutes || 0) > 0;
+    return [
+      {
+        label: 'Посещаемость',
+        value: hasScheduled ? `${Number(kpi.attendance_percent || 0)}%` : '—',
+        hint: 'по опубликованному расписанию',
+        border_class: hasScheduled ? 'border-emerald-500' : 'border-gray-300',
+      },
+      {
+        label: 'Пропущено',
+        value: formatMinutesAsHours(kpi.missed_minutes),
+        hint: 'фактическое учебное время',
+        border_class: Number(kpi.missed_minutes || 0) ? 'border-amber-500' : 'border-emerald-500',
+      },
+      {
+        label: 'Нет отметки',
+        value: formatMinutesAsHours(kpi.no_mark_minutes),
+        hint: 'считается отсутствием',
+        border_class: Number(kpi.no_mark_minutes || 0) ? 'border-red-500' : 'border-emerald-500',
+      },
+      {
+        label: 'Конфликты',
+        value: Number(analytics.quality?.conflicts || 0),
+        hint: 'исключены из процента',
+        border_class: Number(analytics.quality?.conflicts || 0) ? 'border-red-500' : 'border-emerald-500',
+      },
+      {
+        label: 'Запланировано',
+        value: formatMinutesAsHours(kpi.planned_absence_minutes),
+        hint: `${Number(kpi.planned_absence_days || 0)} ученик-дн. · не входит в факт`,
+        border_class: 'border-sky-500',
+      },
+    ];
+  }
   const lateness = analytics.lateness || {};
   const withoutReason = Number(kpi.without_reason || 0);
   const needsAttention = Number(kpi.needs_attention || 0);
@@ -869,6 +1078,38 @@ function buildAnalyticsKpiCards(analytics) {
 function buildAdultAnalyticsKpiCards(analytics) {
   const kpi = analytics.kpi || {};
   const summary = analytics.class_summary || {};
+  if (Number(analytics.metric_version || 1) === 2) {
+    return [
+      {
+        label: 'В школе',
+        value: kpi.onsite_hours_label || formatMinutesAsHours(kpi.onsite_minutes),
+        hint: 'наблюдаемое время, без нормы',
+        border_class: Number(kpi.onsite_minutes || 0) ? 'border-emerald-500' : 'border-gray-300',
+      },
+      {
+        label: 'Дни с приходом',
+        value: Number(kpi.present_days || 0),
+        hint: 'по фактическим отметкам',
+        border_class: Number(kpi.present_days || 0) ? 'border-emerald-500' : 'border-gray-300',
+      },
+      {
+        label: 'Сегодня пришли',
+        value: summary.present_today_label || Number(kpi.present_today || 0),
+        border_class: Number(kpi.present_today || 0) ? 'border-emerald-500' : 'border-gray-300',
+      },
+      {
+        label: 'Сегодня ушли',
+        value: summary.departed_today_label || Number(kpi.departed_today || 0),
+        border_class: Number(kpi.departed_today || 0) ? 'border-slate-500' : 'border-gray-300',
+      },
+      {
+        label: 'Конфликты',
+        value: Number(kpi.open_conflicts || 0),
+        hint: 'требуют решения',
+        border_class: Number(kpi.open_conflicts || 0) ? 'border-red-500' : 'border-emerald-500',
+      },
+    ];
+  }
   const withoutReason = Number(kpi.without_reason || 0);
   const needsAttention = Number(kpi.needs_attention || 0);
   const needsClarification = Number(kpi.needs_clarification || 0);
@@ -916,6 +1157,11 @@ function buildAdultAnalyticsKpiCards(analytics) {
       ...(hasAbsenceData ? { href: '#adult-calendar', target_id: 'adult-calendar', action_label: 'Смотреть календарь' } : {}),
     },
   ];
+}
+
+function formatMinutesAsHours(value) {
+  const hours = Math.round((Number(value || 0) / 60) * 10) / 10;
+  return `${hours.toLocaleString('ru-RU')} ч.`;
 }
 
 function attendanceUrl({ classId, studentId, date, filter, q, analyticsMonth, success, error }) {
@@ -1112,6 +1358,33 @@ function buildAttendanceFilterTable({ activeFilter, classId, date, absences = []
         : 'bg-slate-100 text-slate-700',
       attention_class: absence.needs_attention ? 'bg-red-100 text-red-800' : 'bg-green-50 text-green-700',
     })),
+  };
+}
+
+function toPublicAttendanceConflict(conflict) {
+  if (!conflict) return null;
+  return {
+    id: conflict.id,
+    student_id: Number(conflict.student_id),
+    class_id: Number(conflict.class_id),
+    student_name: conflict.student_name || '',
+    class_name: conflict.class_name || '',
+    absence_id: Number(conflict.absence_id),
+    presence_event_id: Number(conflict.presence_event_id),
+    conflict_type: conflict.conflict_type,
+    status: conflict.status,
+    status_label: conflict.status_label,
+    resolution_code: conflict.resolution_code || null,
+    attendance_date: conflict.attendance_date,
+    occurred_at: conflict.occurred_at,
+    starts_at: conflict.starts_at,
+    ends_at: conflict.ends_at,
+    reason_code: conflict.reason_code,
+    reason_name: conflict.reason_name,
+    audience: conflict.audience,
+    resolved_by: conflict.resolved_by ? Number(conflict.resolved_by) : null,
+    resolved_at: conflict.resolved_at || null,
+    created_at: conflict.created_at,
   };
 }
 

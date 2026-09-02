@@ -84,6 +84,7 @@ test('student session lands on own attendance and is blocked from staff routes',
   app.get('/staff-api', requireApiAuth, (_req, res) => res.json({ ok: true }));
   const { baseURL, close } = await startServer(app);
   const cookie = signedSessionCookie({
+    auth_version: 2,
     uid: 10,
     name: 'Student',
     raw_role_id: 1,
@@ -120,6 +121,7 @@ test('staff session is blocked from student-only route', async () => {
   app.get('/student-only', requireOwnAttendanceAuth, (_req, res) => res.json({ ok: true }));
   const { baseURL, close } = await startServer(app);
   const cookie = signedSessionCookie({
+    auth_version: 2,
     uid: 20,
     name: 'Teacher',
     raw_role_id: 2,
@@ -133,6 +135,38 @@ test('staff session is blocked from student-only route', async () => {
       headers: { cookie, accept: 'application/json' },
     });
     assert.equal(response.status, 403);
+  } finally {
+    await close();
+    restoreEnv(previousEnv);
+  }
+});
+
+test('legacy Attendance sessions are invalidated so current SSO rights are requested', async () => {
+  const previousEnv = setAuthEnv({
+    APP_ENV: 'local',
+    SSO_CLIENT_SECRET: 'test-client-secret',
+    JWT_SECRET: 'test-jwt-secret',
+    AUTH_SESSION_SECRET: 'test-session-secret',
+  });
+  const app = express();
+  app.use(cookieParser());
+  app.get('/staff-page', requirePageAuth, (_req, res) => res.send('staff'));
+  const { baseURL, close } = await startServer(app);
+  const legacyCookie = signedSessionCookie({
+    uid: 30,
+    name: 'Stale teacher session',
+    raw_role_id: 0,
+    role: 'guest',
+    exp: Math.floor(Date.now() / 1000) + 60,
+  }, process.env.AUTH_SESSION_SECRET);
+
+  try {
+    const response = await fetch(`${baseURL}/staff-page`, {
+      redirect: 'manual',
+      headers: { cookie: legacyCookie },
+    });
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), '/api/auth/login');
   } finally {
     await close();
     restoreEnv(previousEnv);

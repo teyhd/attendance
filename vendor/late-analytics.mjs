@@ -12,7 +12,7 @@ import {
   parseDateTimeMs,
 } from './schedule-analytics.mjs';
 
-export const LATE_THRESHOLD_MINUTES = 5;
+export const LATE_THRESHOLD_MINUTES = 0;
 export const LATE_MISSED_LESSON_MIN_OVERLAP_MINUTES = 15;
 
 const EMPTY_LATENESS = {

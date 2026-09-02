@@ -3,6 +3,8 @@ export const PRESENCE_EVENT_TYPES = {
   DEPARTURE: 'departure',
 };
 
+export const MANUAL_PRESENCE_SOURCES = new Set(['tablet', 'mentor_manual_late']);
+
 export function resolvePresenceToggle({
   latestEvent = null,
 } = {}) {
@@ -20,9 +22,23 @@ export function nextPresenceEventType(latestEvent) {
     : PRESENCE_EVENT_TYPES.ARRIVAL;
 }
 
-export function canCancelPresenceEvent(event, latestEvent) {
-  if (!event || !latestEvent) return false;
-  if (event.cancelled_at || latestEvent.cancelled_at) return false;
+export function isManualPresenceEvent(event) {
+  return MANUAL_PRESENCE_SOURCES.has(String(event?.source || '').trim());
+}
+
+export function canManagePresenceClass(classIds, classId) {
+  return classIds === null || (classIds || []).map(String).includes(String(classId || ''));
+}
+
+export function canCancelPresenceEvent(event, {
+  latestEvent = null,
+  attendanceDate = '',
+  allowAutomaticLatest = false,
+} = {}) {
+  if (!event || event.cancelled_at) return false;
+  if (attendanceDate && String(event.attendance_date) !== String(attendanceDate)) return false;
+  if (isManualPresenceEvent(event)) return true;
+  if (!allowAutomaticLatest || !latestEvent || latestEvent.cancelled_at) return false;
   return String(event.id) === String(latestEvent.id);
 }
 

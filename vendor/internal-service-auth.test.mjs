@@ -26,3 +26,16 @@ test('verifyInternalServiceRequest rejects stale and modified requests', () => {
   assert.equal(verifyInternalServiceRequest({ ...common, now: Number(timestamp) + 300001 }).error, 'expired_request');
   assert.equal(verifyInternalServiceRequest({ ...common, now: Number(timestamp) }).error, 'invalid_signature');
 });
+
+test('verifyInternalServiceRequest accepts Diary only when the caller is explicitly allowed', () => {
+  const serviceKey = 'diary-test-key';
+  const timestamp = '1787745600000';
+  const rawBody = '{"requests":[]}';
+  const signature = crypto.createHmac('sha256', serviceKey)
+    .update(`${timestamp}\n${rawBody}`)
+    .digest('hex');
+  const request = { serviceName: 'diary', timestamp, signature, rawBody, serviceKey, now: Number(timestamp) };
+
+  assert.equal(verifyInternalServiceRequest(request).error, 'service_forbidden');
+  assert.deepEqual(verifyInternalServiceRequest({ ...request, allowedServices: ['diary'] }), { ok: true });
+});

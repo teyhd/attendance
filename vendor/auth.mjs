@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 
 const stateCookieName = 'atten.auth.state';
+const authSessionVersion = 2;
 
 function env(name, fallback = '') {
   const value = process.env[name];
@@ -135,7 +136,11 @@ export function getAuthUserFromRequest(req) {
   if (!rawCookie || !cfg.sessionSecret) return null;
 
   const payload = verifySignedValue(rawCookie, cfg.sessionSecret);
-  if (!payload || Number(payload.exp || 0) <= Math.floor(Date.now() / 1000)) return null;
+  if (
+    !payload
+    || Number(payload.auth_version || 0) !== authSessionVersion
+    || Number(payload.exp || 0) <= Math.floor(Date.now() / 1000)
+  ) return null;
   const rawRoleId = Number(payload.raw_role_id || 0);
 
   return {
@@ -183,7 +188,7 @@ async function authCallbackHandler(req, res) {
   try {
     const token = await exchangeCodeForToken(code, cfg);
     const claims = verifyHS256JWT(token, cfg.jwtSecret);
-    if (claims.aud && String(claims.aud) !== cfg.clientID) {
+    if (!jwtAudienceIncludes(claims.aud, cfg.clientID)) {
       throw new Error('jwt audience mismatch');
     }
     const user = buildUserContext(claims, cfg);
@@ -259,7 +264,11 @@ async function exchangeCodeForToken(code, cfg) {
 
 function buildUserContext(claims, cfg) {
   const userID = Number(claims.sub || 0);
-  const rawRoleId = extractServiceRoleID(claims.right, cfg.serviceID);
+  const rawRoleId = extractServiceRoleID(
+    claims.right,
+    cfg.serviceID,
+    jwtAudienceIncludes(claims.aud, cfg.clientID)
+  );
   const role = roleName(rawRoleId);
   const permissions = attendancePermissions(rawRoleId);
   return {
@@ -281,7 +290,7 @@ export function attendancePermissions(roleID) {
     view_own_attendance: role === 1,
     view_adult_attendance: role === 5,
     mark_absence: canManage,
-    manage_presence: role === 5,
+    manage_presence: [3, 5].includes(role),
   };
 }
 
@@ -301,17 +310,32 @@ function landingPath(roleID) {
   return Number(roleID) === 1 ? '/attendance/me' : '/attendance';
 }
 
-function extractServiceRoleID(rightClaim, serviceID) {
-  if (!Array.isArray(rightClaim)) return 0;
-  return rightClaim.reduce((maxRole, row) => {
-    const srvID = Number(row?.srv_id || 0);
-    const roleID = Number(row?.role_id || 0);
-    return srvID === Number(serviceID) && roleID > maxRole ? roleID : maxRole;
+export function extractServiceRoleID(rightClaim, serviceID, allowServiceScoped = false) {
+  const rows = Array.isArray(rightClaim) ? rightClaim : [rightClaim];
+  return rows.reduce((maxRole, row) => {
+    if (row && typeof row === 'object') {
+      const srvID = Number(row.srv_id || 0);
+      const roleID = positiveRoleID(row.role_id);
+      return srvID === Number(serviceID) && roleID > maxRole ? roleID : maxRole;
+    }
+    if (!allowServiceScoped) return maxRole;
+    return Math.max(maxRole, positiveRoleID(row));
   }, 0);
+}
+
+function positiveRoleID(value) {
+  const roleID = Number(value);
+  return Number.isInteger(roleID) && roleID > 0 ? roleID : 0;
+}
+
+function jwtAudienceIncludes(audienceClaim, expectedAudience) {
+  const audiences = Array.isArray(audienceClaim) ? audienceClaim : [audienceClaim];
+  return audiences.some((audience) => String(audience || '') === String(expectedAudience || ''));
 }
 
 function createSessionValue(user, cfg) {
   const payload = {
+    auth_version: authSessionVersion,
     uid: user.id,
     name: user.name,
     raw_role_id: user.rawRoleId,

@@ -65,22 +65,36 @@
           </div>
           <div class="grid grid-cols-1 gap-2 p-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {{#each students}}
-              <button
-                type="button"
-                data-presence-button
-                data-student-id="{{id}}"
-                data-class-id="{{classId}}"
-                data-audience="{{../../board.audience}}"
-                data-last-event-id="{{state.last_event_id}}"
-                data-last-event-type="{{state.last_event_type}}"
-                data-status-code="{{state.status_code}}"
-                aria-label="{{name}} · {{state.status_label}}"
-                class="min-h-[6.25rem] rounded-md border px-3 py-3 text-left shadow-sm transition focus:outline-none focus:ring-2 focus:ring-gray-900 disabled:cursor-wait disabled:opacity-60 {{#if (eq state.status_code "absent")}}border-red-300 bg-red-50 hover:bg-red-100{{else}}{{#if (eq state.status_code "late")}}border-amber-300 bg-amber-50 hover:bg-amber-100{{else}}{{#if (eq state.status_code "present")}}border-emerald-600 bg-emerald-50 hover:bg-emerald-100{{else}}{{#if (eq state.status_code "departed")}}border-slate-300 bg-slate-50 hover:bg-slate-100{{else}}border-gray-300 bg-white hover:bg-gray-50{{/if}}{{/if}}{{/if}}{{/if}}"
-              >
-                <span class="block text-base font-semibold leading-5 text-gray-950">{{name}}</span>
-                <span data-presence-status class="mt-2 inline-flex rounded-full px-2 py-0.5 text-xs font-semibold {{#if (eq state.status_code "absent")}}bg-red-100 text-red-800{{else}}{{#if (eq state.status_code "late")}}bg-amber-100 text-amber-800{{else}}{{#if (eq state.status_code "present")}}bg-emerald-100 text-emerald-800{{else}}{{#if (eq state.status_code "departed")}}bg-slate-200 text-slate-700{{else}}bg-gray-100 text-gray-600{{/if}}{{/if}}{{/if}}{{/if}}">{{state.status_badge_label}}</span>
-                <span data-presence-detail class="mt-1 block text-sm leading-4 text-gray-600">{{state.status_detail}}</span>
-              </button>
+              <div class="space-y-1.5">
+                <button
+                  type="button"
+                  data-presence-button
+                  data-student-id="{{id}}"
+                  data-class-id="{{classId}}"
+                  data-audience="{{../../board.audience}}"
+                  data-last-event-id="{{state.last_event_id}}"
+                  data-last-event-type="{{state.last_event_type}}"
+                  data-status-code="{{state.status_code}}"
+                  data-conflict-id="{{state.conflict_id}}"
+                  aria-label="{{name}} · {{state.status_label}}"
+                  class="min-h-[6.25rem] w-full rounded-md border px-3 py-3 text-left shadow-sm transition focus:outline-none focus:ring-2 focus:ring-gray-900 disabled:cursor-wait disabled:opacity-60 {{#if (or (eq state.status_code "absent") (eq state.status_code "conflict"))}}border-red-300 bg-red-50 hover:bg-red-100{{else}}{{#if (eq state.status_code "late")}}border-amber-300 bg-amber-50 hover:bg-amber-100{{else}}{{#if (eq state.status_code "present")}}border-emerald-600 bg-emerald-50 hover:bg-emerald-100{{else}}{{#if (eq state.status_code "departed")}}border-slate-300 bg-slate-50 hover:bg-slate-100{{else}}border-gray-300 bg-white hover:bg-gray-50{{/if}}{{/if}}{{/if}}{{/if}}"
+                >
+                  <span class="block text-base font-semibold leading-5 text-gray-950">{{name}}</span>
+                  <span data-presence-status class="mt-2 inline-flex rounded-full px-2 py-0.5 text-xs font-semibold {{#if (or (eq state.status_code "absent") (eq state.status_code "conflict"))}}bg-red-100 text-red-800{{else}}{{#if (eq state.status_code "late")}}bg-amber-100 text-amber-800{{else}}{{#if (eq state.status_code "present")}}bg-emerald-100 text-emerald-800{{else}}{{#if (eq state.status_code "departed")}}bg-slate-200 text-slate-700{{else}}bg-gray-100 text-gray-600{{/if}}{{/if}}{{/if}}{{/if}}">{{state.status_badge_label}}</span>
+                  <span data-presence-detail class="mt-1 block text-sm leading-4 text-gray-600">{{state.status_detail}}</span>
+                </button>
+                {{#if state.conflict_id}}
+                  <div class="grid grid-cols-2 gap-1.5" data-conflict-actions>
+                    <button type="button" data-conflict-resolve="keep_presence" data-conflict-id="{{state.conflict_id}}" class="rounded border border-emerald-300 bg-white px-2 py-1.5 text-xs font-medium text-emerald-800 hover:bg-emerald-50">Подтвердить приход</button>
+                    <button type="button" data-conflict-resolve="keep_absence" data-conflict-id="{{state.conflict_id}}" class="rounded border border-red-300 bg-white px-2 py-1.5 text-xs font-medium text-red-800 hover:bg-red-50">Оставить отсутствие</button>
+                  </div>
+                {{/if}}
+                {{#unless ../../board.is_adult}}
+                  {{#if presence_events.length}}
+                    <button type="button" data-presence-edit data-student-id="{{id}}" class="w-full rounded border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:border-gray-900 hover:text-gray-950">Редактировать</button>
+                  {{/if}}
+                {{/unless}}
+              </div>
             {{/each}}
           </div>
         </section>
@@ -90,6 +104,19 @@
     <div class="rounded-md border border-gray-200 bg-white p-4 text-sm text-gray-500">{{#if board.is_adult}}Нет сотрудников{{else}}Нет учеников{{/if}}</div>
   {{/if}}
 </section>
+
+{{#unless board.is_adult}}
+  <dialog data-presence-history-dialog class="w-[calc(100%-2rem)] max-w-lg rounded-lg border border-gray-200 bg-white p-0 shadow-xl backdrop:bg-black/30">
+    <div class="flex items-center justify-between gap-3 border-b border-gray-200 px-4 py-3">
+      <h2 data-presence-history-title class="text-lg font-semibold text-gray-950"></h2>
+      <button type="button" data-presence-history-close aria-label="Закрыть" class="rounded px-2 py-1 text-lg text-gray-500 hover:bg-gray-100 hover:text-gray-950">×</button>
+    </div>
+    <div class="p-4">
+      <div data-presence-history-events class="space-y-2"></div>
+    </div>
+  </dialog>
+  <script id="presence-history-data" type="application/json">{{{json board.classes}}}</script>
+{{/unless}}
 
 <script>
 (() => {
@@ -101,6 +128,10 @@
   const flashText = root.querySelector('[data-presence-flash-text]');
   const cancelButton = root.querySelector('[data-presence-cancel]');
   const classList = root.querySelector('[data-presence-class-list]');
+  const historyDialog = root.parentElement?.querySelector('[data-presence-history-dialog]');
+  const historyTitle = historyDialog?.querySelector('[data-presence-history-title]');
+  const historyEvents = historyDialog?.querySelector('[data-presence-history-events]');
+  const historyData = parseJsonScript('presence-history-data');
   const flashBase = 'flex items-center gap-3 rounded-md border px-3 py-2 text-sm shadow-sm';
 
   const syncClassListLayout = () => {
@@ -127,6 +158,7 @@
     'bg-gray-100', 'text-gray-600',
   ];
   const cardTone = {
+    conflict: ['border-red-300', 'bg-red-50', 'hover:bg-red-100'],
     absent: ['border-red-300', 'bg-red-50', 'hover:bg-red-100'],
     late: ['border-amber-300', 'bg-amber-50', 'hover:bg-amber-100'],
     present: ['border-emerald-600', 'bg-emerald-50', 'hover:bg-emerald-100'],
@@ -134,6 +166,7 @@
     none: ['border-gray-300', 'bg-white', 'hover:bg-gray-50'],
   };
   const statusTone = {
+    conflict: ['bg-red-100', 'text-red-800'],
     absent: ['bg-red-100', 'text-red-800'],
     late: ['bg-amber-100', 'text-amber-800'],
     present: ['bg-emerald-100', 'text-emerald-800'],
@@ -151,6 +184,80 @@
       window.location.reload();
     }
   };
+
+  function parseJsonScript(id) {
+    const source = document.getElementById(id);
+    if (!source) return [];
+    try {
+      const parsed = JSON.parse(source.textContent || '[]');
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function findStudent(studentId) {
+    for (const classItem of historyData) {
+      const student = (classItem.students || []).find((item) => String(item.id) === String(studentId));
+      if (student) return student;
+    }
+    return null;
+  }
+
+  function historyEventLabel(event) {
+    if (event.source === 'mentor_manual_late') return 'Опоздал · вручную';
+    if (event.source === 'face') return event.event_type === 'departure' ? 'Ушёл · камера' : 'Пришёл · камера';
+    return event.event_type === 'departure' ? 'Ушёл · вручную' : 'Пришёл · вручную';
+  }
+
+  function renderHistory(student) {
+    if (!historyTitle || !historyEvents || !student) return;
+    historyTitle.textContent = student.name || 'История отметок';
+    historyEvents.replaceChildren();
+    const events = Array.isArray(student.presence_events) ? student.presence_events : [];
+    if (!events.length) {
+      const empty = document.createElement('div');
+      empty.className = 'rounded border border-gray-200 bg-gray-50 p-3 text-sm text-gray-500';
+      empty.textContent = 'За сегодня отметок пока нет.';
+      historyEvents.append(empty);
+      return;
+    }
+
+    for (const event of events) {
+      const row = document.createElement('div');
+      row.className = 'flex items-center justify-between gap-3 rounded border border-gray-200 px-3 py-2';
+      const details = document.createElement('div');
+      const time = document.createElement('div');
+      time.className = 'text-sm font-medium text-gray-900';
+      time.textContent = event.occurred_label || event.occurred_at || '';
+      const label = document.createElement('div');
+      label.className = 'mt-0.5 text-xs text-gray-600';
+      label.textContent = historyEventLabel(event);
+      details.append(time, label);
+      row.append(details);
+
+      if (event.can_edit) {
+        const cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.dataset.presenceHistoryCancel = event.id || '';
+        cancel.className = 'shrink-0 rounded border border-red-200 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60';
+        cancel.textContent = 'Отменить';
+        row.append(cancel);
+      } else {
+        const readonly = document.createElement('span');
+        readonly.className = 'shrink-0 rounded bg-gray-100 px-2 py-1 text-xs font-medium text-gray-600';
+        readonly.textContent = 'Автоматически';
+        row.append(readonly);
+      }
+      historyEvents.append(row);
+    }
+  }
+
+  function closeHistoryDialog() {
+    if (!historyDialog) return;
+    if (typeof historyDialog.close === 'function') historyDialog.close();
+    else historyDialog.removeAttribute('open');
+  }
 
   function setFlash(text, { kind = 'ok', eventId = '' } = {}) {
     if (!flash || !flashText) return;
@@ -189,6 +296,7 @@
     button.dataset.lastEventId = state?.last_event_id || '';
     button.dataset.lastEventType = state?.last_event_type || '';
     button.dataset.statusCode = statusCode;
+    button.dataset.conflictId = state?.conflict_id || '';
     button.setAttribute('aria-label', `${button.querySelector('.font-semibold')?.textContent || ''} · ${state?.status_label || 'Нет отметки'}`);
 
     status.textContent = state?.status_badge_label || state?.status_word || 'Нет отметки';
@@ -202,6 +310,10 @@
   buttons.forEach((button) => {
     button.addEventListener('click', async () => {
       if (button.disabled) return;
+      if (button.dataset.conflictId) {
+        setFlash('Сначала выберите, какую из двух отметок оставить', { kind: 'error' });
+        return;
+      }
       button.disabled = true;
       try {
         const payload = await postJson('/api/attendance/presence/toggle', {
@@ -215,6 +327,10 @@
           return;
         }
         applyState(button, payload.state);
+        if (Array.isArray(payload.conflicts) && payload.conflicts.length) {
+          window.location.reload();
+          return;
+        }
         const event = payload.event || {};
         setFlash(`${event.student_name || ''}: ${event.event_label || eventLabel(event.event_type)} ${event.occurred_label || event.occurred_time || ''}`.trim(), {
           eventId: event.id || '',
@@ -225,6 +341,56 @@
         button.disabled = false;
       }
     });
+  });
+
+  root.querySelectorAll('[data-conflict-resolve]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const conflictId = button.dataset.conflictId || '';
+      if (!conflictId || button.disabled) return;
+      const resolution = button.dataset.conflictResolve || '';
+      button.disabled = true;
+      try {
+        await postJson(`/api/attendance/conflicts/${encodeURIComponent(conflictId)}/resolve`, {
+          audience: root.dataset.audience || 'children',
+          resolution,
+        });
+        window.location.reload();
+      } catch (err) {
+        button.disabled = false;
+        setFlash(err.message || 'Не удалось разрешить конфликт', { kind: 'error' });
+      }
+    });
+  });
+
+  root.querySelectorAll('[data-presence-edit]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const student = findStudent(button.dataset.studentId);
+      if (!student || !historyDialog) return;
+      renderHistory(student);
+      if (typeof historyDialog.showModal === 'function') historyDialog.showModal();
+      else historyDialog.setAttribute('open', '');
+    });
+  });
+
+  historyDialog?.querySelector('[data-presence-history-close]')?.addEventListener('click', closeHistoryDialog);
+  historyDialog?.addEventListener('click', (event) => {
+    if (event.target === historyDialog) closeHistoryDialog();
+  });
+  historyEvents?.addEventListener('click', async (event) => {
+    const cancel = event.target.closest('[data-presence-history-cancel]');
+    const eventId = cancel?.dataset.presenceHistoryCancel || '';
+    if (!eventId || !window.confirm('Отменить эту ручную отметку?')) return;
+    cancel.disabled = true;
+    try {
+      await postJson(`/api/attendance/presence/events/${encodeURIComponent(eventId)}/cancel`, {
+        audience: root.dataset.audience || 'children',
+      });
+      closeHistoryDialog();
+      window.location.reload();
+    } catch (err) {
+      cancel.disabled = false;
+      setFlash(err.message || 'Не удалось отменить', { kind: 'error' });
+    }
   });
 
   cancelButton?.addEventListener('click', async () => {

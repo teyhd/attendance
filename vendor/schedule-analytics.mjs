@@ -1,4 +1,5 @@
 export const DEFAULT_ACTIVE_WEEKDAYS = [1, 2, 3, 4, 5];
+const IGNORED_ATTENDANCE_SUBJECTS = new Set(['завтрак', 'полдник']);
 
 export function buildScheduleIndex(rows) {
   const index = { byStudentDay: new Map(), byClassDay: new Map() };
@@ -21,6 +22,8 @@ export function buildScheduleIndex(rows) {
 }
 
 export function normalizeScheduleLesson(row) {
+  if (isIgnoredAttendanceScheduleRow(row)) return null;
+
   const date = dateOnly(row.lesson_date) || dateFromWeekStart(row.week_start, row.day_of_week);
   if (!date) return null;
 
@@ -77,8 +80,17 @@ export function normalizeScheduleLesson(row) {
   };
 }
 
+function isIgnoredAttendanceScheduleRow(row) {
+  const subjectName = normalizeSubjectName(row?.subject_name);
+  if (IGNORED_ATTENDANCE_SUBJECTS.has(subjectName)) return true;
+
+  return Number(row?.slot_number) === 0
+    && normalizeTime(row?.start_time) === '08:00:00'
+    && normalizeTime(row?.end_time) === '08:40:00';
+}
+
 export function lessonsForStudentDay(index, item, student, day) {
-  const studentId = String(item.student_id || student.student_id || student.id || '');
+  const studentId = String(item.student_id || item.person_id || student.student_id || student.person_id || student.id || '');
   const classId = String(item.class_id || student.class_id || student.classId || '');
   const individual = index.byStudentDay.get(`${studentId}|${day}`) || [];
   const classLessons = index.byClassDay.get(`${classId}|${day}`) || [];
@@ -230,6 +242,10 @@ function normalizeTime(value) {
   const match = String(value || '').match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?/);
   if (!match) return '00:00:00';
   return `${match[1].padStart(2, '0')}:${match[2]}:${match[3] || '00'}`;
+}
+
+function normalizeSubjectName(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase('ru');
 }
 
 function joinDistinct(left, right) {

@@ -60,12 +60,12 @@ function schedule(overrides = {}) {
   };
 }
 
-test('arrival is late only after five full minutes', () => {
-  assert.equal(LATE_THRESHOLD_MINUTES, 5);
+test('arrival is late as soon as it is after the assigned lesson start', () => {
+  assert.equal(LATE_THRESHOLD_MINUTES, 0);
   const exact = buildLateAnalytics({
     range,
     students: [student],
-    arrivals: [arrival({ arrival_at: '2026-05-04 09:05:00' })],
+    arrivals: [arrival({ arrival_at: '2026-05-04 09:00:00' })],
     scheduleRows: [schedule()],
     publishedSchoolDays: ['2026-05-04'],
   });
@@ -74,7 +74,7 @@ test('arrival is late only after five full minutes', () => {
   const above = buildLateAnalytics({
     range,
     students: [student],
-    arrivals: [arrival({ arrival_at: '2026-05-04 09:06:00' })],
+    arrivals: [arrival({ arrival_at: '2026-05-04 09:00:01' })],
     scheduleRows: [schedule()],
     publishedSchoolDays: ['2026-05-04'],
   });
@@ -112,7 +112,7 @@ test('only the first arrival of the day is used', () => {
     range,
     students: [student],
     arrivals: [
-      arrival({ id: 'first', arrival_at: '2026-05-04 09:03:00' }),
+      arrival({ id: 'first', arrival_at: '2026-05-04 08:59:00' }),
       arrival({ id: 'second', arrival_at: '2026-05-04 09:30:00' }),
     ],
     scheduleRows: [schedule()],
@@ -135,7 +135,7 @@ test('lateness groups late, on-time, and schedule-gap arrivals by class', () => 
       arrival({ id: 'late', student_id: '10', arrival_at: '2026-05-04 09:10:00' }),
       arrival({ id: 'late-ontime', student_id: '10', attendance_date: '2026-05-06', arrival_at: '2026-05-06 08:59:00' }),
       arrival({ id: 'late-gap', student_id: '10', attendance_date: '2026-05-07', arrival_at: '2026-05-07 09:01:00' }),
-      arrival({ id: 'ontime', student_id: '11', student_name: 'On time', arrival_at: '2026-05-04 09:01:00' }),
+      arrival({ id: 'ontime', student_id: '11', student_name: 'On time', arrival_at: '2026-05-04 09:00:00' }),
       arrival({ id: 'gap', student_id: '12', student_name: 'Gap', attendance_date: '2026-05-05', arrival_at: '2026-05-05 09:01:00' }),
     ],
     scheduleRows: [schedule(), schedule({ entry_id: 'e2', lesson_date: '2026-05-06', day_of_week: 3 })],
@@ -212,4 +212,24 @@ test('arrival without published schedule creates data gap and no false lateness'
   assert.equal(analytics.data_gaps_total, 1);
   assert.equal(analytics.coverage.coverage_percent, 0);
   assert.equal(analytics.data_gaps[0].code, 'no_published_schedule');
+});
+
+test('lateness starts from the first assigned lesson and ignores meals and lesson zero', () => {
+  const analytics = buildLateAnalytics({
+    range,
+    students: [student],
+    arrivals: [arrival({ arrival_at: '2026-05-04 09:45:00' })],
+    scheduleRows: [
+      schedule({ entry_id: 'zero', slot_id: 'zero', slot_number: 0, start_time: '08:00:00', end_time: '08:40:00', subject_id: 'warmup', subject_name: 'Разминка' }),
+      schedule({ entry_id: 'breakfast', slot_id: 'breakfast', slot_number: 1, start_time: '08:40:00', end_time: '09:00:00', subject_id: 'breakfast', subject_name: 'Завтрак' }),
+      schedule({ entry_id: 'assigned', slot_id: 'assigned', slot_number: 2, start_time: '10:00:00', end_time: '10:40:00', student_id: '10', subject_id: 'math', subject_name: 'Math' }),
+      schedule({ entry_id: 'snack', slot_id: 'snack', slot_number: 3, start_time: '10:40:00', end_time: '11:00:00', subject_id: 'snack', subject_name: 'Полдник' }),
+    ],
+    publishedSchoolDays: ['2026-05-04'],
+    includeEvents: true,
+  });
+
+  assert.equal(analytics.late_days_total, 0);
+  assert.equal(analytics.on_time_days_total, 1);
+  assert.deepEqual(analytics.events, []);
 });

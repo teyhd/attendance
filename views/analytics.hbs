@@ -792,7 +792,7 @@
   {{/if}}
 </section>
 
-<dialog id="student-analytics-dialog" class="w-[calc(100vw-2rem)] max-w-6xl rounded-lg p-0 text-left shadow-lg" data-can-manage="{{#if canManage}}1{{else}}0{{/if}}">
+<dialog id="student-analytics-dialog" class="w-[calc(100vw-2rem)] max-w-6xl rounded-lg p-0 text-left shadow-lg" data-can-manage="{{#if canManage}}1{{else}}0{{/if}}" data-can-manage-presence="{{#if canManagePresence}}1{{else}}0{{/if}}">
   <div class="max-h-[90vh] overflow-hidden rounded-lg bg-white">
     <div class="flex items-start justify-between gap-3 border-b border-gray-200 p-4">
       <div>
@@ -802,10 +802,10 @@
       </div>
       <button type="button" class="rounded border border-gray-200 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50" data-student-modal-close>Закрыть</button>
     </div>
-    <div class="border-b border-gray-200 px-4 pt-3">
-      <div class="flex flex-wrap gap-2" data-student-modal-tabs></div>
+    <div class="border-b border-gray-200 px-4">
+      <div role="tablist" aria-label="Разделы карточки ученика" class="flex flex-nowrap gap-1 overflow-x-auto" data-student-modal-tabs></div>
     </div>
-    <div class="max-h-[68vh] overflow-y-auto p-4" data-student-modal-body>
+    <div id="student-analytics-panel" role="tabpanel" tabindex="0" class="max-h-[68vh] overflow-y-auto p-4 focus:outline-none" data-student-modal-body>
       <div class="text-sm text-gray-500">Загрузка...</div>
     </div>
   </div>
@@ -1086,6 +1086,7 @@
   const body = dialog.querySelector('[data-student-modal-body]');
   const closeButton = dialog.querySelector('[data-student-modal-close]');
   const canManagePage = dialog.dataset.canManage === '1';
+  const canManagePresencePage = dialog.dataset.canManagePresence === '1';
   const state = {
     payload: null,
     tab: 'overview',
@@ -1098,11 +1099,16 @@
   const tabItems = [
     ['overview', 'Обзор'],
     ['late', 'Опоздания'],
-    ['lessons', 'Уроки'],
-    ['periods', 'Отметки'],
-    ['days', 'Дни'],
-    ['history', 'Вся история'],
+    ['lessons', 'Пропуски уроков'],
+    ['periods', 'Периоды отсутствия'],
+    ['days', 'По дням'],
+    ['history', 'История и действия'],
   ];
+
+  const normalizeTab = (tab) => tabItems.some(([id]) => id === tab) ? tab : 'overview';
+  const tabBaseClass = 'shrink-0 whitespace-nowrap border-b-2 px-3 py-3 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-500';
+  const activeTabClass = 'border-indigo-600 bg-indigo-50 text-indigo-700';
+  const inactiveTabClass = 'border-transparent text-gray-600 hover:border-gray-300 hover:text-gray-900';
 
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
     '&': '&amp;',
@@ -1122,7 +1128,7 @@
 
   async function openStudent(studentId, options = {}) {
     state.payload = null;
-    state.tab = options.tab || 'overview';
+    state.tab = normalizeTab(options.tab);
     state.dayMode = options.mode || 'all';
     state.history = null;
     state.historyError = '';
@@ -1130,17 +1136,19 @@
     title.textContent = 'Аналитика';
     subtitle.textContent = '';
     tabs.innerHTML = '';
+    body.removeAttribute('aria-labelledby');
     body.innerHTML = '<div class="text-sm text-gray-500">Загрузка...</div>';
     openDialog();
 
     try {
-      const response = await fetch(`/api/attendance/students/${encodeURIComponent(studentId)}/analytics?month=${encodeURIComponent(analytics.month || '')}`, {
+      const response = await fetch(`/api/v2/attendance/students/${encodeURIComponent(studentId)}/analytics?month=${encodeURIComponent(analytics.month || '')}`, {
         headers: { Accept: 'application/json' },
       });
       if (!response.ok) throw new Error('Не удалось загрузить аналитику ученика');
       state.payload = await response.json();
       if (state.tab === 'history') await ensureHistory();
       render();
+      revealActiveTab();
     } catch (err) {
       body.innerHTML = `<div class="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">${escapeHtml(err.message || err)}</div>`;
     }
@@ -1149,18 +1157,50 @@
   function render(message = '') {
     const payload = state.payload;
     if (!payload) return;
+    state.tab = normalizeTab(state.tab);
     const canManage = Boolean(payload.can_manage) && canManagePage;
+    const canManagePresence = Boolean(payload.can_manage_presence) && canManagePresencePage;
     title.textContent = payload.student?.name || 'Ученик';
     subtitle.textContent = `${payload.month_label || payload.month || ''}${payload.student?.class_name ? ` · ${payload.student.class_name}` : ''}`;
-    tabs.innerHTML = tabItems.map(([id, label]) => `
-      <button type="button" data-student-tab="${id}" class="rounded-t border border-b-0 px-3 py-2 text-sm ${state.tab === id ? 'bg-white font-semibold text-gray-900' : 'bg-gray-50 text-gray-600 hover:bg-white'}">${label}</button>
-    `).join('');
-    body.innerHTML = `${message ? status(message) : ''}${renderActiveTab(payload, canManage)}`;
+    ensureTabs();
+    syncTabs();
+    body.innerHTML = `${message ? status(message) : ''}${renderActiveTab(payload, canManage, canManagePresence)}`;
     focusQuickAction();
   }
 
-  function renderActiveTab(payload, canManage) {
-    if (state.tab === 'history') return renderHistory(payload, canManage);
+  function ensureTabs() {
+    if (tabs.querySelectorAll('[role="tab"]').length === tabItems.length) return;
+    tabs.innerHTML = tabItems.map(([id, label]) => `
+      <button
+        type="button"
+        id="student-analytics-tab-${id}"
+        role="tab"
+        aria-controls="student-analytics-panel"
+        data-student-tab="${id}"
+        class="${tabBaseClass}"
+      >${label}</button>
+    `).join('');
+  }
+
+  function syncTabs() {
+    tabs.querySelectorAll('[role="tab"]').forEach((button) => {
+      const selected = button.dataset.studentTab === state.tab;
+      button.setAttribute('aria-selected', selected ? 'true' : 'false');
+      button.tabIndex = selected ? 0 : -1;
+      button.className = `${tabBaseClass} ${selected ? activeTabClass : inactiveTabClass}`;
+    });
+    body.setAttribute('aria-labelledby', `student-analytics-tab-${state.tab}`);
+  }
+
+  function revealActiveTab({ focus = false } = {}) {
+    const activeTab = tabs.querySelector(`[role="tab"][data-student-tab="${state.tab}"]`);
+    if (!activeTab) return;
+    if (focus) activeTab.focus({ preventScroll: true });
+    activeTab.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+
+  function renderActiveTab(payload, canManage, canManagePresence) {
+    if (state.tab === 'history') return renderHistory(payload, canManage, canManagePresence);
     if (state.tab === 'late') return renderLate(payload);
     if (state.tab === 'lessons') return renderLessons(payload);
     if (state.tab === 'periods') return renderPeriods(payload, canManage);
@@ -1322,7 +1362,7 @@
     `;
   }
 
-  function renderHistory(payload, canManage) {
+  function renderHistory(payload, canManage, canManagePresence) {
     const history = state.history;
     const periods = history?.periods || [];
     const presenceEvents = history?.presence_events || [];
@@ -1398,7 +1438,7 @@
               <div class="mt-4">
                 <h4 class="text-sm font-medium text-gray-900">Приходы и уходы</h4>
                 ${presenceEvents.length
-                  ? `<div class="mt-2 space-y-2">${presenceEvents.map(renderPresenceHistoryEvent).join('')}</div>`
+                  ? `<div class="mt-2 space-y-2">${presenceEvents.map((event) => renderPresenceHistoryEvent(event, canManagePresence)).join('')}</div>`
                   : '<div class="mt-2 rounded border border-gray-200 bg-gray-50 p-3 text-sm text-gray-500">Отметок прихода и ухода пока нет.</div>'}
               </div>
             `}
@@ -1431,18 +1471,28 @@
     `;
   }
 
-  function renderPresenceHistoryEvent(event) {
+  function renderPresenceHistoryEvent(event, canManagePresence) {
     const manualLate = event.source === 'mentor_manual_late';
-    const label = manualLate ? 'Опоздал · вручную' : (event.event_type === 'departure' ? 'Ушёл' : 'Пришёл');
+    const manualTablet = event.source === 'tablet';
+    const label = manualLate
+      ? 'Опоздал · вручную'
+      : `${event.event_type === 'departure' ? 'Ушёл' : 'Пришёл'}${manualTablet ? ' · вручную' : event.source === 'face' ? ' · автоматически' : ''}`;
     const tone = manualLate
       ? 'bg-amber-50 text-amber-800'
       : event.event_type === 'departure'
         ? 'bg-slate-100 text-slate-700'
         : 'bg-emerald-50 text-emerald-700';
+    const canDelete = canManagePresence
+      && !analytics.is_adult
+      && ['tablet', 'mentor_manual_late'].includes(String(event.source || ''))
+      && String(event.attendance_date || '').slice(0, 10) === localDate();
     return `
-      <div class="flex flex-col gap-1 rounded border border-gray-200 px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between">
+      <div class="flex flex-col gap-2 rounded border border-gray-200 px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between">
         <span class="font-medium text-gray-900">${escapeHtml(event.occurred_label || event.occurred_at || '')}</span>
-        <span class="w-fit rounded-full px-2 py-0.5 text-xs ${tone}">${escapeHtml(label)}</span>
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="w-fit rounded-full px-2 py-0.5 text-xs ${tone}">${escapeHtml(label)}</span>
+          ${canDelete ? `<button type="button" data-delete-presence="${attr(event.id)}" class="rounded border border-red-200 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50">Удалить</button>` : ''}
+        </div>
       </div>
     `;
   }
@@ -1582,9 +1632,22 @@
 
   function renderDayModeToggle(mode) {
     const button = (id, label) => `
-      <button type="button" data-student-days-mode="${id}" class="rounded border px-3 py-1.5 text-sm ${mode === id ? 'border-gray-900 bg-gray-900 text-white' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'}">${label}</button>
+      <button
+        type="button"
+        data-student-days-mode="${id}"
+        aria-pressed="${mode === id ? 'true' : 'false'}"
+        class="rounded-md px-3 py-1.5 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${mode === id ? 'bg-white font-semibold text-gray-900 shadow-sm' : 'text-gray-600 hover:bg-gray-200 hover:text-gray-900'}"
+      >${label}</button>
     `;
-    return `<div class="mb-3 flex flex-wrap gap-2">${button('all', 'Все дни')}${button('absences', 'Отсутствия')}</div>`;
+    return `
+      <div class="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="Фильтр дней">
+        <span class="text-sm font-medium text-gray-700">Показывать:</span>
+        <div class="inline-flex rounded-lg bg-gray-100 p-1">
+          ${button('all', 'Все дни')}
+          ${button('absences', 'Только отсутствия')}
+        </div>
+      </div>
+    `;
   }
 
   function renderAbsenceDetails(days) {
@@ -1699,19 +1762,38 @@
       deleteAbsence(deleteButton.dataset.deleteAbsence);
       return;
     }
+    const deletePresenceButton = event.target.closest('[data-delete-presence]');
+    if (deletePresenceButton) {
+      deletePresence(deletePresenceButton.dataset.deletePresence);
+      return;
+    }
     const dayMode = event.target.closest('[data-student-days-mode]');
     if (dayMode) {
       state.dayMode = dayMode.dataset.studentDaysMode || 'all';
     }
     const tab = event.target.closest('[data-student-tab]');
     if (tab) {
-      selectTab(tab.dataset.studentTab);
       if (tab.dataset.studentDaysMode) state.dayMode = tab.dataset.studentDaysMode;
+      selectTab(tab.dataset.studentTab, { focus: tab.getAttribute('role') !== 'tab' });
       return;
     }
     if (dayMode) {
       render();
     }
+  });
+
+  tabs.addEventListener('keydown', (event) => {
+    const current = event.target.closest('[role="tab"]');
+    if (!current || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const buttons = Array.from(tabs.querySelectorAll('[role="tab"]'));
+    const currentIndex = buttons.indexOf(current);
+    const nextIndex = event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? buttons.length - 1
+        : (currentIndex + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
+    selectTab(buttons[nextIndex]?.dataset.studentTab, { focus: true });
   });
 
   dialog.addEventListener('submit', async (event) => {
@@ -1773,12 +1855,16 @@
     }
   });
 
-  async function selectTab(tab) {
-    state.tab = tab || 'overview';
+  async function selectTab(tab, { focus = false } = {}) {
+    state.tab = normalizeTab(tab);
     render();
+    body.scrollTop = 0;
+    revealActiveTab({ focus });
     if (state.tab === 'history') {
       await ensureHistory();
       render();
+      body.scrollTop = 0;
+      revealActiveTab({ focus });
     }
   }
 
@@ -1795,6 +1881,25 @@
       }
       await ensureHistory(true);
       render('Отметка удалена.');
+    } catch (err) {
+      setInlineError(err.message || String(err));
+    }
+  }
+
+  async function deletePresence(id) {
+    if (!id || !window.confirm('Удалить эту ручную отметку о приходе или уходе?')) return;
+    try {
+      const response = await fetch(`/api/attendance/presence/events/${encodeURIComponent(id)}/cancel`, {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ audience: 'children' }),
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.message || 'Не удалось удалить ручную отметку');
+      }
+      await ensureHistory(true);
+      render('Ручная отметка удалена.');
     } catch (err) {
       setInlineError(err.message || String(err));
     }
