@@ -420,6 +420,22 @@ app.get('/attendance/presence', requirePageAuth, asyncHandler(async (req, res) =
   });
 }));
 
+app.get('/attendance/presence/manual', requirePageAuth, requirePermission('manage_presence'), asyncHandler(async (req, res) => {
+  const audience = normalizePageAudience(req.query.audience, req.authUser);
+  const selectedDate = formatDateInput(new Date());
+  const classIds = await getPresenceClassScope(req.authUser, audience);
+  const board = await db.getPresenceBoard({ date: selectedDate, audience, classIds });
+
+  res.render('presence-manual', {
+    title: 'Ручной ввод',
+    currentUser: req.authUser,
+    activePage: 'presence-manual',
+    audience,
+    audienceTabs: buildAudienceTabs('/attendance/presence/manual', audience, req.query, req.authUser),
+    board,
+  });
+}));
+
 app.get('/attendance/:childId/new', requirePageAuth, asyncHandler(async (req, res) => {
   const { childId } = req.params;
   const selectedClass = req.query.class;

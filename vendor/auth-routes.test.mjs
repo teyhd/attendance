@@ -4,7 +4,13 @@ import crypto from 'node:crypto';
 import http from 'node:http';
 import express from 'express';
 import cookieParser from 'cookie-parser';
-import { requireApiAuth, requireOwnAttendanceAuth, requirePageAuth, setupAuthRoutes } from './auth.mjs';
+import {
+  requireApiAuth,
+  requireOwnAttendanceAuth,
+  requirePageAuth,
+  requirePermission,
+  setupAuthRoutes,
+} from './auth.mjs';
 
 test('local logout clears Attendance cookies without redirecting to SSO', async () => {
   const { baseURL, close } = await startAuthTestServer();
@@ -149,6 +155,7 @@ test('teachers mentors and tutors can open the presence page and its board API',
   const app = express();
   app.use(cookieParser());
   app.get('/attendance/presence', requirePageAuth, (_req, res) => res.send('presence'));
+  app.get('/attendance/presence/manual', requirePageAuth, requirePermission('manage_presence'), (_req, res) => res.send('manual presence'));
   app.get('/api/attendance/presence/board', requireApiAuth, (_req, res) => res.json({ ok: true }));
   const { baseURL, close } = await startServer(app);
 
@@ -170,6 +177,12 @@ test('teachers mentors and tutors can open the presence page and its board API',
         headers: { cookie, accept: 'application/json' },
       });
       assert.equal(board.status, 200, `${role} presence board`);
+
+      const manual = await fetch(`${baseURL}/attendance/presence/manual`, {
+        redirect: 'manual',
+        headers: { cookie, accept: 'application/json' },
+      });
+      assert.equal(manual.status, role === 'mentor' ? 200 : 403, `${role} manual presence page`);
     }
   } finally {
     await close();
@@ -186,6 +199,7 @@ test('administrator can open the presence page and its board API', async () => {
   app.use(cookieParser());
   setupAuthRoutes(app);
   app.get('/attendance/presence', requirePageAuth, (_req, res) => res.send('presence'));
+  app.get('/attendance/presence/manual', requirePageAuth, requirePermission('manage_presence'), (_req, res) => res.send('manual presence'));
   app.get('/api/attendance/presence/board', requireApiAuth, (_req, res) => res.json({ ok: true }));
   const { baseURL, close } = await startServer(app);
   const cookie = signedSessionCookie({
@@ -205,6 +219,9 @@ test('administrator can open the presence page and its board API', async () => {
       headers: { cookie, accept: 'application/json' },
     });
     assert.equal(board.status, 200);
+
+    const manual = await fetch(`${baseURL}/attendance/presence/manual`, { headers: { cookie } });
+    assert.equal(manual.status, 200);
 
     const me = await fetch(`${baseURL}/api/me`, { headers: { cookie } });
     assert.equal(me.status, 200);

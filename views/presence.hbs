@@ -115,12 +115,17 @@
         {{/if}}
       </div>
     </div>
-    <button type="button" data-refresh-board class="inline-flex h-12 w-12 shrink-0 items-center justify-center self-end rounded-xl border border-slate-300 bg-white text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 disabled:cursor-wait disabled:opacity-60 sm:self-auto" aria-label="Обновить данные" title="Обновить данные">
-      <svg data-refresh-icon class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-        <path d="M20 6v5h-5M4 18v-5h5" stroke-linecap="round" stroke-linejoin="round"/>
-        <path d="M18.2 9A7 7 0 0 0 6.1 6.7L4 11m16 2-2.1 4.3A7 7 0 0 1 5.8 15" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-    </button>
+    <div class="flex shrink-0 items-center gap-2 self-end sm:self-auto">
+      {{#if canManage}}
+        <a href="/attendance/presence/manual{{#if board.is_adult}}?audience=adults{{/if}}" class="inline-flex h-12 items-center justify-center rounded-xl border border-blue-200 bg-blue-50 px-4 text-sm font-semibold text-blue-700 transition hover:border-blue-300 hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600">Ручной ввод</a>
+      {{/if}}
+      <button type="button" data-refresh-board class="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 disabled:cursor-wait disabled:opacity-60" aria-label="Обновить данные" title="Обновить данные">
+        <svg data-refresh-icon class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+          <path d="M20 6v5h-5M4 18v-5h5" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M18.2 9A7 7 0 0 0 6.1 6.7L4 11m16 2-2.1 4.3A7 7 0 0 1 5.8 15" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+    </div>
   </header>
 
   <div class="presence-summary-scroll overflow-x-auto rounded-xl border border-slate-200 bg-white" aria-label="Сводка за сегодня">

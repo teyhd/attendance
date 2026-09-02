@@ -39,6 +39,9 @@
         {{else}}
           <a href="/attendance" class="inline-flex items-center border-b-2 px-1 text-sm font-medium transition {{#if (eq activePage 'attendance')}}border-blue-700 text-blue-700{{else}}border-transparent text-slate-600 hover:border-slate-300 hover:text-slate-950{{/if}}">Пропуски</a>
           <a href="/attendance/analytics" class="inline-flex items-center border-b-2 px-1 text-sm font-medium transition {{#if (eq activePage 'analytics')}}border-blue-700 text-blue-700{{else}}border-transparent text-slate-600 hover:border-slate-300 hover:text-slate-950{{/if}}">Аналитика</a>
+          {{#if currentUser.permissions.manage_presence}}
+            <a href="/attendance/presence/manual" class="inline-flex items-center border-b-2 px-1 text-sm font-medium transition {{#if (eq activePage 'presence-manual')}}border-blue-700 text-blue-700{{else}}border-transparent text-slate-600 hover:border-slate-300 hover:text-slate-950{{/if}}">Ручной ввод</a>
+          {{/if}}
         {{/if}}
       </nav>
 
@@ -82,6 +85,9 @@
                   <a href="/attendance/me" class="block rounded-lg px-3 py-2.5 text-sm font-medium {{#if (eq activePage 'student-attendance')}}bg-blue-50 text-blue-700{{else}}text-slate-700 hover:bg-slate-100{{/if}}">Моя посещаемость</a>
                 {{else}}
                   <a href="/attendance/presence" class="block rounded-lg px-3 py-2.5 text-sm font-medium {{#if (eq activePage 'presence')}}bg-blue-50 text-blue-700{{else}}text-slate-700 hover:bg-slate-100{{/if}}">Сейчас в школе</a>
+                  {{#if currentUser.permissions.manage_presence}}
+                    <a href="/attendance/presence/manual" class="block rounded-lg px-3 py-2.5 text-sm font-medium {{#if (eq activePage 'presence-manual')}}bg-blue-50 text-blue-700{{else}}text-slate-700 hover:bg-slate-100{{/if}}">Ручной ввод</a>
+                  {{/if}}
                   <a href="/attendance" class="block rounded-lg px-3 py-2.5 text-sm font-medium {{#if (eq activePage 'attendance')}}bg-blue-50 text-blue-700{{else}}text-slate-700 hover:bg-slate-100{{/if}}">Пропуски</a>
                   <a href="/attendance/analytics" class="block rounded-lg px-3 py-2.5 text-sm font-medium {{#if (eq activePage 'analytics')}}bg-blue-50 text-blue-700{{else}}text-slate-700 hover:bg-slate-100{{/if}}">Аналитика</a>
                 {{/if}}
