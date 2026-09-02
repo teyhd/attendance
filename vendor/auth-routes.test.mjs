@@ -141,6 +141,82 @@ test('staff session is blocked from student-only route', async () => {
   }
 });
 
+test('teachers mentors and tutors can open the presence page and its board API', async () => {
+  const previousEnv = setAuthEnv({
+    APP_ENV: 'local',
+    AUTH_SESSION_SECRET: 'test-session-secret',
+  });
+  const app = express();
+  app.use(cookieParser());
+  app.get('/attendance/presence', requirePageAuth, (_req, res) => res.send('presence'));
+  app.get('/api/attendance/presence/board', requireApiAuth, (_req, res) => res.json({ ok: true }));
+  const { baseURL, close } = await startServer(app);
+
+  try {
+    for (const [roleID, role] of [[2, 'teacher'], [3, 'mentor'], [4, 'tutor']]) {
+      const cookie = signedSessionCookie({
+        auth_version: 2,
+        uid: 20 + roleID,
+        name: role,
+        raw_role_id: roleID,
+        role,
+        exp: Math.floor(Date.now() / 1000) + 60,
+      }, process.env.AUTH_SESSION_SECRET);
+
+      const page = await fetch(`${baseURL}/attendance/presence`, { headers: { cookie } });
+      assert.equal(page.status, 200, `${role} presence page`);
+
+      const board = await fetch(`${baseURL}/api/attendance/presence/board`, {
+        headers: { cookie, accept: 'application/json' },
+      });
+      assert.equal(board.status, 200, `${role} presence board`);
+    }
+  } finally {
+    await close();
+    restoreEnv(previousEnv);
+  }
+});
+
+test('administrator can open the presence page and its board API', async () => {
+  const previousEnv = setAuthEnv({
+    APP_ENV: 'local',
+    AUTH_SESSION_SECRET: 'test-session-secret',
+  });
+  const app = express();
+  app.use(cookieParser());
+  setupAuthRoutes(app);
+  app.get('/attendance/presence', requirePageAuth, (_req, res) => res.send('presence'));
+  app.get('/api/attendance/presence/board', requireApiAuth, (_req, res) => res.json({ ok: true }));
+  const { baseURL, close } = await startServer(app);
+  const cookie = signedSessionCookie({
+    auth_version: 2,
+    uid: 50,
+    name: 'Administrator',
+    raw_role_id: 5,
+    role: 'admin',
+    exp: Math.floor(Date.now() / 1000) + 60,
+  }, process.env.AUTH_SESSION_SECRET);
+
+  try {
+    const page = await fetch(`${baseURL}/attendance/presence`, { headers: { cookie } });
+    assert.equal(page.status, 200);
+
+    const board = await fetch(`${baseURL}/api/attendance/presence/board`, {
+      headers: { cookie, accept: 'application/json' },
+    });
+    assert.equal(board.status, 200);
+
+    const me = await fetch(`${baseURL}/api/me`, { headers: { cookie } });
+    assert.equal(me.status, 200);
+    const user = await me.json();
+    assert.equal(user.permissions.view_adult_attendance, true);
+    assert.equal(user.permissions.manage_presence, true);
+  } finally {
+    await close();
+    restoreEnv(previousEnv);
+  }
+});
+
 test('legacy Attendance sessions are invalidated so current SSO rights are requested', async () => {
   const previousEnv = setAuthEnv({
     APP_ENV: 'local',

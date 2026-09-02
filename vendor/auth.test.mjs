@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { attendancePermissions, extractServiceRoleID } from './auth.mjs';
+import { attendancePermissions, extractServiceRoleID, landingPath } from './auth.mjs';
+
+test('landing routes open the live board first for teachers and tutors', () => {
+  assert.equal(landingPath(1), '/attendance/me');
+  assert.equal(landingPath(2), '/attendance/presence');
+  assert.equal(landingPath(3), '/attendance');
+  assert.equal(landingPath(4), '/attendance/presence');
+  assert.equal(landingPath(5), '/attendance');
+});
 
 test('service role extraction keeps legacy rights scoped to Attendance', () => {
   assert.equal(extractServiceRoleID([

@@ -17,13 +17,15 @@ import {
 } from './absence-reasons.mjs';
 import {
   PRESENCE_EVENT_TYPES,
+  buildPresenceBoardTotals,
+  buildPresenceViewState,
   canCancelPresenceEvent,
   canManagePresenceClass,
   isManualPresenceEvent,
   resolvePresenceToggle,
 } from './presence.mjs';
 import { buildLearningAnalytics } from './learning-analytics.mjs';
-import { LATE_THRESHOLD_MINUTES, buildLateAnalytics } from './late-analytics.mjs';
+import { buildLateAnalytics } from './late-analytics.mjs';
 import { buildScheduleIndex, lessonsForStudentDay, normalizeScheduleLesson } from './schedule-analytics.mjs';
 import { buildRiskWorklist } from './risk-worklist.mjs';
 import { buildStudentAttendanceAnalytics } from './student-attendance-analytics.mjs';
@@ -586,7 +588,7 @@ export async function getPresenceBoard({ date, audience = AUDIENCE_CHILDREN, cla
         ...event,
         can_edit: isManualPresenceEvent(event),
       })),
-      state: presenceBoardState({
+      state: buildPresenceViewState({
         latestEvent,
         absence,
         conflicts: studentConflicts,
@@ -597,18 +599,14 @@ export async function getPresenceBoard({ date, audience = AUDIENCE_CHILDREN, cla
   }
 
   const boardClasses = [...classBuckets.values()].filter((classItem) => classItem.students.length > 0);
-  const totals = boardClasses.reduce((acc, classItem) => {
-    acc.classes += 1;
-    acc.students += classItem.students.length;
-    acc.present += classItem.students.filter((student) => student.state.is_present).length;
-    return acc;
-  }, { classes: 0, students: 0, present: 0 });
+  const totals = buildPresenceBoardTotals(boardClasses);
 
   return {
     audience: normalizedAudience,
     is_adult: isAdults,
     date: selectedDate,
     date_label: formatDateLabel(selectedDate),
+    generated_at: nowSql,
     classes: boardClasses,
     totals,
   };
@@ -1512,37 +1510,6 @@ function isAbsenceActiveAt(absence, nowSql) {
   const startsAt = String(absence?.starts_at || '');
   const endsAt = String(absence?.ends_at || FAR_FUTURE);
   return startsAt <= nowSql && endsAt >= nowSql;
-}
-
-function presenceBoardState({ latestEvent, absence, conflicts = [], firstArrival, firstLesson } = {}) {
-  const state = presenceStateFromEvent(latestEvent, conflicts);
-  if (conflicts.length) return state;
-  if (absence) {
-    return {
-      ...state,
-      is_present: false,
-      status_code: 'absent',
-      status_badge_label: 'Отсутствует',
-      status_detail: [absence.reason_name, absence.period_label].filter(Boolean).join(' · '),
-    };
-  }
-  if (state.is_present && (firstArrival?.source === 'mentor_manual_late' || isLateArrival(firstArrival, firstLesson))) {
-    return {
-      ...state,
-      status_code: 'late',
-      status_badge_label: 'Опоздал',
-      status_detail: firstArrival.occurred_label || firstArrival.occurred_time || '',
-    };
-  }
-  return state;
-}
-
-function isLateArrival(firstArrival, firstLesson) {
-  if (!firstArrival?.occurred_at || !firstLesson?.starts_at) return false;
-  const arrivalMs = parseSqlDateTimeMs(firstArrival.occurred_at);
-  const startsMs = parseSqlDateTimeMs(firstLesson.starts_at);
-  if (!Number.isFinite(arrivalMs) || !Number.isFinite(startsMs)) return false;
-  return ((arrivalMs - startsMs) / 60_000) > LATE_THRESHOLD_MINUTES;
 }
 
 export async function getTodayAbsenceOverview({ date, now, classId, audience = AUDIENCE_CHILDREN } = {}) {

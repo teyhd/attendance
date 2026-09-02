@@ -149,7 +149,7 @@ export function getAuthUserFromRequest(req) {
     rawRoleId,
     role: payload.role || roleName(rawRoleId),
     permissions: attendancePermissions(rawRoleId),
-    landing: payload.landing || landingPath(rawRoleId),
+    landing: landingPath(rawRoleId),
   };
 }
 
@@ -306,8 +306,11 @@ function roleName(roleID) {
   }
 }
 
-function landingPath(roleID) {
-  return Number(roleID) === 1 ? '/attendance/me' : '/attendance';
+export function landingPath(roleID) {
+  const role = Number(roleID);
+  if (role === 1) return '/attendance/me';
+  if (role === 2 || role === 4) return '/attendance/presence';
+  return '/attendance';
 }
 
 export function extractServiceRoleID(rightClaim, serviceID, allowServiceScoped = false) {

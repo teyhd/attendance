@@ -2,10 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   PRESENCE_EVENT_TYPES,
+  buildPresenceBoardTotals,
+  buildPresenceViewState,
   canCancelPresenceEvent,
   canManagePresenceClass,
   isManualPresenceEvent,
   nextPresenceEventType,
+  presenceViewClassScope,
   resolvePresenceToggle,
 } from './presence.mjs';
 
@@ -84,4 +87,84 @@ test('class scope lets administrators manage every child and mentors only assign
   assert.equal(canManagePresenceClass(['12', '14'], 12), true);
   assert.equal(canManagePresenceClass(['12', '14'], '13'), false);
   assert.equal(canManagePresenceClass([], '12'), false);
+});
+
+test('presence board visibility matches staff roles and audience', () => {
+  assert.equal(presenceViewClassScope('admin'), null);
+  assert.equal(presenceViewClassScope('teacher'), null);
+  assert.equal(presenceViewClassScope('tutor'), null);
+  assert.deepEqual(presenceViewClassScope('mentor', { mentorClassIds: ['12', 14] }), ['12', '14']);
+  assert.deepEqual(presenceViewClassScope('teacher', { audience: 'adults' }), []);
+  assert.deepEqual(presenceViewClassScope('guest'), []);
+});
+
+test('presence view separates current location from lateness', () => {
+  const firstArrival = {
+    id: '1',
+    event_type: 'arrival',
+    occurred_at: '2026-09-02 09:12:00',
+    occurred_time: '09:12:00',
+    source: 'face',
+  };
+  const latePresent = buildPresenceViewState({
+    latestEvent: firstArrival,
+    firstArrival,
+    firstLesson: { starts_at: '2026-09-02 09:00:00' },
+  });
+  assert.equal(latePresent.current_status_code, 'present');
+  assert.equal(latePresent.is_present, true);
+  assert.equal(latePresent.is_late, true);
+  assert.equal(latePresent.late_minutes, 12);
+  assert.equal(latePresent.arrival_time, '09:12');
+
+  const departed = buildPresenceViewState({
+    latestEvent: { id: '2', event_type: 'departure', occurred_at: '2026-09-02 14:26:00' },
+    firstArrival,
+    firstLesson: { starts_at: '2026-09-02 09:00:00' },
+  });
+  assert.equal(departed.current_status_code, 'departed');
+  assert.equal(departed.is_present, false);
+  assert.equal(departed.is_late, true);
+  assert.equal(departed.departure_time, '14:26');
+});
+
+test('presence view covers absence, no mark, and conflict precedence', () => {
+  const absent = buildPresenceViewState({ absence: { reason_name: 'Болезнь', period_label: 'весь день' } });
+  assert.equal(absent.current_status_code, 'absent');
+  assert.equal(absent.status_detail, 'Болезнь · весь день');
+
+  const none = buildPresenceViewState();
+  assert.equal(none.current_status_code, 'none');
+  assert.equal(none.current_status_label, 'Нет отметки');
+
+  const conflict = buildPresenceViewState({
+    latestEvent: { id: '2', event_type: 'arrival', occurred_at: '2026-09-02 09:10:00' },
+    absence: { reason_name: 'Болезнь' },
+    conflicts: [{ id: '9', reason_name: 'Болезнь', occurred_at: '2026-09-02 09:10:00' }],
+  });
+  assert.equal(conflict.current_status_code, 'conflict');
+  assert.equal(conflict.current_status_label, 'Требует уточнения');
+  assert.equal(conflict.conflict_id, '9');
+});
+
+test('presence totals keep late arrivals as an overlapping metric', () => {
+  const totals = buildPresenceBoardTotals([{ students: [
+    { state: { current_status_code: 'present', is_present: true, is_late: false } },
+    { state: { current_status_code: 'present', is_present: true, is_late: true } },
+    { state: { current_status_code: 'departed', is_present: false, is_late: true } },
+    { state: { current_status_code: 'absent', is_present: false, is_late: false } },
+    { state: { current_status_code: 'none', is_present: false, is_late: false } },
+    { state: { current_status_code: 'conflict', is_present: false, is_late: false } },
+  ] }]);
+
+  assert.deepEqual(totals, {
+    classes: 1,
+    students: 6,
+    present: 2,
+    late: 2,
+    departed: 1,
+    absent: 1,
+    none: 1,
+    conflicts: 1,
+  });
 });

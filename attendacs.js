@@ -9,7 +9,7 @@ import 'dotenv/config';
 import * as db from './vendor/db.mjs';
 import { isWithoutReasonCode } from './vendor/absence-reasons.mjs';
 import { buildAttendanceActions } from './vendor/attendance-ui.mjs';
-import { canManagePresenceClass } from './vendor/presence.mjs';
+import { canManagePresenceClass, presenceViewClassScope } from './vendor/presence.mjs';
 import {
   getAuthUserFromRequest,
   requireApiAuth,
@@ -190,16 +190,12 @@ app.post('/internal/v1/attendance/lessons/resolve', requireDiaryService, asyncHa
     return sendApiError(res, err);
   }
 }));
-
 const AUDIENCE_CHILDREN = 'children';
 const AUDIENCE_ADULTS = 'adults';
 
 app.get('/', (req, res) => {
   const user = getAuthUserFromRequest(req);
-  if (user?.permissions?.view_own_attendance) {
-    return res.redirect('/attendance/me');
-  }
-  res.redirect('/attendance');
+  res.redirect(user?.landing || '/attendance');
 });
 
 app.get('/attendance', requirePageAuth, asyncHandler(async (req, res) => {
@@ -402,19 +398,25 @@ app.get('/attendance/analytics', requirePageAuth, asyncHandler(async (req, res) 
   });
 }));
 
-app.get('/attendance/presence', requirePageAuth, requirePermission('manage_presence'), asyncHandler(async (req, res) => {
+app.get('/attendance/presence', requirePageAuth, asyncHandler(async (req, res) => {
   const audience = normalizePageAudience(req.query.audience, req.authUser);
   const selectedDate = formatDateInput(new Date());
-  const classIds = await getPresenceClassScope(req.authUser, audience);
-  const board = await db.getPresenceBoard({ date: selectedDate, audience, classIds });
+  const classIds = await getPresenceViewClassScope(req.authUser, audience);
+  const canManage = Boolean(req.authUser?.permissions?.manage_presence);
+  const board = toPublicPresenceBoard(
+    await db.getPresenceBoard({ date: selectedDate, audience, classIds }),
+    { canManage },
+  );
 
   res.render('presence', {
-    title: 'Ручной ввод',
+    title: 'Сейчас в школе',
     currentUser: req.authUser,
     activePage: 'presence',
+    wideLayout: true,
     audience,
     audienceTabs: buildAudienceTabs('/attendance/presence', audience, req.query, req.authUser),
     board,
+    canManage,
   });
 }));
 
@@ -526,6 +528,19 @@ app.get('/api/attendance/presence/events', requireApiAuth, asyncHandler(async (r
   res.json({ items: events.map(toPublicPresenceEvent) });
 }));
 
+app.get('/api/attendance/presence/board', requireApiAuth, asyncHandler(async (req, res) => {
+  const audience = normalizeApiAudience(req.query.audience);
+  if (!canUseAudience(req.authUser, audience)) {
+    return res.status(403).json({ error: 'forbidden' });
+  }
+  const classIds = await getPresenceViewClassScope(req.authUser, audience);
+  const canManage = Boolean(req.authUser?.permissions?.manage_presence);
+  const board = toPublicPresenceBoard(
+    await db.getPresenceBoard({ date: formatDateInput(new Date()), audience, classIds }),
+    { canManage },
+  );
+  return res.json({ ...board, can_manage_presence: canManage });
+}));
 app.get('/api/attendance/conflicts', requireApiAuth, requirePermission('manage_presence'), asyncHandler(async (req, res) => {
   const audience = normalizeApiAudience(req.query.audience);
   if (!canUseAudience(req.authUser, audience)) return res.status(403).json({ error: 'forbidden' });
@@ -869,6 +884,12 @@ async function getPresenceClassScope(user, audience) {
   return db.getMentorClassIds(user?.id);
 }
 
+async function getPresenceViewClassScope(user, audience) {
+  const mentorClassIds = String(user?.role || '') === 'mentor' && audience === AUDIENCE_CHILDREN
+    ? await db.getMentorClassIds(user?.id)
+    : [];
+  return presenceViewClassScope(user?.role, { audience, mentorClassIds });
+}
 async function canManageStudentPresence(user, classId) {
   if (!user?.permissions?.manage_presence) return false;
   const classIds = await getPresenceClassScope(user, AUDIENCE_CHILDREN);
@@ -981,6 +1002,91 @@ function toPublicPresenceEvent(event) {
     cancelled_by: event.cancelled_by ? Number(event.cancelled_by) : null,
     created_at: event.created_at,
     updated_at: event.updated_at,
+  };
+}
+
+function toPublicPresenceBoard(board, { canManage = false } = {}) {
+  return {
+    audience: board?.audience || AUDIENCE_CHILDREN,
+    is_adult: Boolean(board?.is_adult),
+    date: board?.date || '',
+    date_label: formatPresenceDateLabel(board?.date) || board?.date_label || '',
+    generated_at: board?.generated_at || '',
+    totals: {
+      classes: Number(board?.totals?.classes || 0),
+      students: Number(board?.totals?.students || 0),
+      present: Number(board?.totals?.present || 0),
+      late: Number(board?.totals?.late || 0),
+      departed: Number(board?.totals?.departed || 0),
+      absent: Number(board?.totals?.absent || 0),
+      none: Number(board?.totals?.none || 0),
+      conflicts: Number(board?.totals?.conflicts || 0),
+    },
+    classes: (board?.classes || []).map((classItem) => ({
+      id: String(classItem.id || ''),
+      name: classItem.name || '',
+      anchor: classItem.anchor || '',
+      students_label: classItem.students_label || '',
+      students: (classItem.students || []).map((student) => ({
+        id: String(student.id || ''),
+        name: student.name || '',
+        classId: String(student.classId || ''),
+        className: student.className || classItem.name || '',
+        state: toPublicPresenceBoardState(student.state, { canManage }),
+        presence_events: canManage
+          ? (student.presence_events || []).map(toPublicPresenceHistoryEvent)
+          : [],
+      })),
+    })),
+  };
+}
+
+function formatPresenceDateLabel(value) {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return '';
+  const months = [
+    'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+    'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря',
+  ];
+  const month = months[Number(match[2]) - 1];
+  if (!month) return '';
+  return `${Number(match[3])} ${month} ${match[1]}`;
+}
+
+function toPublicPresenceBoardState(state, { canManage = false } = {}) {
+  return {
+    has_event: Boolean(state?.has_event),
+    is_present: Boolean(state?.is_present),
+    is_late: Boolean(state?.is_late),
+    late_minutes: Number.isInteger(state?.late_minutes) ? state.late_minutes : null,
+    late_label: state?.late_label || '',
+    current_status_code: state?.current_status_code || 'none',
+    current_status_label: state?.current_status_label || 'Нет отметки',
+    status_code: state?.status_code || 'none',
+    status_label: state?.status_label || 'Нет отметки',
+    status_detail: state?.status_detail || '',
+    arrival_time: state?.arrival_time || '',
+    arrival_label: state?.arrival_label || '',
+    departure_time: state?.departure_time || '',
+    departure_label: state?.departure_label || '',
+    last_event_id: canManage ? (state?.last_event_id || '') : '',
+    last_event_type: canManage ? (state?.last_event_type || '') : '',
+    next_event_type: canManage ? (state?.next_event_type || '') : '',
+    next_action_label: canManage ? (state?.next_action_label || '') : '',
+    conflict_count: Number(state?.conflict_count || 0),
+    conflict_id: canManage ? (state?.conflict_id || '') : '',
+  };
+}
+
+function toPublicPresenceHistoryEvent(event) {
+  return {
+    id: String(event?.id || ''),
+    event_type: event?.event_type || '',
+    occurred_at: event?.occurred_at || '',
+    occurred_time: event?.occurred_time || '',
+    occurred_label: event?.occurred_label || '',
+    source: event?.source || '',
+    can_edit: Boolean(event?.can_edit),
   };
 }
 
