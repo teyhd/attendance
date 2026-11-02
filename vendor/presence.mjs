@@ -48,6 +48,7 @@ export function buildPresenceViewState({
   absence = null,
   conflicts = [],
   firstLesson = null,
+  arrivalAssessment = null,
 } = {}) {
   const hasEvent = Boolean(latestEvent?.id);
   const isPresent = latestEvent?.event_type === PRESENCE_EVENT_TYPES.ARRIVAL;
@@ -56,8 +57,10 @@ export function buildPresenceViewState({
     : (absence
       ? 'absent'
       : (hasEvent ? (isPresent ? 'present' : 'departed') : 'none'));
-  const lateMinutes = presenceLateMinutes(firstArrival, firstLesson);
-  const isLate = Boolean(firstArrival?.id) && (
+  const lateMinutes = arrivalAssessment
+    ? (arrivalAssessment.status === 'late' ? arrivalAssessment.late_minutes : null)
+    : presenceLateMinutes(firstArrival, firstLesson);
+  const isLate = arrivalAssessment ? arrivalAssessment.status === 'late' : Boolean(firstArrival?.id) && (
     firstArrival?.source === 'mentor_manual_late'
     || Number.isInteger(lateMinutes)
   );
@@ -70,6 +73,11 @@ export function buildPresenceViewState({
     ? (Number.isInteger(lateMinutes) && lateMinutes > 0 ? `Опоздал на ${lateMinutes} мин` : 'Опоздал')
     : '';
   const conflict = conflicts[0] || null;
+  const scheduleDetail = arrivalAssessment
+    ? (arrivalAssessment.lesson_time && arrivalAssessment.lesson_time !== '—'
+      ? `Первый очный урок ${arrivalAssessment.lesson_time.slice(0, 5)}${arrivalAssessment.lesson_label ? ` · ${arrivalAssessment.lesson_label}` : ''}`
+      : arrivalAssessment.status_label)
+    : '';
   const statusDetail = currentStatusCode === 'conflict'
     ? [conflict?.reason_name, presenceEventTime(conflict)].filter(Boolean).join(' · ')
     : (currentStatusCode === 'absent'
@@ -88,7 +96,7 @@ export function buildPresenceViewState({
     status_word: currentStatusLabel,
     status_label: [currentStatusLabel, lateLabel].filter(Boolean).join(' · '),
     status_badge_label: currentStatusLabel,
-    status_detail: statusDetail,
+    status_detail: [statusDetail, scheduleDetail].filter(Boolean).join(' · '),
     arrival_time: arrivalTime,
     arrival_label: arrivalTime ? `Пришёл ${arrivalTime}` : '',
     departure_time: departureTime,
@@ -137,10 +145,81 @@ export function canCancelPresenceEvent(event, {
   allowAutomaticLatest = false,
 } = {}) {
   if (!event || event.cancelled_at) return false;
-  if (attendanceDate && String(event.attendance_date) !== String(attendanceDate)) return false;
   if (isManualPresenceEvent(event)) return true;
   if (!allowAutomaticLatest || !latestEvent || latestEvent.cancelled_at) return false;
   return String(event.id) === String(latestEvent.id);
+}
+
+// These capabilities are also returned by the history API; clients do not infer permissions.
+export function presenceHistoryCapabilities(event, { roleId, classIds = [], canMarkAbsence = false } = {}) {
+  const active = Boolean(event) && !event.cancelled_at;
+  const role = Number(roleId);
+  const allowed = role === 5 || (
+    event?.source === 'mentor_manual_late'
+      ? canMarkAbsence
+      : role === 3 && isManualPresenceEvent(event) && canManagePresenceClass(classIds, event?.class_id)
+  );
+  return { can_edit: active && allowed, can_cancel: active && allowed };
+}
+
+export function historyVersion(record) {
+  return `${record?.updated_at || ''}#${Number(record?.revision || 0)}`;
+}
+
+export function assertHistoryVersion(record, expected) {
+  if (expected == null || expected === '') return;
+  if (String(expected) !== historyVersion(record)
+    && !(Number(record?.revision || 0) === 0 && String(expected) === String(record?.updated_at || ''))) {
+    throw Object.assign(new Error('Отметка уже изменена. Обновите историю и повторите действие.'), { status: 409 });
+  }
+}
+
+export function encodeHistoryCursor(item) {
+  return Buffer.from(JSON.stringify([item.occurred_at, item.kind, String(item.id)])).toString('base64url');
+}
+
+export function decodeHistoryCursor(value) {
+  if (!value) return null;
+  try {
+    if (String(value).length > 256) throw new Error();
+    const cursor = JSON.parse(Buffer.from(String(value), 'base64url').toString('utf8'));
+    if (!Array.isArray(cursor) || cursor.length !== 3
+      || !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(cursor[0])
+      || !['absence', 'presence'].includes(cursor[1]) || !/^[1-9]\d*$/.test(cursor[2])) throw new Error();
+    return { occurred_at: cursor[0], kind: cursor[1], id: cursor[2] };
+  } catch {
+    throw Object.assign(new Error('Некорректный указатель страницы истории'), { status: 400 });
+  }
+}
+
+export function assertPresenceSequenceCorrection(events, before, after) {
+  const active = (events || []).filter((event) => !event.cancelled_at);
+  const baseline = presenceSequenceProblems(active);
+  const corrected = active.filter((event) => String(event.id) !== String(before.id)).concat(after);
+  const introduced = [...presenceSequenceProblems(corrected)].some((problem) => !baseline.has(problem));
+  if (introduced) {
+    throw Object.assign(new Error('Исправление нарушает порядок прихода и ухода. Проверьте соседние отметки.'), { status: 409 });
+  }
+}
+
+function presenceSequenceProblems(events) {
+  const days = new Map();
+  for (const event of events) {
+    const date = event.attendance_date || String(event.occurred_at).slice(0, 10);
+    if (!days.has(date)) days.set(date, []);
+    days.get(date).push(event);
+  }
+  const problems = new Set();
+  for (const [date, rows] of days) {
+    rows.sort((a, b) => String(a.occurred_at).localeCompare(String(b.occurred_at)) || Number(a.id) - Number(b.id));
+    if (rows[0]?.event_type === 'departure') problems.add(`${date}:start:${rows[0].id}`);
+    for (let index = 1; index < rows.length; index += 1) {
+      if (rows[index - 1].event_type === rows[index].event_type) {
+        problems.add(`${date}:${rows[index - 1].id}:${rows[index].id}:${rows[index].event_type}`);
+      }
+    }
+  }
+  return problems;
 }
 
 export function normalizePresenceEventType(value) {

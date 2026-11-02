@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { buildAdultArrivalAnalytics } from './adult-arrival-analytics.mjs';
 import {
   PRESENCE_EVENT_TYPES,
   buildPresenceBoardTotals,
@@ -10,7 +11,53 @@ import {
   nextPresenceEventType,
   presenceViewClassScope,
   resolvePresenceToggle,
+  presenceHistoryCapabilities,
+  historyVersion,
+  assertHistoryVersion,
+  encodeHistoryCursor,
+  decodeHistoryCursor,
+  assertPresenceSequenceCorrection,
 } from './presence.mjs';
+
+test('adult board reuses analytics lateness after online lesson and after departure', () => {
+  const date = '2026-09-09';
+  const event = { id: '1', student_id: '10', attendance_date: date, event_type: 'arrival', occurred_at: `${date} 09:05:01` };
+  const scheduleRows = [
+    { teacher_id: '10', lesson_date: date, start_time: '08:00:00', end_time: '08:40:00', is_online: 1 },
+    { teacher_id: '10', lesson_date: date, start_time: '09:00:00', end_time: '09:40:00', subject_name: 'Математика' },
+  ];
+  const analytics = buildAdultArrivalAnalytics({ range: { days: [date] }, people: [{ student_id: '10' }], presenceEvents: [event], scheduleRows, publishedSchoolDays: [date], now: `${date} 18:00:00` });
+  const arrivalAssessment = analytics.people[0].days[0];
+  for (const latestEvent of [event, { id: '2', event_type: 'departure', occurred_at: `${date} 17:00:00` }]) {
+    const state = buildPresenceViewState({ firstArrival: event, latestEvent, arrivalAssessment });
+    assert.equal(state.late_minutes, arrivalAssessment.late_minutes);
+    assert.equal(state.late_minutes, 6);
+    assert.equal(state.is_late, true);
+    assert.equal(state.current_status_code, latestEvent.event_type === 'arrival' ? 'present' : 'departed');
+    assert.match(state.status_detail, /Первый очный урок 09:00/);
+    assert.equal(buildPresenceBoardTotals([{ students: [{ state }] }]).late, 1);
+  }
+});
+
+test('adult assessment keeps online, missing schedule and on-time days out of late filter', () => {
+  const event = { id: '1', event_type: 'arrival', source: 'mentor_manual_late', occurred_at: '2026-09-09 10:00:00' };
+  for (const status of ['online_only', 'no_schedule', 'no_lessons', 'on_time', 'no_arrival', 'expected', 'future']) {
+    const state = buildPresenceViewState({ latestEvent: event, firstArrival: event, arrivalAssessment: { status, late_minutes: 0, status_label: 'Расписание' } });
+    assert.equal(state.is_late, false, status);
+    assert.equal(state.late_minutes, null, status);
+    assert.equal(buildPresenceBoardTotals([{ students: [{ state }] }]).late, 0);
+  }
+});
+
+test('adult schedule detail does not hide absence or conflict reason', () => {
+  const state = buildPresenceViewState({
+    conflicts: [{ id: '1', reason_name: 'Болезнь' }],
+    arrivalAssessment: { status: 'online_only', status_label: 'Только онлайн · приход не оценивается', lesson_time: '—' },
+  });
+  assert.equal(state.current_status_code, 'conflict');
+  assert.match(state.status_detail, /Болезнь/);
+  assert.match(state.status_detail, /Только онлайн/);
+});
 
 test('presence toggle starts with arrival and alternates events', () => {
   assert.equal(nextPresenceEventType(null), PRESENCE_EVENT_TYPES.ARRIVAL);
@@ -54,7 +101,7 @@ test('manual presence events can be cancelled from any point in the current-day 
   }), true);
 });
 
-test('presence cancellation rejects cancelled, older, and automatic events', () => {
+test('presence cancellation allows older manual events but rejects cancelled and automatic events', () => {
   assert.equal(canCancelPresenceEvent({
     id: '10',
     source: 'tablet',
@@ -65,12 +112,55 @@ test('presence cancellation rejects cancelled, older, and automatic events', () 
     id: '10',
     source: 'tablet',
     attendance_date: '2026-05-21',
-  }, { attendanceDate: '2026-05-22' }), false);
+  }, { attendanceDate: '2026-05-22' }), true);
   assert.equal(canCancelPresenceEvent({
     id: '10',
     source: 'face',
     attendance_date: '2026-05-22',
   }, { attendanceDate: '2026-05-22' }), false);
+});
+
+test('history permissions preserve late access while restricting manual and automatic changes', () => {
+  const event = { id: '1', class_id: '7', source: 'tablet', attendance_date: '2020-01-01' };
+  const mentor = { roleId: 3, classIds: ['7'], canMarkAbsence: true };
+  assert.equal(presenceHistoryCapabilities(event, mentor).can_edit, true);
+  assert.equal(presenceHistoryCapabilities({ ...event, class_id: '9' }, mentor).can_edit, false);
+  assert.equal(presenceHistoryCapabilities({ ...event, class_id: '9', source: 'mentor_manual_late' }, mentor).can_edit, true);
+  const tutor = { roleId: 4, classIds: [], canMarkAbsence: true };
+  assert.equal(presenceHistoryCapabilities(event, tutor).can_cancel, false);
+  assert.equal(presenceHistoryCapabilities({ ...event, source: 'mentor_manual_late' }, tutor).can_cancel, true);
+  assert.equal(presenceHistoryCapabilities({ ...event, source: 'face' }, mentor).can_edit, false);
+  assert.equal(presenceHistoryCapabilities({ ...event, source: 'face' }, { roleId: 5 }).can_edit, true);
+  assert.equal(presenceHistoryCapabilities({ ...event, cancelled_at: '2020-01-02' }, { roleId: 5 }).can_cancel, false);
+  assert.equal(presenceHistoryCapabilities(event, { roleId: 2, classIds: null }).can_edit, false);
+});
+
+test('revision token detects concurrent changes within the same timestamp second', () => {
+  const before = { updated_at: '2026-09-04 12:00:00', revision: 8 };
+  const after = { ...before, revision: 9 };
+  assert.doesNotThrow(() => assertHistoryVersion(before, historyVersion(before)));
+  assert.throws(() => assertHistoryVersion(after, historyVersion(before)), { status: 409 });
+  assert.throws(() => assertHistoryVersion(after, before.updated_at), { status: 409 });
+});
+
+test('history cursor preserves timestamp, kind, and large numeric id and rejects malformed input', () => {
+  const item = { occurred_at: '2026-09-04 12:00:00', kind: 'presence', id: '2147483647' };
+  assert.deepEqual(decodeHistoryCursor(encodeHistoryCursor(item)), item);
+  assert.equal(decodeHistoryCursor(''), null);
+  for (const value of ['bad', Buffer.from('["2026-01-01","anything",5]').toString('base64url'), 'a'.repeat(257)]) {
+    assert.throws(() => decodeHistoryCursor(value), { status: 400 });
+  }
+});
+
+test('presence correction rejects a newly misplaced departure but tolerates existing camera gaps', () => {
+  const arrival = { id: '1', source: 'face', event_type: 'arrival', attendance_date: '2026-09-01', occurred_at: '2026-09-01 09:00:00' };
+  const departure = { ...arrival, id: '2', source: 'tablet', event_type: 'departure', occurred_at: '2026-09-01 15:00:00' };
+  assert.throws(() => assertPresenceSequenceCorrection([arrival, departure], departure, { ...departure, occurred_at: '2026-09-01 08:00:00' }), { status: 409 });
+  assert.throws(() => assertPresenceSequenceCorrection([arrival, departure], departure, { ...departure, event_type: 'arrival' }), { status: 409 });
+  assert.doesNotThrow(() => assertPresenceSequenceCorrection([arrival, departure], arrival, { ...arrival, occurred_at: '2026-09-01 09:15:00' }));
+  const cameraDuplicate = { ...arrival, id: '3', occurred_at: '2026-09-01 09:01:00' };
+  assert.doesNotThrow(() => assertPresenceSequenceCorrection([arrival, cameraDuplicate, departure], departure, { ...departure, occurred_at: '2026-09-01 15:30:00' }));
+  assert.throws(() => assertPresenceSequenceCorrection([arrival, departure], arrival, { ...arrival, attendance_date: '2026-09-02', occurred_at: '2026-09-02 09:00:00' }), { status: 409 });
 });
 
 test('admins may retain the existing undo for the latest automatic event', () => {

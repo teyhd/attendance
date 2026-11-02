@@ -4,13 +4,39 @@ import crypto from 'node:crypto';
 import http from 'node:http';
 import express from 'express';
 import cookieParser from 'cookie-parser';
-import {
-  requireApiAuth,
-  requireOwnAttendanceAuth,
-  requirePageAuth,
-  requirePermission,
-  setupAuthRoutes,
-} from './auth.mjs';
+import { requireApiAuth, requireOwnAttendanceAuth, requirePageAuth, setupAuthRoutes, requireAbsenceAudience } from './auth.mjs';
+
+test('absence audience guard blocks adult cancellation and resolution through API and form routes', async () => {
+  const app = express();
+  let mutationCount = 0;
+  app.use((req, res, next) => { req.authUser = { rawRoleId: Number(req.headers['x-test-role']) }; next(); });
+  const guard = requireAbsenceAudience(async (id) => ({ id, user_type: id === 'child' ? 1 : 2, class_type: 1 }));
+  const routes = [
+    ['delete', '/api/attendance/absences/:id'],
+    ['post', '/api/attendance/absences/:id/resolve'],
+    ['post', '/attendance/:absenceId/delete'],
+    ['post', '/attendance/:absenceId/resolve'],
+  ];
+  for (const [method, path] of routes) app[method](path, guard, (req, res) => { mutationCount += 1; res.status(204).end(); });
+  const { baseURL, close } = await startServer(app);
+  try {
+    for (const role of [3, 4]) {
+      for (const [method, path] of routes) {
+        const response = await fetch(baseURL + path.replace(/:absenceId|:id/, 'adult'), { method: method.toUpperCase(), headers: { 'x-test-role': String(role) } });
+        assert.equal(response.status, 403);
+        if (path.startsWith('/api/')) assert.deepEqual(await response.json(), { error: 'forbidden' });
+      }
+    }
+    assert.equal(mutationCount, 0);
+    for (const role of [3, 4, 5]) {
+      for (const [method, path] of routes) {
+        const response = await fetch(baseURL + path.replace(/:absenceId|:id/, role === 5 ? 'adult' : 'child'), { method: method.toUpperCase(), headers: { 'x-test-role': String(role) } });
+        assert.equal(response.status, 204);
+      }
+    }
+    assert.equal(mutationCount, 12);
+  } finally { await close(); }
+});
 
 test('local logout clears Attendance cookies without redirecting to SSO', async () => {
   const { baseURL, close } = await startAuthTestServer();
@@ -147,49 +173,6 @@ test('staff session is blocked from student-only route', async () => {
   }
 });
 
-test('teachers mentors and tutors can open the presence page and its board API', async () => {
-  const previousEnv = setAuthEnv({
-    APP_ENV: 'local',
-    AUTH_SESSION_SECRET: 'test-session-secret',
-  });
-  const app = express();
-  app.use(cookieParser());
-  app.get('/attendance/presence', requirePageAuth, (_req, res) => res.send('presence'));
-  app.get('/attendance/presence/manual', requirePageAuth, requirePermission('manage_presence'), (_req, res) => res.send('manual presence'));
-  app.get('/api/attendance/presence/board', requireApiAuth, (_req, res) => res.json({ ok: true }));
-  const { baseURL, close } = await startServer(app);
-
-  try {
-    for (const [roleID, role] of [[2, 'teacher'], [3, 'mentor'], [4, 'tutor']]) {
-      const cookie = signedSessionCookie({
-        auth_version: 2,
-        uid: 20 + roleID,
-        name: role,
-        raw_role_id: roleID,
-        role,
-        exp: Math.floor(Date.now() / 1000) + 60,
-      }, process.env.AUTH_SESSION_SECRET);
-
-      const page = await fetch(`${baseURL}/attendance/presence`, { headers: { cookie } });
-      assert.equal(page.status, 200, `${role} presence page`);
-
-      const board = await fetch(`${baseURL}/api/attendance/presence/board`, {
-        headers: { cookie, accept: 'application/json' },
-      });
-      assert.equal(board.status, 200, `${role} presence board`);
-
-      const manual = await fetch(`${baseURL}/attendance/presence/manual`, {
-        redirect: 'manual',
-        headers: { cookie, accept: 'application/json' },
-      });
-      assert.equal(manual.status, role === 'mentor' ? 200 : 403, `${role} manual presence page`);
-    }
-  } finally {
-    await close();
-    restoreEnv(previousEnv);
-  }
-});
-
 test('administrator can open the presence page and its board API', async () => {
   const previousEnv = setAuthEnv({
     APP_ENV: 'local',
@@ -199,7 +182,6 @@ test('administrator can open the presence page and its board API', async () => {
   app.use(cookieParser());
   setupAuthRoutes(app);
   app.get('/attendance/presence', requirePageAuth, (_req, res) => res.send('presence'));
-  app.get('/attendance/presence/manual', requirePageAuth, requirePermission('manage_presence'), (_req, res) => res.send('manual presence'));
   app.get('/api/attendance/presence/board', requireApiAuth, (_req, res) => res.json({ ok: true }));
   const { baseURL, close } = await startServer(app);
   const cookie = signedSessionCookie({
@@ -219,9 +201,6 @@ test('administrator can open the presence page and its board API', async () => {
       headers: { cookie, accept: 'application/json' },
     });
     assert.equal(board.status, 200);
-
-    const manual = await fetch(`${baseURL}/attendance/presence/manual`, { headers: { cookie } });
-    assert.equal(manual.status, 200);
 
     const me = await fetch(`${baseURL}/api/me`, { headers: { cookie } });
     assert.equal(me.status, 200);

@@ -7,9 +7,10 @@ import {
   lessonsForStudentDay,
   parseDateTimeMs,
 } from './schedule-analytics.mjs';
+import { conflictInterval } from './attendance-reconciliation.mjs';
 
 export const ATTENDANCE_ANALYTICS_SCHEMA_VERSION = 'attendance-analytics-v2';
-export const ATTENDANCE_ANALYTICS_ALGORITHM_VERSION = 'attendance-canonical-v1';
+export const ATTENDANCE_ANALYTICS_ALGORITHM_VERSION = 'attendance-canonical-v2';
 export const MAX_ANALYTICS_RANGE_DAYS = 366;
 export const MAX_ANALYTICS_ITEMS = 3000;
 export const LATE_THRESHOLD_MINUTES = 0;
@@ -76,7 +77,7 @@ export function buildAttendanceAnalyticsContract({
   const active = new Set((activeWeekdays || DEFAULT_ACTIVE_WEEKDAYS).map(Number));
   const periodsByPerson = groupBy(periods, (row) => String(row.student_id || row.person_id || ''));
   const eventsByPersonDay = groupBy(presenceEvents, (row) => `${row.student_id || row.person_id || ''}|${dateOnly(row.attendance_date || row.occurred_at)}`);
-  const conflictsByPersonDay = groupBy((conflicts || []).filter((row) => row.status === 'open'), (row) => `${row.student_id || row.person_id || ''}|${dateOnly(row.occurred_at || row.conflict_starts_at)}`);
+  const conflictsByPersonDay = groupConflictsForRange(conflicts, range);
   const factsByPerson = groupBy((lessonFacts || []).filter((row) => !row.deleted_at), (row) => String(row.student_id || row.person_id || ''));
   const computed = new Map();
 
@@ -105,25 +106,45 @@ export function buildAttendanceAnalyticsContract({
   };
 }
 
+// Shared read model for the UI and service consumers. It never writes derived lesson rows.
+export function buildStudentLessonAnalytics({ range, student, periods = [], presenceEvents = [], conflicts = [], lessonFacts = [], scheduleRows = [], scheduleIndex = buildScheduleIndex(scheduleRows), publishedSchoolDays = [], activeWeekdays = DEFAULT_ACTIVE_WEEKDAYS, now = '' } = {}) {
+  const personId = String(student?.person_id || student?.student_id || student?.id || '');
+  return buildStudentAnalytics({
+    request: { personId }, person: student || {}, range, scheduleIndex,
+    published: new Set(publishedSchoolDays.map(dateOnly).filter(Boolean)),
+    active: new Set(activeWeekdays.map(Number)),
+    periods: periods.filter(row => !row.deleted_at && !row.cancelled_at && String(row.student_id || row.person_id || '') === personId),
+    eventsByPersonDay: groupBy(presenceEvents.filter(row => String(row.student_id || row.person_id || '') === personId), row => `${personId}|${dateOnly(row.attendance_date || row.occurred_at)}`),
+    conflictsByPersonDay: groupConflictsForRange(conflicts.filter(row => String(row.student_id || row.person_id || '') === personId), range),
+    lessonFacts: lessonFacts.filter(row => !row.deleted_at && String(row.student_id || row.person_id || '') === personId),
+    nowMs: parseDateTimeMs(now || range.end_at),
+  });
+}
+
 function buildStudentAnalytics({ request, person, range, scheduleIndex, published, active, periods, eventsByPersonDay, conflictsByPersonDay, lessonFacts, nowMs }) {
   const lessons = [];
+  const plannedLessons = [];
   const daily = new Map();
   const reasons = new Map();
   const subjects = new Map();
   const expectedDates = range.days.filter((day) => active.has(isoWeekday(day)) && parseDateTimeMs(`${day} 00:00:00`) <= nowMs);
-  const missingScheduleDates = expectedDates.filter((day) => !published.has(day));
+  const missingScheduleDates = [];
   let unmatchedEvents = 0;
   let ambiguousLessonFacts = 0;
+  let unmatchedLessonFacts = 0;
 
   for (const day of range.days) {
     const personDayKey = `${request.personId}|${day}`;
-    const scheduled = published.has(day) ? lessonsForStudentDay(scheduleIndex, person, person, day) : [];
+    const scheduled = published.has(day) ? lessonsForStudentDay(scheduleIndex, { ...person, student_id: request.personId }, person, day) : [];
+    if (expectedDates.includes(day) && !scheduled.length) missingScheduleDates.push(day);
     const pastLessons = scheduled.filter((lesson) => lesson.starts_ms <= nowMs);
     const dayEvents = eventsByPersonDay.get(personDayKey) || [];
     const paired = presenceIntervals(dayEvents, pastLessons, nowMs);
     unmatchedEvents += paired.unmatched;
     const dayConflicts = conflictsByPersonDay.get(personDayKey) || [];
     const dayFacts = lessonFacts.filter((fact) => dateOnly(fact.lesson_date) === day);
+    ambiguousLessonFacts += dayFacts.filter(fact => !fact.schedule_entry_id && scheduled.filter(lesson => String(lesson.subject_id) === String(fact.subject_id)).length > 1).length;
+    unmatchedLessonFacts += dayFacts.filter(fact => !scheduled.some(lesson => matchLessonFacts([fact], lesson, scheduled).length)).length;
     const firstLesson = pastLessons[0];
     const firstArrival = firstArrivalMs(dayEvents);
     const physicalLateMinutes = firstLesson && Number.isFinite(firstArrival)
@@ -133,22 +154,21 @@ function buildStudentAnalytics({ request, person, range, scheduleIndex, publishe
     for (const lesson of pastLessons) {
       const scheduledMinutes = minutes(lesson.starts_ms, Math.min(lesson.ends_ms, nowMs));
       if (scheduledMinutes <= 0) continue;
-      const matchingFacts = matchLessonFacts(dayFacts, lesson);
+      const matchingFacts = matchLessonFacts(dayFacts, lesson, scheduled);
       if (matchingFacts.length > 1) ambiguousLessonFacts += 1;
       const fact = matchingFacts.toSorted(compareFactVersion).at(-1) || null;
-      const conflict = Boolean(lesson.has_conflict || dayConflicts.length);
       const reasonOverlaps = absenceOverlaps(periods, lesson, nowMs);
-      const physicalMinutes = overlapTotal(paired.intervals, lesson.starts_ms, Math.min(lesson.ends_ms, nowMs));
       const classification = classifyLesson({
         lesson,
         fact,
-        conflict,
+        conflicts: dayConflicts,
         scheduledMinutes,
-        physicalMinutes,
+        physicalIntervals: paired.intervals,
         reasonOverlaps,
         physicalLateMinutes: lesson === firstLesson && physicalLateMinutes > LATE_THRESHOLD_MINUTES ? physicalLateMinutes : 0,
       });
       const row = {
+        lesson,
         date: day,
         scheduleEntryIds: lesson.entry_ids || [],
         subjectId: numericOrNull(lesson.subject_id),
@@ -163,6 +183,12 @@ function buildStudentAnalytics({ request, person, range, scheduleIndex, publishe
       addMetrics(ensureSubject(subjects, row), row);
       for (const reason of classification.reasonMinutes) addReason(reasons, reason);
     }
+    for (const lesson of scheduled) {
+      const reasons = absenceOverlaps(periods, lesson, Number.POSITIVE_INFINITY, nowMs);
+      const absenceMinutes = intervalMinutes(mergeIntervals(reasons));
+      if (absenceMinutes <= 0) continue;
+      plannedLessons.push({ lesson, date: day, scheduleEntryIds: lesson.entry_ids || [], subjectId: numericOrNull(lesson.subject_id), subjectName: lesson.subject_name || '', teacherIds: (lesson.teacher_ids || []).map(Number).filter(Number.isInteger), scheduledMinutes: minutes(lesson.starts_ms, lesson.ends_ms), missedMinutes: absenceMinutes, confirmedAbsenceMinutes: absenceMinutes, noMarkMinutes: 0, conflictMinutes: 0, attendedMinutes: 0, lateMinutes: 0, missedLessons: 0, reasonMinutes: scaleReasons(reasons, absenceMinutes), status: 'planned', state: 'planned' });
+    }
   }
 
   const summary = aggregateLessons(lessons);
@@ -171,7 +197,8 @@ function buildStudentAnalytics({ request, person, range, scheduleIndex, publishe
   if (summary.conflictMinutes) qualityIssues.push({ code: 'attendance_conflict', minutes: summary.conflictMinutes });
   if (unmatchedEvents) qualityIssues.push({ code: 'unmatched_presence_event', count: unmatchedEvents });
   if (ambiguousLessonFacts) qualityIssues.push({ code: 'ambiguous_lesson_fact', count: ambiguousLessonFacts });
-  const state = missingScheduleDates.length || summary.conflictMinutes || ambiguousLessonFacts || unmatchedEvents
+  if (unmatchedLessonFacts) qualityIssues.push({ code: 'unmatched_lesson_fact', count: unmatchedLessonFacts });
+  const state = missingScheduleDates.length || summary.conflictMinutes || ambiguousLessonFacts || unmatchedLessonFacts || unmatchedEvents
     ? 'partial'
     : summary.scheduledMinutes > 0 ? 'complete' : 'no_schedule';
   finalizeSummary(summary, state);
@@ -180,6 +207,8 @@ function buildStudentAnalytics({ request, person, range, scheduleIndex, publishe
     basis: 'scheduled_minutes',
     state,
     _lessons: lessons,
+    _plannedLessons: plannedLessons,
+    planned: { absenceMinutes: round2(plannedLessons.reduce((sum, row) => sum + row.missedMinutes, 0)), affectedLessons: plannedLessons.length, absenceDays: new Set(plannedLessons.map(row => row.date)).size },
     summary,
     subjects: Array.from(subjects.values()).map((row) => finalizeBucket(row, state)),
     daily: Array.from(daily.values()).map((row) => finalizeBucket(row, state)),
@@ -251,46 +280,47 @@ function buildEmployeeAnalytics({ request, person, range, periods, eventsByPerso
   };
 }
 
-function classifyLesson({ lesson, fact, conflict, scheduledMinutes, physicalMinutes, reasonOverlaps, physicalLateMinutes }) {
-  const reasonMinutes = [];
-  if (conflict) return lessonMetrics(scheduledMinutes, 0, 0, 0, scheduledMinutes, 0, reasonMinutes, 'conflict');
-  const absenceMinutes = Math.min(scheduledMinutes, reasonOverlaps.reduce((sum, item) => sum + item.minutes, 0));
-  if (fact) {
-    if (['present', 'late'].includes(fact.status) && absenceMinutes > 0) {
-      return lessonMetrics(scheduledMinutes, 0, 0, 0, scheduledMinutes, 0, reasonMinutes, 'conflict');
-    }
-    if (['absent', 'sick', 'excused'].includes(fact.status) && physicalMinutes > LATE_THRESHOLD_MINUTES) {
-      return lessonMetrics(scheduledMinutes, 0, 0, 0, scheduledMinutes, 0, reasonMinutes, 'conflict');
-    }
-    if (fact.status === 'present') return lessonMetrics(scheduledMinutes, scheduledMinutes, 0, 0, 0, 0, reasonMinutes, 'present');
-    if (fact.status === 'late') {
-      const late = Math.min(scheduledMinutes, Math.max(0, Number(fact.late_minutes || physicalLateMinutes || 0)));
-      return lessonMetrics(scheduledMinutes, scheduledMinutes - late, late, 0, 0, late, reasonMinutes, 'late');
-    }
+function classifyLesson({ lesson, fact, conflicts = [], scheduledMinutes, physicalIntervals, reasonOverlaps, physicalLateMinutes }) {
+  const window = [{ start: lesson.starts_ms, end: lesson.starts_ms + scheduledMinutes * 60_000 }];
+  const absentFact = fact && ['absent', 'sick', 'excused'].includes(fact.status);
+  const explicitLate = fact?.status === 'late' ? Math.max(0, Number(fact.late_minutes ?? physicalLateMinutes ?? 0)) : 0;
+  const explicitPresence = fact && !absentFact ? [{ start: lesson.starts_ms + explicitLate * 60_000, end: window[0].end }] : [];
+  // A lesson mark describes the lesson; being in the building does not contradict a missed lesson.
+  const conflictCuts = lesson.has_conflict ? window : absentFact ? [] : fact
+    ? intersectIntervals(explicitPresence, reasonOverlaps)
+    : conflicts.map(conflictInterval).filter(Boolean).map(item => ({ start: parseDateTimeMs(item.starts_at), end: parseDateTimeMs(item.ends_at) }));
+  const eligible = subtractIntervals(window, conflictCuts);
+  const eligibleMinutes = intervalMinutes(eligible);
+  const conflictMinutes = round2(scheduledMinutes - eligibleMinutes);
+  const absenceIntervals = intersectIntervals(eligible, reasonOverlaps);
+  const absenceMinutes = intervalMinutes(absenceIntervals);
+  const classifiedReasons = reasonOverlaps.map(reason => ({ ...reason, minutes: intervalMinutes(intersectIntervals(eligible, [reason])) })).filter(reason => reason.minutes > 0);
+  const reasonMinutes = scaleReasons(classifiedReasons, absenceMinutes);
+  if (absentFact) {
     const synthetic = fact.status === 'sick'
-      ? { code: 'illness', name: 'Болезнь', isExcused: true, minutes: scheduledMinutes }
+      ? { code: 'illness', name: 'Болезнь', isExcused: true }
       : fact.status === 'excused'
-        ? { code: 'excused', name: 'Уважительная причина', isExcused: true, minutes: scheduledMinutes }
-        : { code: 'without_reason', name: 'Без причины', isExcused: false, minutes: scheduledMinutes };
-    const selected = reasonOverlaps.length ? scaleReasons(reasonOverlaps, scheduledMinutes) : [];
-    const classified = selected.reduce((sum, reason) => sum + Number(reason.minutes || 0), 0);
-    if (classified < scheduledMinutes) selected.push({ ...synthetic, minutes: round2(scheduledMinutes - classified) });
-    reasonMinutes.push(...selected);
-    return lessonMetrics(scheduledMinutes, 0, scheduledMinutes, scheduledMinutes, 0, 0, reasonMinutes, 'absent');
+        ? { code: 'excused', name: 'Уважительная причина', isExcused: true }
+        : { code: 'without_reason', name: 'Без причины', isExcused: false };
+    if (eligibleMinutes > absenceMinutes) reasonMinutes.push({ ...synthetic, minutes: round2(eligibleMinutes - absenceMinutes) });
+    return lessonMetrics(scheduledMinutes, 0, eligibleMinutes, eligibleMinutes, conflictMinutes, 0, reasonMinutes, conflictMinutes ? 'conflict' : 'absent');
   }
-  const scaledReasons = scaleReasons(reasonOverlaps, absenceMinutes);
-  reasonMinutes.push(...scaledReasons);
-  const attendedMinutes = Math.min(scheduledMinutes, Math.max(0, physicalMinutes - absenceMinutes));
-  const missedMinutes = Math.max(0, scheduledMinutes - attendedMinutes);
-  const noMarkMinutes = Math.max(0, missedMinutes - absenceMinutes);
-  if (noMarkMinutes > 0) reasonMinutes.push({ code: 'no_mark', name: 'Нет отметки', isExcused: false, minutes: noMarkMinutes });
-  const lateMinutes = physicalLateMinutes > LATE_THRESHOLD_MINUTES ? Math.min(missedMinutes, physicalLateMinutes) : 0;
-  const status = attendedMinutes >= scheduledMinutes ? 'present' : attendedMinutes > 0 ? 'partial' : 'absent';
-  return lessonMetrics(scheduledMinutes, attendedMinutes, missedMinutes, absenceMinutes, 0, lateMinutes, reasonMinutes, status, noMarkMinutes);
+  const attendedIntervals = fact
+    ? intersectIntervals(eligible, explicitPresence)
+    : subtractIntervals(intersectIntervals(eligible, physicalIntervals), absenceIntervals);
+  const attendedMinutes = intervalMinutes(attendedIntervals);
+  const missedMinutes = round2(Math.max(0, eligibleMinutes - attendedMinutes));
+  const noMarkMinutes = fact ? 0 : round2(Math.max(0, missedMinutes - absenceMinutes));
+  if (noMarkMinutes > 0) reasonMinutes.push({ code: 'no_mark', name: 'Нет отметки · не подтверждено', isExcused: false, minutes: noMarkMinutes });
+  const lateMinutes = fact ? Math.min(missedMinutes, explicitLate)
+    : physicalLateMinutes > LATE_THRESHOLD_MINUTES ? Math.min(missedMinutes, physicalLateMinutes) : 0;
+  if (fact && lateMinutes > absenceMinutes) reasonMinutes.push({ code: 'late', name: 'Опоздание', isExcused: false, minutes: round2(lateMinutes - absenceMinutes) });
+  const status = conflictMinutes > 0 ? 'conflict' : attendedMinutes >= eligibleMinutes ? 'present' : attendedMinutes > 0 ? 'partial' : 'absent';
+  return lessonMetrics(scheduledMinutes, attendedMinutes, missedMinutes, absenceMinutes, conflictMinutes, lateMinutes, reasonMinutes, status, noMarkMinutes);
 }
 
 function lessonMetrics(scheduledMinutes, attendedMinutes, missedMinutes, confirmedAbsenceMinutes, conflictMinutes, lateMinutes, reasonMinutes, status, noMarkMinutes = 0) {
-  return { attendedMinutes, missedMinutes, confirmedAbsenceMinutes, noMarkMinutes, conflictMinutes, lateMinutes, lateLessons: lateMinutes > 0 ? 1 : 0, missedLessons: missedMinutes > 15 ? 1 : 0, reasonMinutes, status };
+  return { attendedMinutes, missedMinutes, confirmedAbsenceMinutes, noMarkMinutes, conflictMinutes, lateMinutes, lateLessons: lateMinutes > 0 ? 1 : 0, missedLessons: missedMinutes > 15 ? 1 : 0, reasonMinutes, status, state: 'actual' };
 }
 
 function scopeResult(base, request, range, calculatedAt) {
@@ -300,7 +330,9 @@ function scopeResult(base, request, range, calculatedAt) {
   let absenceByReason = base.absenceByReason;
   let quality = base.quality;
   let state = base.state;
+  let plannedRows = base._plannedLessons || [];
   if ((request.subjectId || request.teacherId) && Array.isArray(base._lessons)) {
+    plannedRows = plannedRows.filter(row => (!request.subjectId || Number(row.subjectId) === request.subjectId) && (!request.teacherId || row.teacherIds.includes(request.teacherId)));
     const scopedRows = base._lessons.filter((row) => (
       (!request.subjectId || Number(row.subjectId) === request.subjectId)
       && (!request.teacherId || row.teacherIds.includes(request.teacherId))
@@ -331,6 +363,7 @@ function scopeResult(base, request, range, calculatedAt) {
     subjects,
     daily,
     absenceByReason,
+    planned: { absenceMinutes: round2(plannedRows.reduce((sum, row) => sum + row.missedMinutes, 0)), affectedLessons: plannedRows.length, absenceDays: new Set(plannedRows.map(row => row.date)).size },
     quality,
     algorithmVersion: ATTENDANCE_ANALYTICS_ALGORITHM_VERSION,
     calculatedAt,
@@ -338,7 +371,7 @@ function scopeResult(base, request, range, calculatedAt) {
 }
 
 function scopedQuality(baseQuality, rows) {
-  const issues = (baseQuality?.issues || []).filter((issue) => ['schedule_gap', 'unmatched_presence_event'].includes(issue.code));
+  const issues = (baseQuality?.issues || []).filter((issue) => ['schedule_gap', 'unmatched_presence_event', 'unmatched_lesson_fact'].includes(issue.code));
   const conflictMinutes = rows.reduce((sum, row) => sum + Number(row.conflictMinutes || 0), 0);
   const ambiguousFacts = rows.filter((row) => row.ambiguousLessonFact).length;
   if (conflictMinutes > 0) issues.push({ code: 'attendance_conflict', minutes: conflictMinutes });
@@ -376,25 +409,27 @@ function unavailableItem(request, range, calculatedAt, reason) {
   return { key: request.key, state: 'unavailable', person: { id: request.personId, type: request.personType }, basis: request.personType === 'employee' ? 'observed_intervals' : 'scheduled_minutes', period: publicPeriod(range), summary: emptyLessonSummary(), subjects: [], daily: [], absenceByReason: [], quality: { state: 'unavailable', expectedDays: 0, coveredDays: 0, missingScheduleDates: [], issues: [{ code: reason }] }, algorithmVersion: ATTENDANCE_ANALYTICS_ALGORITHM_VERSION, calculatedAt };
 }
 
-function matchLessonFacts(facts, lesson) {
+function matchLessonFacts(facts, lesson, dayLessons) {
   const entryIds = new Set((lesson.entry_ids || []).map(String));
   const exact = facts.filter((fact) => fact.schedule_entry_id && entryIds.has(String(fact.schedule_entry_id)));
   if (exact.length) return exact;
-  return facts.filter((fact) => String(fact.subject_id || '') === String(lesson.subject_id || ''));
+  if (dayLessons.filter(item => String(item.subject_id || '') === String(lesson.subject_id || '')).length !== 1) return [];
+  return facts.filter((fact) => !fact.schedule_entry_id && String(fact.subject_id || '') === String(lesson.subject_id || ''));
 }
 
 function compareFactVersion(a, b) {
   return Number(a.source_version || 0) - Number(b.source_version || 0) || Number(a.id || 0) - Number(b.id || 0);
 }
 
-function absenceOverlaps(periods, lesson, nowMs) {
+function absenceOverlaps(periods, lesson, nowMs, fromMs = Number.NEGATIVE_INFINITY) {
   const rows = [];
   for (const period of periods) {
-    const start = Math.max(parseDateTimeMs(period.starts_at), lesson.starts_ms);
-    const end = Math.min(parseDateTimeMs(period.ends_at), lesson.ends_ms, nowMs);
+    if (period.deleted_at || period.cancelled_at) continue;
+    const start = Math.max(parseDateTimeMs(period.starts_at), lesson.starts_ms, fromMs);
+    const end = Math.min(period.ends_at ? parseDateTimeMs(period.ends_at) : lesson.ends_ms, lesson.ends_ms, nowMs);
     const value = minutes(start, end);
     if (value <= 0) continue;
-    rows.push({ code: period.reason_code || 'other', name: period.reason_name || period.reason_code || 'Другое', isExcused: Boolean(Number(period.is_excused)), minutes: value });
+    rows.push({ code: period.reason_code || 'other', name: period.reason_name || period.reason_code || 'Другое', isExcused: Boolean(Number(period.is_excused)), minutes: value, start, end, absenceId: String(period.id || ''), comment: period.comment || '', confirmationStatus: period.confirmation_status || '', attentionStatus: period.attention_status || '' });
   }
   return rows;
 }
@@ -420,7 +455,7 @@ function presenceIntervals(events, lessons, nowMs) {
     if (!Number.isFinite(at) || at > nowMs) continue;
     if (event.event_type === 'arrival') {
       if (arrival != null) unmatched += 1;
-      arrival = at;
+      else arrival = at;
     } else if (arrival != null && at > arrival) {
       intervals.push({ start: arrival, end: at });
       arrival = null;
@@ -489,7 +524,7 @@ function addMetrics(target, row) {
 
 function finalizeSummary(summary, state) {
   const denominator = Math.max(0, summary.scheduledMinutes - summary.conflictMinutes);
-  summary.attendancePercent = state === 'complete' && denominator > 0 ? round2(summary.attendedMinutes / denominator * 100) : null;
+  summary.attendancePercent = denominator > 0 ? round2(summary.attendedMinutes / denominator * 100) : null;
   summary.absenceMinutes = summary.missedMinutes;
   return summary;
 }
@@ -574,6 +609,62 @@ function groupBy(rows, keyOf) {
     map.get(key).push(row);
   }
   return map;
+}
+
+function groupConflictsForRange(conflicts, range) {
+  const map = new Map();
+  for (const conflict of conflicts || []) {
+    if (conflict.status !== 'open') continue;
+    const interval = conflictInterval(conflict);
+    if (!interval) continue;
+    const start = parseDateTimeMs(interval.starts_at);
+    const end = parseDateTimeMs(interval.ends_at);
+    for (const day of range.days || []) {
+      const dayStart = parseDateTimeMs(`${day} 00:00:00`);
+      if (start >= dayStart + 86400000 || end <= dayStart) continue;
+      const key = `${conflict.student_id || conflict.person_id || ''}|${day}`;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(conflict);
+    }
+  }
+  return map;
+}
+
+function mergeIntervals(intervals) {
+  const sorted = (intervals || []).filter(item => Number.isFinite(item?.start) && Number.isFinite(item?.end) && item.end > item.start).toSorted((a, b) => a.start - b.start || a.end - b.end);
+  const merged = [];
+  for (const item of sorted) {
+    const last = merged.at(-1);
+    if (!last || item.start > last.end) merged.push({ start: item.start, end: item.end });
+    else last.end = Math.max(last.end, item.end);
+  }
+  return merged;
+}
+
+function intersectIntervals(left, right) {
+  const result = [];
+  for (const a of left || []) for (const b of right || []) {
+    const start = Math.max(a.start, b.start);
+    const end = Math.min(a.end, b.end);
+    if (end > start) result.push({ start, end });
+  }
+  return mergeIntervals(result);
+}
+
+function subtractIntervals(source, cuts) {
+  let result = mergeIntervals(source);
+  for (const cut of mergeIntervals(cuts)) {
+    const next = [];
+    for (const interval of result) {
+      if (cut.end <= interval.start || cut.start >= interval.end) next.push(interval);
+      else {
+        if (cut.start > interval.start) next.push({ start: interval.start, end: cut.start });
+        if (cut.end < interval.end) next.push({ start: cut.end, end: interval.end });
+      }
+    }
+    result = next;
+  }
+  return result;
 }
 
 function validDate(value) {

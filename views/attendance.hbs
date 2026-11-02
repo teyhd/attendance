@@ -1,13 +1,14 @@
 <section class="space-y-4">
-  <div class="bg-white shadow rounded-lg p-4 space-y-4">
+  <div class="workspace-surface p-4 space-y-4">
     <div class="flex flex-col xl:flex-row xl:items-end gap-3">
       <div class="flex-1">
-        <h1 class="text-xl font-semibold text-gray-900">Пропуски</h1>
+        <h1 class="workspace-title">Пропуски</h1>
       </div>
 
       {{#if success}}
         <div data-flash class="rounded border border-green-200 bg-green-50 text-green-800 px-3 py-2 text-sm">
           {{#if (eq success "created")}}Отметка сохранена.{{/if}}
+          {{#if batchCreatedCount}}Отметки созданы: {{batchCreatedCount}}.{{/if}}
           {{#if (eq success "updated")}}Отметка обновлена.{{/if}}
           {{#if (eq success "deleted")}}Отметка удалена.{{/if}}
           {{#if (eq success "resolved")}}Вопрос закрыт.{{/if}}
@@ -86,8 +87,8 @@
     {{/if}}
   </div>
 
-  <div class="grid lg:grid-cols-[320px_1fr] gap-4">
-    <aside class="bg-white shadow rounded-lg p-4">
+  <div class="grid min-w-0 lg:grid-cols-[320px_minmax(0,1fr)] gap-4">
+    <aside class="workspace-surface min-w-0 p-4">
       <div class="flex items-center justify-between mb-3">
         <h2 class="text-base font-semibold">Ученики</h2>
         <span class="text-sm text-gray-500">{{children.length}}</span>
@@ -104,7 +105,13 @@
         </label>
       </form>
       {{#if children.length}}
-        <div class="space-y-1.5">
+        <label class="workspace-mobile-picker mb-1 text-sm text-gray-700">
+          <span class="mb-1 block font-medium">Ученик</span>
+          <select data-mobile-student-select class="w-full">
+            {{#each children}}<option value="{{href}}" {{#if isActive}}selected{{/if}}>{{name}}</option>{{/each}}
+          </select>
+        </label>
+        <div class="workspace-desktop-students space-y-1.5">
           {{#each children}}
             <a href="{{{href}}}" class="block border rounded px-3 py-2 hover:border-indigo-400 hover:bg-indigo-50 transition {{#if isActive}}border-indigo-500 bg-indigo-50{{/if}}">
               <div class="flex items-start justify-between gap-2">
@@ -140,26 +147,27 @@
       {{/if}}
     </aside>
 
-    <div class="bg-white shadow rounded-lg p-4 space-y-4">
+    <div class="workspace-surface min-w-0 p-4 space-y-4">
       {{#if selectedChild}}
         <div class="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-3">
           <div class="min-w-0">
             <p class="text-sm text-gray-500">Класс {{#with (findById classes selectedChild.classId)}}{{name}}{{/with}}</p>
-            <h2 class="text-xl font-semibold text-gray-900 truncate">{{selectedChild.name}}</h2>
+            <h2 class="break-words text-xl font-semibold text-gray-900">{{selectedChild.name}}</h2>
             {{#if studentContext.last_comment}}
               <p class="mt-1 text-sm text-gray-600">{{studentContext.last_comment}}</p>
             {{/if}}
-            <a href="/attendance/analytics?class={{selectedClass}}" class="mt-2 inline-flex text-sm font-medium text-indigo-700 hover:text-indigo-900">Аналитика класса</a>
+            <a href="/attendance/analytics?class={{selectedClass}}&student={{selectedStudentId}}" class="mt-2 inline-flex text-sm font-medium text-indigo-700 hover:text-indigo-900">Аналитика ученика</a>
           </div>
           {{#if studentContext}}
             <div class="shrink-0 rounded border border-gray-200 px-3 py-2 text-center">
-              <div class="text-sm font-semibold leading-tight text-gray-900">{{studentContext.present_days_label}}</div>
+              <div class="text-sm font-semibold leading-tight text-gray-900">Дней присутствия: {{studentContext.present_days}}</div>
+              <div class="mt-1 text-xs text-slate-500">за последние {{studentContext.present_days_window}} дней</div>
             </div>
           {{/if}}
         </div>
 
         <div data-attendance-tabs data-default-tab="{{#if canManage}}mark{{else}}active{{/if}}" class="space-y-4">
-          <div class="flex flex-wrap gap-2 border-b border-gray-200">
+          <div class="workspace-tabs" role="tablist" aria-label="Отметки ученика">
             {{#if canManage}}
               <button type="button" data-attendance-tab="mark" class="rounded-t border border-b-0 px-3 py-2 text-sm font-medium">Отметка</button>
             {{/if}}
@@ -216,9 +224,35 @@
                   </label>
                 </div>
 
+                <div class="rounded-lg border border-slate-200 bg-slate-50/70 p-3 sm:p-4">
+                  <label class="flex cursor-pointer items-center gap-3 text-sm font-medium text-slate-800">
+                    <input id="repeat-weekly" type="checkbox" name="repeatWeekly" value="1" class="h-5 w-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+                    Повторять по дням недели
+                  </label>
+                  <div id="repeat-options" class="mt-4 hidden space-y-4">
+                    <fieldset>
+                      <legend class="mb-2 text-sm font-medium text-slate-700">В какие дни</legend>
+                      <div class="grid grid-cols-4 gap-2 sm:grid-cols-7">
+                        <label class="repeat-day"><input type="checkbox" name="repeatWeekdays" value="1" />Пн</label>
+                        <label class="repeat-day"><input type="checkbox" name="repeatWeekdays" value="2" />Вт</label>
+                        <label class="repeat-day"><input type="checkbox" name="repeatWeekdays" value="3" />Ср</label>
+                        <label class="repeat-day"><input type="checkbox" name="repeatWeekdays" value="4" />Чт</label>
+                        <label class="repeat-day"><input type="checkbox" name="repeatWeekdays" value="5" />Пт</label>
+                        <label class="repeat-day"><input type="checkbox" name="repeatWeekdays" value="6" />Сб</label>
+                        <label class="repeat-day"><input type="checkbox" name="repeatWeekdays" value="7" />Вс</label>
+                      </div>
+                    </fieldset>
+                    <label class="block max-w-xs text-sm font-medium text-slate-700">
+                      <span class="mb-1 block">Повторять по</span>
+                      <input id="repeat-until" name="repeatUntil" type="date" class="h-11 w-full rounded border border-slate-300 bg-white px-3 text-base" />
+                    </label>
+                    <p id="repeat-preview" role="status" aria-live="polite" class="text-sm text-indigo-700"></p>
+                  </div>
+                </div>
+
                 <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div data-reason-note class="hidden rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"></div>
-                  <button type="submit" class="h-11 w-full rounded bg-indigo-600 px-6 text-base font-semibold text-white shadow-sm hover:bg-indigo-700 focus:ring-2 focus:ring-indigo-500 sm:w-auto">Сохранить</button>
+                  <button id="absence-submit" type="submit" class="h-11 w-full rounded bg-indigo-600 px-6 text-base font-semibold text-white shadow-sm hover:bg-indigo-700 focus:ring-2 focus:ring-indigo-500 sm:w-auto">Сохранить отметку</button>
                 </div>
               </form>
             </section>
@@ -248,6 +282,7 @@
                             {{#if comment}}
                               <div class="text-xs text-gray-500 mt-1">{{comment}}</div>
                             {{/if}}
+                            {{#if ../canManage}}<button type="button" data-comment-jump="{{id}}" class="workspace-link mt-1 text-sm">{{#if comment}}Изменить комментарий{{else}}Добавить комментарий{{/if}}</button>{{/if}}
                           </div>
                           {{#if (and ../canManage needs_attention)}}
                             <form method="post" action="/attendance/{{id}}/resolve">
@@ -279,6 +314,7 @@
                             {{#if comment}}
                               <div class="text-xs text-gray-500 mt-1">{{comment}}</div>
                             {{/if}}
+                            {{#if ../canManage}}<button type="button" data-comment-jump="{{id}}" class="workspace-link mt-1 text-sm">{{#if comment}}Изменить комментарий{{else}}Добавить комментарий{{/if}}</button>{{/if}}
                           </div>
                           {{#if (and ../canManage needs_attention)}}
                             <form method="post" action="/attendance/{{id}}/resolve">
@@ -302,8 +338,8 @@
           <section data-attendance-panel="history" class="hidden">
             <div class="rounded border p-3">
               <div class="flex items-center justify-between mb-2">
-                <h3 class="font-semibold text-gray-900">История</h3>
-                <span class="text-sm text-gray-500">{{childAbsences.length}}</span>
+                <h3 class="font-semibold text-gray-900">Последние периоды отсутствия</h3>
+                <a href="/attendance/analytics?class={{selectedClass}}&student={{selectedStudentId}}&tab=history" class="workspace-link text-sm">Вся история</a>
               </div>
               {{#if childAbsences.length}}
                 <div class="divide-y divide-gray-100">
@@ -323,10 +359,23 @@
                         </div>
                         {{#if ../canManage}}
                           <div class="flex flex-wrap xl:justify-end gap-2">
+                            <details data-comment-editor="{{id}}" class="w-full xl:w-auto">
+                              <summary class="workspace-link cursor-pointer select-none text-sm font-medium">{{#if comment}}Изменить комментарий{{else}}Добавить комментарий{{/if}}</summary>
+                              <form method="post" action="/attendance/{{id}}/update" class="mt-2 space-y-3 rounded-lg border border-indigo-100 bg-indigo-50/50 p-3 xl:w-[360px]">
+                                <input type="hidden" name="expectedUpdatedAt" value="{{expected_updated_at}}" />
+                                <input type="hidden" name="childId" value="{{student_id}}" />
+                                <input type="hidden" name="classId" value="{{class_id}}" />
+                                <input type="hidden" name="date" value="{{../selectedDate}}" />
+                                <label class="block text-sm text-slate-700"><span class="mb-1 block">Комментарий</span><textarea name="comment" rows="3" maxlength="1000" required class="w-full">{{comment}}</textarea></label>
+                                {{#if is_historical}}<label class="block text-sm text-slate-700"><span class="mb-1 block">Причина изменения</span><textarea name="changeReason" rows="2" maxlength="1000" required class="w-full"></textarea></label>{{/if}}
+                                <button type="submit" class="workspace-primary text-sm">Сохранить комментарий</button>
+                              </form>
+                            </details>
                             <details class="relative">
                               <summary class="cursor-pointer select-none px-3 py-1.5 text-sm bg-gray-100 rounded hover:bg-gray-200">Изменить</summary>
                               <div class="mt-2 xl:absolute xl:right-0 xl:z-10 w-full xl:w-[560px] bg-white border rounded shadow p-3">
                                 <form method="post" action="/attendance/{{id}}/update" class="space-y-3">
+                                  <input type="hidden" name="expectedUpdatedAt" value="{{expected_updated_at}}" />
                                   <input type="hidden" name="childId" value="{{student_id}}" />
                                   <input type="hidden" name="classId" value="{{class_id}}" />
                                   <input type="hidden" name="date" value="{{../selectedDate}}" />
@@ -374,6 +423,7 @@
                                     <span class="block mb-1">Комментарий</span>
                                     <textarea name="comment" rows="2" maxlength="1000" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">{{comment}}</textarea>
                                   </label>
+                                  <label class="block text-sm text-gray-700"><span class="mb-1 block">Причина исправления</span><textarea name="changeReason" rows="2" maxlength="1000" required class="w-full" placeholder="Почему нужно изменить отметку"></textarea></label>
                                   <button type="submit" class="px-3 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700">Обновить</button>
                                 </form>
                               </div>
@@ -386,12 +436,18 @@
                                 <button type="submit" class="px-3 py-1.5 text-sm bg-green-50 text-green-700 rounded hover:bg-green-100">Закрыть</button>
                               </form>
                             {{/if}}
-                            <form method="post" action="/attendance/{{id}}/delete" onsubmit="return confirm('Удалить отметку об отсутствии?');">
-                              <input type="hidden" name="childId" value="{{student_id}}" />
-                              <input type="hidden" name="classId" value="{{class_id}}" />
-                              <input type="hidden" name="date" value="{{../selectedDate}}" />
-                              <button type="submit" class="px-3 py-1.5 text-sm bg-red-50 text-red-700 rounded hover:bg-red-100">Удалить</button>
-                            </form>
+                            <details class="w-full xl:w-auto">
+                              <summary class="workspace-danger cursor-pointer">Отменить отметку</summary>
+                              <form method="post" action="/attendance/{{id}}/delete" class="mt-2 space-y-2 rounded-lg border border-red-100 p-3">
+                                <input type="hidden" name="childId" value="{{student_id}}" />
+                                <input type="hidden" name="classId" value="{{class_id}}" />
+                                <input type="hidden" name="date" value="{{../selectedDate}}" />
+                                <input type="hidden" name="expectedUpdatedAt" value="{{expected_updated_at}}" />
+                                <div class="text-sm text-slate-600">{{period_label}} · {{reason_name}}</div>
+                                <label class="block text-sm"><span class="mb-1 block">Причина отмены</span><textarea name="changeReason" required rows="2" maxlength="1000" class="w-full"></textarea></label>
+                                <button type="submit" class="workspace-danger">Подтвердить отмену</button>
+                              </form>
+                            </details>
                           </div>
                         {{/if}}
                       </div>
@@ -414,6 +470,7 @@
 <script>
 (() => {
   const classSelect = document.getElementById('class-select');
+  document.querySelector('[data-mobile-student-select]')?.addEventListener('change', (event) => { if (event.target.value) window.location.assign(event.target.value); });
   classSelect?.addEventListener('change', () => classSelect.closest('form')?.requestSubmit());
 
   document.querySelectorAll('[data-flash]').forEach((node) => {
@@ -441,6 +498,9 @@
       const nextTab = available.has(tab) ? tab : defaultTab;
       buttons.forEach((button) => {
         const active = button.dataset.attendanceTab === nextTab;
+        button.setAttribute('role', 'tab');
+        button.setAttribute('aria-selected', String(active));
+        button.tabIndex = active ? 0 : -1;
         button.classList.toggle('bg-white', active);
         button.classList.toggle('border-gray-200', active);
         button.classList.toggle('text-gray-900', active);
@@ -457,6 +517,13 @@
     activateAttendanceTab = activate;
 
     buttons.forEach((button) => {
+      button.addEventListener('keydown', (event) => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        const index = buttons.indexOf(button);
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
+        activate(buttons[next].dataset.attendanceTab, true); buttons[next].focus();
+      });
       button.addEventListener('click', () => activate(button.dataset.attendanceTab, true));
     });
 
@@ -475,6 +542,17 @@
 
   document.querySelectorAll('[data-attendance-action]').forEach((button) => {
     button.addEventListener('click', () => focusNewAbsenceField(button.dataset.attendanceAction));
+  });
+
+  document.querySelectorAll('[data-comment-jump]').forEach((button) => {
+    button.addEventListener('click', () => {
+      activateAttendanceTab?.('history', true);
+      const editor = document.querySelector(`[data-comment-editor="${button.dataset.commentJump}"]`);
+      if (!editor) return;
+      editor.open = true;
+      editor.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      editor.querySelector('textarea[name="comment"]')?.focus({ preventScroll: true });
+    });
   });
 
   const applyReasonState = (form, syncStatuses = false) => {
@@ -528,6 +606,79 @@
   const schoolDayStart = form?.dataset.schoolDayStart || '';
   const schoolDayEnd = form?.dataset.schoolDayEnd || '';
   const quickButtons = Array.from(document.querySelectorAll('[data-fill]'));
+  const repeatToggle = document.getElementById('repeat-weekly');
+  const repeatOptions = document.getElementById('repeat-options');
+  const repeatUntil = document.getElementById('repeat-until');
+  const repeatPreview = document.getElementById('repeat-preview');
+  const absenceSubmit = document.getElementById('absence-submit');
+  const repeatDays = Array.from(form?.querySelectorAll('input[name="repeatWeekdays"]') || []);
+  let repeatDaysTouched = false;
+
+  const isoDay = (date) => date.toISOString().slice(0, 10);
+  const utcDay = (value) => new Date(`${value}T00:00:00Z`);
+  const markWord = (count) => count % 10 === 1 && count % 100 !== 11 ? 'отметка' : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? 'отметки' : 'отметок';
+  const selectStartWeekday = () => {
+    const first = utcDay(fromInput.value.slice(0, 10));
+    if (Number.isNaN(first.getTime())) return;
+    const weekday = String(first.getUTCDay() || 7);
+    repeatDays.forEach((day) => { day.checked = day.value === weekday; });
+  };
+  const syncRepeat = () => {
+    const active = repeatToggle?.checked;
+    repeatOptions?.classList.toggle('hidden', !active);
+    if (!repeatUntil || !repeatPreview || !active) {
+      if (repeatUntil) repeatUntil.required = false;
+      if (absenceSubmit) absenceSubmit.textContent = 'Сохранить отметку';
+      return;
+    }
+    const startDate = fromInput.value.slice(0, 10);
+    const first = utcDay(startDate);
+    if (Number.isNaN(first.getTime())) { repeatPreview.textContent = 'Сначала укажите дату начала.'; return; }
+    const limit = new Date(first.getTime() + 90 * 86400000);
+    repeatUntil.min = startDate;
+    repeatUntil.max = isoDay(limit);
+    repeatUntil.required = true;
+    const last = utcDay(repeatUntil.value);
+    const selected = new Set(repeatDays.filter((day) => day.checked).map((day) => day.value));
+    if (!selected.size) { repeatPreview.dataset.count = '0'; repeatPreview.textContent = 'Выберите дни недели.'; return; }
+    if (Number.isNaN(last.getTime()) || last < first || last > limit) {
+      repeatPreview.dataset.count = '0'; repeatPreview.textContent = 'Выберите дату окончания повторов в пределах 90 дней.';
+      return;
+    }
+    let count = 0;
+    for (let day = first; day <= last; day = new Date(day.getTime() + 86400000)) {
+      if (selected.has(String(day.getUTCDay() || 7))) count += 1;
+    }
+    repeatPreview.dataset.count = String(count);
+    repeatPreview.textContent = count > 60 ? 'Выберите меньший период: не более 60 отметок за раз.' : count ? `Будет создано ${count} ${markWord(count)}` : 'В этом периоде нет выбранных дней недели.';
+    if (absenceSubmit) absenceSubmit.textContent = count > 0 && count <= 60 ? `Создать ${count} ${markWord(count) === 'отметка' ? 'отметку' : markWord(count)}` : 'Создать отметки';
+  };
+
+  repeatToggle?.addEventListener('change', () => {
+    if (repeatToggle.checked) {
+      const first = utcDay(fromInput.value.slice(0, 10));
+      if (!Number.isNaN(first.getTime())) {
+        if (!repeatDays.some((day) => day.checked)) selectStartWeekday();
+        if (!repeatUntil.value) repeatUntil.value = isoDay(new Date(first.getTime() + 28 * 86400000));
+      }
+    }
+    syncRepeat();
+  });
+  repeatUntil?.addEventListener('input', syncRepeat);
+  repeatDays.forEach((day) => day.addEventListener('change', () => { repeatDaysTouched = true; syncRepeat(); }));
+  fromInput.addEventListener('input', () => { if (repeatToggle?.checked && !repeatDaysTouched) selectStartWeekday(); syncRepeat(); });
+  form?.addEventListener('submit', (event) => {
+    if (!repeatToggle?.checked) return;
+    if (Number(repeatPreview.dataset.count || 0) > 60) {
+      event.preventDefault(); repeatUntil.focus();
+    } else if (Number(repeatPreview.dataset.count || 0) === 0) {
+      event.preventDefault(); repeatUntil.focus();
+    } else if (!repeatDays.some((day) => day.checked)) {
+      event.preventDefault(); repeatPreview.textContent = 'Выберите хотя бы один день недели.'; repeatDays[0]?.focus();
+    } else if (toInput.value && toInput.value.slice(0, 10) !== fromInput.value.slice(0, 10)) {
+      event.preventDefault(); repeatPreview.textContent = 'Для повторов начало и окончание должны быть в один день.'; toInput.focus();
+    }
+  });
 
   const setActivePreset = (preset) => {
     quickButtons.forEach((button) => {

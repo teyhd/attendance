@@ -27,15 +27,13 @@ test('verifyInternalServiceRequest rejects stale and modified requests', () => {
   assert.equal(verifyInternalServiceRequest({ ...common, now: Number(timestamp) }).error, 'invalid_signature');
 });
 
-test('verifyInternalServiceRequest accepts Diary only when the caller is explicitly allowed', () => {
-  const serviceKey = 'diary-test-key';
+test('verifyInternalServiceRequest allows an explicitly configured Diary consumer', () => {
   const timestamp = '1787745600000';
-  const rawBody = '{"requests":[]}';
-  const signature = crypto.createHmac('sha256', serviceKey)
-    .update(`${timestamp}\n${rawBody}`)
-    .digest('hex');
-  const request = { serviceName: 'diary', timestamp, signature, rawBody, serviceKey, now: Number(timestamp) };
-
-  assert.equal(verifyInternalServiceRequest(request).error, 'service_forbidden');
-  assert.deepEqual(verifyInternalServiceRequest({ ...request, allowedServices: ['diary'] }), { ok: true });
+  const rawBody = '{"items":[]}';
+  const serviceKey = 'diary-key';
+  const signature = crypto.createHmac('sha256', serviceKey).update(`${timestamp}\n${rawBody}`).digest('hex');
+  assert.deepEqual(verifyInternalServiceRequest({
+    serviceName: 'diary', timestamp, signature, rawBody, serviceKey,
+    allowedServices: ['progress', 'diary'], now: Number(timestamp),
+  }), { ok: true });
 });

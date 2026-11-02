@@ -1,4 +1,4 @@
-import { conflictInterval } from './attendance-reconciliation.mjs';
+import { buildStudentLessonAnalytics } from './attendance-analytics-contract.mjs';
 import {
   buildScheduleIndex,
   dateOnly,
@@ -14,6 +14,7 @@ export function buildScheduledAttendanceAnalytics({
   periods = [],
   presenceEvents = [],
   conflicts = [],
+  lessonFacts = [],
   scheduleRows = [],
   publishedSchoolDays = [],
   activeWeekdays = [1, 2, 3, 4, 5],
@@ -26,15 +27,22 @@ export function buildScheduledAttendanceAnalytics({
   const published = new Set(publishedSchoolDays.map(dateOnly).filter(Boolean));
   const expectedWeekdays = new Set((activeWeekdays || []).map(Number).filter((value) => value >= 1 && value <= 7));
   const periodsByStudent = groupByStudent(periods);
-  const eventsByStudentDay = groupEventsByStudentDay(presenceEvents);
-  const conflictsByStudentDay = groupConflictsByStudentDay(conflicts);
   const studentRows = [];
   const dailyBuckets = new Map();
+  const planned = { absence_minutes: 0, absence_hours: 0, absence_days: 0, affected_lessons: 0 };
 
   for (const student of students) {
     const studentId = String(student.student_id || student.id || '');
     if (!studentId) continue;
     const row = createStudentRow(student);
+    const studentEvents = presenceEvents.filter(event => String(event.student_id) === studentId);
+    const projection = buildStudentLessonAnalytics({ range, student, periods: periodsByStudent.get(studentId) || [], presenceEvents: studentEvents, conflicts, lessonFacts, scheduleIndex, publishedSchoolDays, activeWeekdays, now });
+    const projectedDays = new Map(projection.daily.map(day => [day.date, day]));
+    planned.absence_minutes += projection.planned.absenceMinutes;
+    planned.absence_days += projection.planned.absenceDays;
+    planned.affected_lessons += projection.planned.affectedLessons;
+    row.missed_lessons = projection.summary.missedLessons;
+    row.affected_lessons = projection._lessons.filter(lesson => lesson.missedMinutes > 0 || lesson.conflictMinutes > 0).length;
 
     for (const day of range.days || []) {
       const dayStartMs = parseDateTimeMs(`${day} 00:00:00`);
@@ -50,25 +58,21 @@ export function buildScheduledAttendanceAnalytics({
         continue;
       }
 
-      const actualScheduled = clipIntervals(scheduled, Number.NEGATIVE_INFINITY, nowMs);
-      if (!actualScheduled.length) continue;
-      const key = studentDayKey(studentId, day);
-      const presence = presenceIntervals(eventsByStudentDay.get(key) || [], actualScheduled, nowMs);
-      const absences = periodIntervals(periodsByStudent.get(studentId) || [], day, nowMs);
-      const conflictIntervals = (conflictsByStudentDay.get(key) || [])
-        .map(conflictInterval)
-        .filter(Boolean)
-        .map((item) => ({ start: parseDateTimeMs(item.starts_at), end: parseDateTimeMs(item.ends_at) }));
-      const eligible = subtractIntervals(actualScheduled, conflictIntervals);
-      const confirmedAbsence = intersectIntervals(eligible, absences);
-      const attendedBeforeAbsence = intersectIntervals(eligible, presence);
-      const attended = subtractIntervals(attendedBeforeAbsence, absences);
-      const eligibleMinutes = intervalMinutes(eligible);
-      const attendedMinutes = intervalMinutes(attended);
-      const confirmedAbsenceMinutes = intervalMinutes(confirmedAbsence);
-      const missedMinutes = Math.max(0, eligibleMinutes - attendedMinutes);
-      const noMarkMinutes = Math.max(0, missedMinutes - confirmedAbsenceMinutes);
-      const conflictMinutes = Math.max(0, intervalMinutes(actualScheduled) - eligibleMinutes);
+      const actualDay = projectedDays.get(day);
+      if (!actualDay) continue;
+      const eligibleMinutes = actualDay.scheduledMinutes - actualDay.conflictMinutes;
+      const attendedMinutes = actualDay.attendedMinutes;
+      const confirmedAbsenceMinutes = actualDay.confirmedAbsenceMinutes;
+      const missedMinutes = actualDay.missedMinutes;
+      const noMarkMinutes = actualDay.noMarkMinutes;
+      const conflictMinutes = actualDay.conflictMinutes;
+      const dayReasons = projection._lessons.filter(lesson => lesson.date === day).flatMap(lesson => lesson.reasonMinutes).filter(reason => reason.minutes > 0);
+      const knownReasons = dayReasons.filter(reason => reason.code !== 'no_mark');
+      const hasUnexcused = knownReasons.some(reason => !reason.isExcused);
+      const hasExcused = knownReasons.some(reason => reason.isExcused) && !hasUnexcused;
+      const dayEvents = studentEvents.filter(event => dateOnly(event.attendance_date || event.occurred_at) === day && !event.cancelled_at && parseDateTimeMs(event.occurred_at) <= nowMs);
+      const arrivals = dayEvents.filter(event => event.event_type === 'arrival').map(event => String(event.occurred_at)).sort();
+      const departures = dayEvents.filter(event => event.event_type === 'departure').map(event => String(event.occurred_at)).sort();
       const status = conflictMinutes > 0
         ? 'conflict'
         : attendedMinutes >= eligibleMinutes && eligibleMinutes > 0
@@ -88,6 +92,8 @@ export function buildScheduledAttendanceAnalytics({
       if (status === 'absent') row.absence_days += 1;
       if (status === 'incomplete') row.incomplete_days += 1;
       if (status === 'conflict') row.conflict_days += 1;
+      if (hasExcused) row.excused_absence_days += 1;
+      if (hasUnexcused) row.unexcused_absence_days += 1;
       row.days.push(dayPayload(day, status, {
         scheduled_minutes: eligibleMinutes,
         attended_minutes: attendedMinutes,
@@ -95,6 +101,19 @@ export function buildScheduledAttendanceAnalytics({
         confirmed_absence_minutes: confirmedAbsenceMinutes,
         no_mark_minutes: noMarkMinutes,
         conflict_minutes: conflictMinutes,
+        is_unconfirmed: noMarkMinutes > 0,
+        has_absence: missedMinutes > 0,
+        has_arrival: arrivals.length > 0,
+        arrival_time: arrivals[0]?.slice(11, 16) || '',
+        departure_time: departures.at(-1)?.slice(11, 16) || '',
+        is_excused_absence: hasExcused,
+        is_unexcused_absence: hasUnexcused,
+        is_excused: hasExcused,
+        is_unexcused: hasUnexcused,
+        is_incomplete: status === 'incomplete',
+        reason_label: [...new Set(dayReasons.map(reason => reason.name).filter(Boolean))].join('; '),
+        comment_label: [...new Set(dayReasons.map(reason => reason.comment).filter(Boolean))].join('; '),
+        absence_state_label: noMarkMinutes > 0 ? 'Нет отметки · не подтверждено' : '',
       }));
 
       const daily = ensureDailyBucket(dailyBuckets, day);
@@ -109,9 +128,10 @@ export function buildScheduledAttendanceAnalytics({
       if (status === 'conflict') daily.conflict_students += 1;
     }
 
+    decorateAbsenceDays(row, periodsByStudent.get(studentId) || [], range, nowMs);
     row.attendance_percent = percent(row.attended_minutes, row.scheduled_minutes);
-    row.metric_label = `${row.attendance_percent}% · ${formatHours(row.attended_minutes)} из ${formatHours(row.scheduled_minutes)}`;
-    row.absence_button_label = `Не присутствовал: ${row.absence_days}`;
+    row.metric_label = row.attendance_percent == null ? (row.conflict_minutes > 0 ? 'Не рассчитано · требует уточнения' : 'Не рассчитано · нет расписания') : `${row.attendance_percent}% · ${formatHours(row.attended_minutes)} из ${formatHours(row.scheduled_minutes)}`;
+    row.absence_button_label = `Дни с отсутствием или планом: ${row.absence_details.length}`;
     studentRows.push(row);
   }
 
@@ -121,7 +141,7 @@ export function buildScheduledAttendanceAnalytics({
   }, totalsShape());
   totals.attendance_percent = percent(totals.attended_minutes, totals.scheduled_minutes);
 
-  const planned = plannedAbsenceMetrics({ range, students, periods, scheduleIndex, published, nowMs });
+  planned.absence_hours = round1(planned.absence_minutes / 60);
   return {
     metric_version: 2,
     basis: 'scheduled_minutes',
@@ -140,6 +160,36 @@ export function buildScheduledAttendanceAnalytics({
       attendance_percent: percent(row.attended_minutes, row.scheduled_minutes),
     })),
   };
+}
+
+function decorateAbsenceDays(row, periods, range, nowMs) {
+  const days = new Map(row.days.map(day => [day.date, day]));
+  for (const date of range.days || []) {
+    const start = parseDateTimeMs(`${date} 00:00:00`);
+    const end = start + 86400000;
+    const matching = periods.filter(period => !period.cancelled_at && !period.deleted_at &&
+      parseDateTimeMs(period.starts_at) < end &&
+      parseDateTimeMs(period.ends_at || range.end_at) > start);
+    if (!matching.length) continue;
+    const planned = matching.every(period => parseDateTimeMs(period.starts_at) > nowMs) || start > nowMs;
+    const day = days.get(date) || dayPayload(date, planned ? 'planned' : 'recorded_absence');
+    const distinct = values => [...new Set(values.filter(Boolean))].join('; ');
+    const unexcused = matching.some(period => period.reason_code === 'without_reason' || Number(period.is_excused) === 0);
+    Object.assign(day, {
+      has_absence: true,
+      is_excused_absence: !unexcused,
+      is_unexcused_absence: unexcused,
+      is_excused: !unexcused,
+      is_unexcused: unexcused,
+      reason_label: distinct(matching.map(period => period.reason_name || period.reason_code)),
+      comment_label: distinct(matching.map(period => period.comment)),
+      absence_state_label: planned ? 'Запланировано отсутствие' : 'Отмечено отсутствие',
+      is_planned: planned,
+    });
+    days.set(date, day);
+  }
+  row.days = [...days.values()].sort((a, b) => a.date.localeCompare(b.date));
+  row.absence_details = row.days.filter(day => day.has_absence || day.missed_minutes > 0);
 }
 
 export function buildObservedAdultAnalytics({ range, people = [], periods = [], presenceEvents = [], conflicts = [], now = '' } = {}) {
@@ -181,26 +231,6 @@ export function buildObservedAdultAnalytics({ range, people = [], periods = [], 
   };
 }
 
-function plannedAbsenceMetrics({ range, students, periods, scheduleIndex, published, nowMs }) {
-  let absenceMinutes = 0;
-  const studentDays = new Set();
-  for (const student of students) {
-    const studentId = String(student.student_id || student.id || '');
-    const studentPeriods = periods.filter((period) => String(period.student_id || '') === studentId);
-    for (const day of range.days || []) {
-      if (!published.has(day)) continue;
-      const lessons = mergeIntervals(lessonsForStudentDay(scheduleIndex, student, student, day).map((lesson) => ({ start: lesson.starts_ms, end: lesson.ends_ms })));
-      const futureLessons = clipIntervals(lessons, nowMs, Number.POSITIVE_INFINITY);
-      const plannedAbsences = periodIntervals(studentPeriods, day, Number.POSITIVE_INFINITY).filter((item) => item.end > nowMs);
-      const minutes = intervalMinutes(intersectIntervals(futureLessons, plannedAbsences));
-      if (minutes <= 0) continue;
-      absenceMinutes += minutes;
-      studentDays.add(studentDayKey(studentId, day));
-    }
-  }
-  return { absence_minutes: absenceMinutes, absence_hours: round1(absenceMinutes / 60), absence_days: studentDays.size };
-}
-
 function pairObservedIntervals(events, nowMs, isToday) {
   const sorted = [...events].filter((event) => !event.cancelled_at).sort(compareEvents);
   const intervals = [];
@@ -226,34 +256,6 @@ function pairObservedIntervals(events, nowMs, isToday) {
   return { intervals, unmatched };
 }
 
-function presenceIntervals(events, scheduled, nowMs) {
-  const dayEnd = Math.min(nowMs, Math.max(...scheduled.map((item) => item.end)));
-  const sorted = [...events].filter((event) => !event.cancelled_at && parseDateTimeMs(event.occurred_at) <= nowMs).sort(compareEvents);
-  const intervals = [];
-  let start = null;
-  for (const event of sorted) {
-    const occurred = parseDateTimeMs(event.occurred_at);
-    if (!Number.isFinite(occurred)) continue;
-    if (event.event_type === 'arrival') {
-      if (start == null) start = occurred;
-    } else if (start != null && occurred > start) {
-      intervals.push({ start, end: occurred });
-      start = null;
-    }
-  }
-  if (start != null && dayEnd > start) intervals.push({ start, end: dayEnd });
-  return mergeIntervals(intervals);
-}
-
-function periodIntervals(periods, day, upperBound) {
-  const dayStart = parseDateTimeMs(`${day} 00:00:00`);
-  const dayEnd = parseDateTimeMs(`${day} 23:59:59`);
-  return mergeIntervals(periods.map((period) => ({
-    start: Math.max(parseDateTimeMs(period.starts_at), dayStart),
-    end: Math.min(parseDateTimeMs(period.ends_at), dayEnd, upperBound),
-  })).filter(validInterval));
-}
-
 function groupByStudent(rows) {
   const map = new Map();
   for (const row of rows || []) {
@@ -275,52 +277,6 @@ function groupEventsByStudentDay(rows) {
     map.get(key).push(row);
   }
   return map;
-}
-
-function groupConflictsByStudentDay(rows) {
-  const map = new Map();
-  for (const row of rows || []) {
-    if (row.status !== 'open') continue;
-    const id = String(row.student_id || '');
-    const day = dateOnly(row.occurred_at || row.conflict_starts_at);
-    if (!id || !day) continue;
-    const key = studentDayKey(id, day);
-    if (!map.has(key)) map.set(key, []);
-    map.get(key).push(row);
-  }
-  return map;
-}
-
-function intersectIntervals(left, right) {
-  const result = [];
-  for (const a of left || []) {
-    for (const b of right || []) {
-      const start = Math.max(a.start, b.start);
-      const end = Math.min(a.end, b.end);
-      if (end > start) result.push({ start, end });
-    }
-  }
-  return mergeIntervals(result);
-}
-
-function subtractIntervals(source, cuts) {
-  let result = mergeIntervals(source);
-  for (const cut of mergeIntervals(cuts)) {
-    const next = [];
-    for (const item of result) {
-      if (cut.end <= item.start || cut.start >= item.end) next.push(item);
-      else {
-        if (cut.start > item.start) next.push({ start: item.start, end: cut.start });
-        if (cut.end < item.end) next.push({ start: cut.end, end: item.end });
-      }
-    }
-    result = next;
-  }
-  return result;
-}
-
-function clipIntervals(intervals, from, to) {
-  return mergeIntervals((intervals || []).map((item) => ({ start: Math.max(item.start, from), end: Math.min(item.end, to) })).filter(validInterval));
 }
 
 function mergeIntervals(intervals) {
@@ -361,6 +317,8 @@ function createStudentRow(student) {
     school_days_total: 0,
     present_days: 0,
     absence_days: 0,
+    excused_absence_days: 0,
+    unexcused_absence_days: 0,
     incomplete_days: 0,
     conflict_days: 0,
     schedule_gap_days: 0,
@@ -375,6 +333,8 @@ function dayPayload(day, statusCode, metrics = {}) {
     absent: 'отсутствовал',
     conflict: 'конфликт отметок',
     schedule_gap: 'нет расписания',
+    planned: 'запланировано отсутствие',
+    recorded_absence: 'отмечено отсутствие',
   };
   return {
     date: day,
@@ -427,7 +387,7 @@ function totalsShape() {
 }
 
 function emptyScheduledAnalytics() {
-  return { metric_version: 2, basis: 'scheduled_minutes', actual: { ...totalsShape(), attendance_percent: 0 }, planned: {}, quality: {}, students: [], daily: [] };
+  return { metric_version: 2, basis: 'scheduled_minutes', actual: { ...totalsShape(), attendance_percent: null }, planned: {}, quality: {}, students: [], daily: [] };
 }
 
 function studentDayKey(studentId, day) {
@@ -435,7 +395,7 @@ function studentDayKey(studentId, day) {
 }
 
 function percent(value, total) {
-  return total > 0 ? Math.round((Number(value || 0) / Number(total)) * 100) : 0;
+  return total > 0 ? Math.round((Number(value || 0) / Number(total)) * 10000) / 100 : null;
 }
 
 function formatHours(minutes) {

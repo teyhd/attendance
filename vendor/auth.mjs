@@ -294,6 +294,25 @@ export function attendancePermissions(roleID) {
   };
 }
 
+export function canAccessAbsenceRecord(roleID, record) {
+  const role = Number(roleID);
+  return [2, 3, 4, 5].includes(role) && (role === 5 || Number(record?.user_type) === 1);
+}
+
+export function requireAbsenceAudience(loadAbsence) {
+  return async (req, res, next) => {
+    try {
+      const record = await loadAbsence(req.params.absenceId ?? req.params.id);
+      if (record && !canAccessAbsenceRecord(req.authUser?.rawRoleId, record)) {
+        return req.path.startsWith('/api/')
+          ? res.status(403).json({ error: 'forbidden' })
+          : res.status(403).send('Нет доступа к отметке взрослого');
+      }
+      return next();
+    } catch (err) { return next(err); }
+  };
+}
+
 function roleName(roleID) {
   switch (Number(roleID)) {
     case 1: return 'student';

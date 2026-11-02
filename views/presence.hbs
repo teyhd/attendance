@@ -68,10 +68,17 @@
   .presence-row[data-current-status="none"] .presence-status-main,
   .presence-row[data-current-status="none"] .presence-status-icon { color: #64748b; }
 
-  @media (min-width: 768px) {
+  .presence-summary-button { display: flex; min-height: 6rem; min-width: 0; align-items: center; justify-content: center; gap: .75rem; border: 1px solid #e2e8f0; border-radius: .75rem; background: white; padding: .875rem .5rem; text-align: left; transition: background .15s, border-color .15s; }
+  .presence-summary-button:hover { background: #f8fafc; border-color: #94a3b8; }
+  .presence-summary-button[aria-pressed="true"] { background: #eff6ff; border-color: #2563eb; box-shadow: inset 0 0 0 1px #2563eb; }
+  .presence-summary-button svg { width: 1.5rem; height: 1.5rem; flex-shrink: 0; }
+  .presence-summary-button [data-summary] { margin-top: .375rem; font-size: 1.75rem; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; }
+  .presence-summary-label { color: #475569; font-size: .8125rem; line-height: 1.25; }
+  @media (max-width: 479px) { .presence-summary-button { flex-direction: column; gap: .375rem; text-align: center; } }
+  @media (min-width: 1100px) {
     .presence-table-head,
     .presence-row {
-      grid-template-columns: 3.5rem minmax(13rem, 1.15fr) minmax(17rem, 1.25fr) minmax(9.5rem, .75fr) minmax(8rem, .62fr) 3.5rem;
+      grid-template-columns: 3rem minmax(12rem, 1.15fr) minmax(13rem, 1.25fr) minmax(8rem, .75fr) minmax(6rem, .62fr) 3.5rem;
     }
     .presence-row { min-height: 3.2rem; }
     .presence-student-name,
@@ -100,7 +107,7 @@
   <header class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
     <div class="min-w-0">
       <div class="flex flex-col items-start gap-1 sm:flex-row sm:items-baseline sm:gap-x-8">
-        <h1 class="text-3xl font-semibold tracking-[-0.025em] text-slate-950 sm:text-4xl">{{#if board.is_adult}}Сейчас на работе{{else}}Сейчас в школе{{/if}}</h1>
+        <h1 class="workspace-title">{{#if board.is_adult}}Сейчас на работе{{else}}Сейчас в школе{{/if}}</h1>
         <span class="text-base font-medium text-slate-800 sm:text-lg">{{board.date_label}}</span>
       </div>
       <div class="mt-2 flex flex-wrap items-center gap-3 text-sm text-slate-500">
@@ -115,56 +122,44 @@
         {{/if}}
       </div>
     </div>
-    <div class="flex shrink-0 items-center gap-2 self-end sm:self-auto">
-      {{#if canManage}}
-        <a href="/attendance/presence/manual{{#if board.is_adult}}?audience=adults{{/if}}" class="inline-flex h-12 items-center justify-center rounded-xl border border-blue-200 bg-blue-50 px-4 text-sm font-semibold text-blue-700 transition hover:border-blue-300 hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600">Ручной ввод</a>
-      {{/if}}
-      <button type="button" data-refresh-board class="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 disabled:cursor-wait disabled:opacity-60" aria-label="Обновить данные" title="Обновить данные">
-        <svg data-refresh-icon class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-          <path d="M20 6v5h-5M4 18v-5h5" stroke-linecap="round" stroke-linejoin="round"/>
-          <path d="M18.2 9A7 7 0 0 0 6.1 6.7L4 11m16 2-2.1 4.3A7 7 0 0 1 5.8 15" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-      </button>
-    </div>
+    <button type="button" data-refresh-board class="inline-flex h-12 w-12 shrink-0 items-center justify-center self-end rounded-xl border border-slate-300 bg-white text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 disabled:cursor-wait disabled:opacity-60 sm:self-auto" aria-label="Обновить данные" title="Обновить данные">
+      <svg data-refresh-icon class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+        <path d="M20 6v5h-5M4 18v-5h5" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M18.2 9A7 7 0 0 0 6.1 6.7L4 11m16 2-2.1 4.3A7 7 0 0 1 5.8 15" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
   </header>
 
-  <div class="presence-summary-scroll overflow-x-auto rounded-xl border border-slate-200 bg-white" aria-label="Сводка за сегодня">
-    <div class="grid min-w-[47rem] grid-cols-5 py-5 sm:py-6">
-      <div class="flex items-center justify-center gap-3 border-r border-slate-200 px-4 text-emerald-600">
-        <svg class="h-9 w-9 shrink-0 sm:h-11 sm:w-11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" stroke-linecap="round" stroke-linejoin="round"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" stroke-linecap="round"/></svg>
-        <div><div class="text-sm font-medium text-slate-600">В школе</div><div data-summary="present" class="mt-0.5 text-3xl font-semibold leading-none sm:text-4xl">{{board.totals.present}}</div></div>
-      </div>
-      <div class="flex items-center justify-center gap-3 border-r border-slate-200 px-4 text-amber-600">
-        <svg class="h-9 w-9 shrink-0 sm:h-11 sm:w-11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        <div><div class="text-sm font-medium text-slate-600">Опоздали</div><div data-summary="late" class="mt-0.5 text-3xl font-semibold leading-none sm:text-4xl">{{board.totals.late}}</div></div>
-      </div>
-      <div class="flex items-center justify-center gap-3 border-r border-slate-200 px-4 text-slate-700">
-        <svg class="h-9 w-9 shrink-0 sm:h-11 sm:w-11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M14 8V3H4v18h10v-5M10 12h11m-4-4 4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        <div><div class="text-sm font-medium text-slate-600">Ушли</div><div data-summary="departed" class="mt-0.5 text-3xl font-semibold leading-none sm:text-4xl">{{board.totals.departed}}</div></div>
-      </div>
-      <div class="flex items-center justify-center gap-3 border-r border-slate-200 px-4 text-red-600">
-        <svg class="h-9 w-9 shrink-0 sm:h-11 sm:w-11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="9" cy="7" r="4"/><path d="M2 21v-2a6 6 0 0 1 9.5-4.9M16 16l6 6m0-6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        <div><div class="text-sm font-medium text-slate-600">Отсутствуют</div><div data-summary="absent" class="mt-0.5 text-3xl font-semibold leading-none sm:text-4xl">{{board.totals.absent}}</div></div>
-      </div>
-      <div class="flex items-center justify-center gap-3 px-4 text-slate-500">
-        <svg class="h-9 w-9 shrink-0 sm:h-11 sm:w-11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9a2.7 2.7 0 1 1 4.8 1.7c-1.2 1.1-2.4 1.5-2.4 3M12 17.2h.01" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        <div><div class="text-sm font-medium text-slate-600">Нет отметки</div><div data-summary="none" class="mt-0.5 text-3xl font-semibold leading-none sm:text-4xl">{{board.totals.none}}</div></div>
-      </div>
-    </div>
+  <div class="grid grid-cols-3 gap-2 sm:grid-cols-5 sm:gap-3" role="group" aria-label="Фильтр по сводке за сегодня">
+    <button type="button" data-status-filter="present" aria-pressed="false" class="presence-summary-button text-emerald-600">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM22 21v-2a4 4 0 0 0-3-3.87"/></svg>
+      <span><span class="presence-summary-label block">{{#if board.is_adult}}На работе{{else}}В школе{{/if}}</span><span data-summary="present" class="block">{{board.totals.present}}</span></span>
+    </button>
+    <button type="button" data-status-filter="late" aria-pressed="false" class="presence-summary-button text-amber-600">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+      <span><span class="presence-summary-label block">Опоздали сегодня</span><span data-summary="late" class="block">{{board.totals.late}}</span></span>
+    </button>
+    <button type="button" data-status-filter="departed" aria-pressed="false" class="presence-summary-button text-slate-600">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 8V3H4v18h10v-5M10 12h11m-4-4 4 4-4 4"/></svg>
+      <span><span class="presence-summary-label block">Ушли</span><span data-summary="departed" class="block">{{board.totals.departed}}</span></span>
+    </button>
+    <button type="button" data-status-filter="absent" aria-pressed="false" class="presence-summary-button text-red-600">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="7" r="4"/><path d="M2 21v-2a6 6 0 0 1 9.5-4.9M16 16l6 6m0-6-6 6"/></svg>
+      <span><span class="presence-summary-label block">Отсутствуют</span><span data-summary="absent" class="block">{{board.totals.absent}}</span></span>
+    </button>
+    <button type="button" data-status-filter="none" aria-pressed="false" class="presence-summary-button text-slate-600">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9a2.7 2.7 0 1 1 4.8 1.7c-1.2 1.1-2.4 1.5-2.4 3M12 17.2h.01"/></svg>
+      <span><span class="presence-summary-label block">Нет отметки</span><span data-summary="none" class="block">{{board.totals.none}}</span></span>
+    </button>
   </div>
 
   <div class="sticky top-2 z-30 rounded-xl border border-slate-200 bg-white/95 backdrop-blur-sm">
-    <div class="grid grid-cols-[minmax(0,1fr)_minmax(8.5rem,.48fr)] gap-2 p-3 sm:grid-cols-[16rem_20rem_minmax(0,1fr)] sm:gap-3 sm:p-4">
+    <div class="grid grid-cols-[minmax(0,1fr)_minmax(8.5rem,.48fr)] gap-2 p-3 sm:grid-cols-[minmax(10rem,.7fr)_minmax(12rem,1fr)] xl:grid-cols-[14rem_18rem_minmax(0,1fr)] sm:gap-3 sm:p-4">
       <label class="relative sm:order-2"><span class="sr-only">Найти ученика</span><svg class="pointer-events-none absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5" stroke-linecap="round"/></svg><input data-student-search type="search" autocomplete="off" placeholder="Найти ученика" class="h-12 w-full rounded-lg border border-slate-300 bg-white pl-11 pr-3 text-sm text-slate-950 placeholder:text-slate-500 focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-100 sm:text-base"></label>
       <label class="sm:order-1"><span class="sr-only">Выбрать класс</span><select data-class-filter class="h-12 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-900 focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-100 sm:text-base"><option value="all">Все классы</option>{{#each board.classes}}<option value="{{id}}">{{name}}</option>{{/each}}</select></label>
-      <div class="presence-filter-scroll col-span-2 overflow-x-auto sm:order-3 sm:col-span-1">
+      <div class="presence-filter-scroll col-span-2 overflow-x-auto sm:order-3 xl:col-span-1">
         <div class="inline-flex min-w-max overflow-hidden rounded-lg border border-slate-300" role="group" aria-label="Фильтр по статусу">
-          <button type="button" data-status-filter="all" aria-pressed="true" class="h-[2.875rem] border-r border-slate-300 bg-blue-700 px-4 text-sm font-medium text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400">Все</button>
-          <button type="button" data-status-filter="present" aria-pressed="false" class="h-[2.875rem] border-r border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50">В школе</button>
-          <button type="button" data-status-filter="late" aria-pressed="false" class="h-[2.875rem] border-r border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50">Опоздали</button>
-          <button type="button" data-status-filter="departed" aria-pressed="false" class="h-[2.875rem] border-r border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50">Ушли</button>
-          <button type="button" data-status-filter="absent" aria-pressed="false" class="h-[2.875rem] border-r border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50">Отсутствуют</button>
-          <button type="button" data-status-filter="none" aria-pressed="false" class="h-[2.875rem] bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50 {{#if board.totals.conflicts}}border-r border-slate-300{{/if}}">Нет отметки</button>
+          <button type="button" data-status-filter="all" aria-pressed="true" class="h-[2.875rem] border-r border-slate-300 bg-blue-700 px-4 text-sm font-medium text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400">Все статусы</button>
           {{#if board.totals.conflicts}}<button type="button" data-status-filter="conflict" aria-pressed="false" class="h-[2.875rem] bg-white px-4 text-sm font-medium text-red-700 hover:bg-red-50">Требуют уточнения</button>{{/if}}
         </div>
       </div>
@@ -174,17 +169,32 @@
   <div data-presence-flash class="hidden" role="status" aria-live="polite"><span data-presence-flash-text class="min-w-0 flex-1"></span><button type="button" data-presence-undo class="hidden shrink-0 rounded-lg border border-current px-3 py-1.5 text-sm font-semibold">Отменить</button></div>
 
   {{#if board.classes.length}}
-    <div data-presence-classes class="overflow-hidden rounded-xl border border-slate-200 bg-white">
+    <div data-presence-classes class="rounded-xl border border-slate-200 bg-white">
       {{#each board.classes}}
         <section data-presence-class data-group-id="{{id}}" data-total="{{students.length}}" data-total-label="{{students_label}}" class="border-t border-slate-200 first:border-t-0">
-          <button type="button" data-class-toggle class="flex w-full items-center justify-between gap-4 bg-slate-50 px-4 py-3 text-left hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-600" aria-expanded="true"><span class="flex min-w-0 items-baseline gap-3"><span class="truncate text-xl font-semibold text-slate-950">{{name}}</span><span data-class-count class="truncate text-sm text-slate-500">{{students_label}}</span></span><svg data-class-chevron class="h-5 w-5 shrink-0 text-slate-700 transition" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 15 6-6 6 6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <button type="button" data-class-toggle class="flex w-full items-center justify-between gap-4 bg-slate-50 px-4 py-3 text-left hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-600" aria-expanded="true">
+            <span class="min-w-0">
+              <span class="flex min-w-0 items-baseline gap-3"><span class="truncate text-xl font-semibold text-slate-950">{{name}}</span><span data-class-count class="truncate text-sm text-slate-500">{{students_label}}</span></span>
+              {{#if schedule}}
+                <span data-class-schedule class="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+                  <span data-schedule-status class="rounded-full px-2 py-0.5 text-xs font-semibold {{#if (eq schedule.status_code "current")}}bg-emerald-100 text-emerald-800{{else}}{{#if (eq schedule.status_code "next")}}bg-blue-100 text-blue-800{{else}}bg-slate-200 text-slate-700{{/if}}{{/if}}">{{schedule.status_label}}</span>
+                  <span data-schedule-details class="contents {{#unless schedule.has_lesson}}hidden{{/unless}}">
+                    <span data-schedule-subject class="font-medium text-slate-800">{{schedule.subject_label}}</span>
+                    <span data-schedule-time class="tabular-nums text-slate-600">{{schedule.time_label}}</span>
+                    <span data-schedule-room class="rounded-md px-2 py-0.5 font-semibold {{#if schedule.has_room}}bg-white text-slate-950 ring-1 ring-slate-300{{else}}bg-amber-100 text-amber-900{{/if}}">{{#if schedule.has_room}}Кабинет {{schedule.room_label}}{{else}}Кабинет не указан{{/if}}</span>
+                  </span>
+                </span>
+              {{/if}}
+            </span>
+            <svg data-class-chevron class="h-5 w-5 shrink-0 text-slate-700 transition" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 15 6-6 6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
           <div data-class-content>
-            <div class="presence-table-head hidden min-h-[3rem] items-center border-t border-slate-200 bg-white text-sm font-medium text-slate-600 md:grid"><span class="px-4">№</span><span class="px-3">Ученик</span><span class="px-3">Статус</span><span class="px-3">Приход</span><span class="px-3">Уход</span><span></span></div>
+            <div class="presence-table-head hidden min-h-[3rem] items-center border-t border-slate-200 bg-white text-sm font-medium text-slate-600 min-[1100px]:grid"><span class="px-4">№</span><span class="px-3">Ученик</span><span class="px-3">Статус</span><span class="px-3">Приход</span><span class="px-3">Уход</span><span></span></div>
             <div class="presence-class-body">
               {{#each students}}
                 <article data-presence-row data-student-id="{{id}}" data-class-id="{{classId}}" data-group-id="{{../id}}" data-search-name="{{name}}" data-current-status="{{state.current_status_code}}" data-is-late="{{state.is_late}}" data-conflict-id="{{state.conflict_id}}" class="presence-row">
                   <span class="presence-index row-span-2 flex h-full items-center justify-center text-sm tabular-nums text-slate-700 md:px-4"></span>
-                  <div class="presence-student-name truncate text-base font-medium text-slate-950">{{name}}</div>
+                  {{#if @root.board.is_adult}}<div class="presence-student-name text-base font-medium text-slate-950">{{name}}</div>{{else}}<a href="/attendance/analytics?class={{classId}}&student={{id}}#analytics-journal" class="presence-student-name text-base font-medium text-slate-950 hover:text-blue-700">{{name}}</a>{{/if}}
                   <div class="presence-status text-sm font-medium">
                     <div class="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
                       <span data-status-icon class="presence-status-icon inline-flex h-5 w-5 shrink-0 items-center justify-center" aria-hidden="true">
@@ -287,6 +297,7 @@
     statusButtons.forEach((button) => {
       const active = button.dataset.statusFilter === activeStatus;
       button.setAttribute('aria-pressed', String(active));
+      if (button.classList.contains('presence-summary-button')) return;
       button.classList.toggle('bg-blue-700', active); button.classList.toggle('text-white', active);
       button.classList.toggle('bg-white', !active); button.classList.toggle('text-slate-700', !active);
     });
@@ -322,7 +333,7 @@
     try {
       const nextBoard = await getBoard();
       if (nextBoard.date !== root.dataset.date || rosterChanged(nextBoard) || conflictFilterChanged(nextBoard)) { window.location.reload(); return; }
-      board = nextBoard; patchRows(nextBoard); lastSuccessfulRefresh = new Date(); updateFreshness(); applyFilters();
+      board = nextBoard; patchRows(nextBoard); patchClassSchedules(nextBoard); lastSuccessfulRefresh = new Date(); updateFreshness(); applyFilters();
     } catch (error) {
       updateFreshness({ failed: true }); if (manual) setFlash(error.message || 'Не удалось обновить', { kind: 'error' });
     } finally { setRefreshing(false); }
@@ -335,6 +346,31 @@
   }
   function conflictFilterChanged(nextBoard) { return Boolean(root.querySelector('[data-status-filter="conflict"]')) !== (Number(nextBoard?.totals?.conflicts || 0) > 0); }
   function patchRows(nextBoard) { for (const classItem of nextBoard.classes || []) for (const student of classItem.students || []) { const row = root.querySelector(`[data-presence-row][data-student-id="${cssEscape(student.id)}"]`); if (row) patchRow(row, student.state || {}); } }
+
+  function patchClassSchedules(nextBoard) {
+    for (const classItem of nextBoard.classes || []) {
+      const section = root.querySelector(`[data-presence-class][data-group-id="${cssEscape(classItem.id)}"]`);
+      const scheduleRoot = section?.querySelector('[data-class-schedule]');
+      const schedule = classItem.schedule;
+      if (!scheduleRoot || !schedule) continue;
+      const status = scheduleRoot.querySelector('[data-schedule-status]');
+      const details = scheduleRoot.querySelector('[data-schedule-details]');
+      const subject = scheduleRoot.querySelector('[data-schedule-subject]');
+      const time = scheduleRoot.querySelector('[data-schedule-time]');
+      const room = scheduleRoot.querySelector('[data-schedule-room]');
+      if (status) {
+        status.textContent = schedule.status_label || 'Нет расписания';
+        status.className = `rounded-full px-2 py-0.5 text-xs font-semibold ${schedule.status_code === 'current' ? 'bg-emerald-100 text-emerald-800' : schedule.status_code === 'next' ? 'bg-blue-100 text-blue-800' : 'bg-slate-200 text-slate-700'}`;
+      }
+      details?.classList.toggle('hidden', !schedule.has_lesson);
+      if (subject) subject.textContent = schedule.subject_label || '';
+      if (time) time.textContent = schedule.time_label || '';
+      if (room) {
+        room.textContent = schedule.has_room ? `Кабинет ${schedule.room_label}` : 'Кабинет не указан';
+        room.className = `rounded-md px-2 py-0.5 font-semibold ${schedule.has_room ? 'bg-white text-slate-950 ring-1 ring-slate-300' : 'bg-amber-100 text-amber-900'}`;
+      }
+    }
+  }
 
   function patchRow(row, state) {
     row.dataset.currentStatus = state.current_status_code || 'none'; row.dataset.isLate = String(Boolean(state.is_late)); row.dataset.conflictId = state.conflict_id || '';
@@ -405,6 +441,6 @@
   historyDialog?.querySelector('[data-presence-history-close]')?.addEventListener('click', () => historyDialog.close()); historyDialog?.addEventListener('click', (event) => { if (event.target === historyDialog) historyDialog.close(); });
   historyEvents?.addEventListener('click', async (event) => { const cancel = event.target.closest('[data-history-cancel]'); if (!cancel?.dataset.historyCancel) return; cancel.disabled = true; try { await postJson(`/api/attendance/presence/events/${encodeURIComponent(cancel.dataset.historyCancel)}/cancel`, { audience: root.dataset.audience || 'children' }); historyDialog.close(); setFlash('Отметка отменена'); await refreshBoard(); } catch (error) { cancel.disabled = false; setFlash(error.message || 'Не удалось отменить', { kind: 'error' }); } });
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshBoard(); }); window.addEventListener('focus', () => refreshBoard()); window.setInterval(() => { if (!document.hidden) refreshBoard(); }, 30_000); window.setInterval(() => updateFreshness(), 15_000);
-  patchRows(board); applyFilters();
+  patchRows(board); patchClassSchedules(board); applyFilters();
 })();
 </script>

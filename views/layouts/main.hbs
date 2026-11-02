@@ -28,12 +28,12 @@
   <noscript><div><img src="https://mc.yandex.ru/watch/99316009" style="position:absolute; left:-9999px;" alt=""></div></noscript>
   <!-- /Yandex.Metrika counter -->
 </head>
-<body class="min-h-screen bg-gray-50 text-slate-950 antialiased">
+<body class="attendance-ui min-h-screen text-slate-950 antialiased">
   <header class="relative z-40 border-b border-slate-200 bg-white">
     <div class="mx-auto flex min-h-[4.75rem] max-w-[1480px] items-center justify-between gap-6 px-4 sm:px-6">
-      <a href="/" class="shrink-0 text-lg font-semibold tracking-[-0.01em] text-slate-950 sm:text-xl">Учёт посещаемости</a>
+      <a href="/" class="min-w-0 text-base font-semibold tracking-[-0.01em] text-slate-950 sm:text-xl"><span class="sm:hidden">Посещаемость</span><span class="hidden sm:inline">Учёт посещаемости</span></a>
 
-      <nav class="hidden self-stretch md:flex md:items-stretch md:gap-8" aria-label="Основная навигация">
+      <nav class="hidden self-stretch lg:flex lg:items-stretch lg:gap-5" aria-label="Основная навигация">
         {{#if currentUser.permissions.view_own_attendance}}
           <a href="/attendance/me" class="inline-flex items-center border-b-2 px-1 text-sm font-medium transition {{#if (eq activePage 'student-attendance')}}border-blue-700 text-blue-700{{else}}border-transparent text-slate-600 hover:border-slate-300 hover:text-slate-950{{/if}}">Моя посещаемость</a>
         {{else}}
@@ -54,7 +54,7 @@
         {{/if}}
 
         {{#if currentUser}}
-          <details class="group relative hidden md:block">
+          <details class="group relative hidden lg:block">
             <summary class="flex min-w-[12rem] cursor-pointer list-none items-center justify-end gap-3 rounded-lg px-2 py-2 text-right hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600">
               <span class="min-w-0">
                 <span class="block max-w-[13rem] truncate text-sm font-semibold text-slate-900">{{currentUser.name}}</span>
@@ -69,7 +69,7 @@
             </div>
           </details>
 
-          <details class="group relative md:hidden">
+          <details class="group relative lg:hidden">
             <summary class="flex h-11 w-11 cursor-pointer list-none items-center justify-center rounded-lg border border-transparent text-slate-950 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600" aria-label="Открыть меню">
               <svg class="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
                 <path d="M4 7h16M4 12h16M4 17h16" stroke-linecap="round"/>
@@ -85,11 +85,11 @@
                   <a href="/attendance/me" class="block rounded-lg px-3 py-2.5 text-sm font-medium {{#if (eq activePage 'student-attendance')}}bg-blue-50 text-blue-700{{else}}text-slate-700 hover:bg-slate-100{{/if}}">Моя посещаемость</a>
                 {{else}}
                   <a href="/attendance/presence" class="block rounded-lg px-3 py-2.5 text-sm font-medium {{#if (eq activePage 'presence')}}bg-blue-50 text-blue-700{{else}}text-slate-700 hover:bg-slate-100{{/if}}">Сейчас в школе</a>
+                  <a href="/attendance" class="block rounded-lg px-3 py-2.5 text-sm font-medium {{#if (eq activePage 'attendance')}}bg-blue-50 text-blue-700{{else}}text-slate-700 hover:bg-slate-100{{/if}}">Пропуски</a>
+                  <a href="/attendance/analytics" class="block rounded-lg px-3 py-2.5 text-sm font-medium {{#if (eq activePage 'analytics')}}bg-blue-50 text-blue-700{{else}}text-slate-700 hover:bg-slate-100{{/if}}">Аналитика</a>
                   {{#if currentUser.permissions.manage_presence}}
                     <a href="/attendance/presence/manual" class="block rounded-lg px-3 py-2.5 text-sm font-medium {{#if (eq activePage 'presence-manual')}}bg-blue-50 text-blue-700{{else}}text-slate-700 hover:bg-slate-100{{/if}}">Ручной ввод</a>
                   {{/if}}
-                  <a href="/attendance" class="block rounded-lg px-3 py-2.5 text-sm font-medium {{#if (eq activePage 'attendance')}}bg-blue-50 text-blue-700{{else}}text-slate-700 hover:bg-slate-100{{/if}}">Пропуски</a>
-                  <a href="/attendance/analytics" class="block rounded-lg px-3 py-2.5 text-sm font-medium {{#if (eq activePage 'analytics')}}bg-blue-50 text-blue-700{{else}}text-slate-700 hover:bg-slate-100{{/if}}">Аналитика</a>
                 {{/if}}
               </nav>
               <a href="/api/auth/logout" class="block rounded-lg border-t border-slate-100 px-3 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-100">Выйти</a>

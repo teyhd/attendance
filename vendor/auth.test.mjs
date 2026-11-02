@@ -1,6 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { attendancePermissions, extractServiceRoleID, landingPath } from './auth.mjs';
+import { attendancePermissions, extractServiceRoleID, landingPath, canAccessAbsenceRecord } from './auth.mjs';
+
+test('absence audience uses canonical SSO person type even for adults assigned to a school class', () => {
+  for (const role of [2, 3, 4]) {
+    assert.equal(canAccessAbsenceRecord(role, { user_type: 1, class_type: 1 }), true);
+    assert.equal(canAccessAbsenceRecord(role, { user_type: 2, class_type: 1 }), false);
+    assert.equal(canAccessAbsenceRecord(role, { user_type: null, class_type: 1 }), false);
+  }
+  assert.equal(canAccessAbsenceRecord(5, { user_type: 2, class_type: 1 }), true);
+  for (const role of [0, 1, 6]) assert.equal(canAccessAbsenceRecord(role, { user_type: 1 }), false);
+});
 
 test('landing routes open the live board first for teachers and tutors', () => {
   assert.equal(landingPath(1), '/attendance/me');

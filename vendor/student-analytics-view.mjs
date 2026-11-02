@@ -1,3 +1,30 @@
+export function withMissedLessons(source) {
+  if (Number(source.learning?.metric_version) === 2) {
+    const missed = source.learning.lessons || [];
+    const planned = source.learning.planned_lessons || [];
+    return { ...source, missed_lessons: missed, planned_lessons: planned, kpi: { ...source.kpi, missed_lessons: missed.filter(lesson => lesson.counts_as_missed_lesson).length, affected_lessons: missed.length, planned_lessons: planned.length, unconfirmed_lessons: missed.filter(lesson => lesson.is_unconfirmed).length } };
+  }
+  const lessons = new Map();
+  const add = lesson => {
+    const key = JSON.stringify([lesson.date, lesson.starts_at, lesson.ends_at, lesson.subject_id || lesson.subject_name, lesson.teacher_id || lesson.teacher_name]);
+    const current = lessons.get(key);
+    if (!current) lessons.set(key, { ...lesson });
+    else {
+      for (const field of ['reason_name', 'comment']) {
+        current[field] = [...new Set([current[field], lesson[field]].filter(Boolean))].join('; ');
+      }
+    }
+  };
+  for (const lesson of source.learning?.lessons || []) add(lesson);
+  for (const event of source.lateness?.events || []) {
+    for (const lesson of event.missed_lessons_list || []) add({
+      ...lesson, date: event.date, date_label: event.date_label, reason_name: 'Опоздание',
+    });
+  }
+  const missed = [...lessons.values()].sort((a, b) => String(a.starts_at).localeCompare(String(b.starts_at)) || String(a.subject_name).localeCompare(String(b.subject_name), 'ru'));
+  return { ...source, missed_lessons: missed, kpi: { ...source.kpi, missed_lessons: missed.length } };
+}
+
 export function sanitizeStudentMonthlyAnalytics(source = {}) {
   const kpi = source.kpi || {};
   return {
@@ -10,6 +37,9 @@ export function sanitizeStudentMonthlyAnalytics(source = {}) {
       absence_days: number(kpi.absence_days),
       without_reason: number(kpi.without_reason),
       missed_lessons: number(kpi.missed_lessons),
+      affected_lessons: number(kpi.affected_lessons),
+      planned_lessons: number(kpi.planned_lessons),
+      unconfirmed_lessons: number(kpi.unconfirmed_lessons),
       data_gaps: number(kpi.data_gaps),
       late_days: number(kpi.late_days),
       late_minutes: number(kpi.late_minutes),
@@ -23,6 +53,8 @@ export function sanitizeStudentMonthlyAnalytics(source = {}) {
     attendance: sanitizeAttendance(source.attendance),
     periods: array(source.periods).map(sanitizeAbsencePeriod),
     learning: sanitizeLearning(source.learning),
+    missed_lessons: array(source.missed_lessons).map(sanitizeLesson),
+    planned_lessons: array(source.planned_lessons).map(sanitizeLesson),
     lateness: sanitizeLateness(source.lateness),
   };
 }
@@ -81,6 +113,8 @@ function sanitizeAttendanceDay(day = {}) {
     is_excused_absence: Boolean(day.is_excused_absence),
     is_unexcused_absence: Boolean(day.is_unexcused_absence),
     is_incomplete: Boolean(day.is_incomplete),
+    is_unconfirmed: Boolean(day.is_unconfirmed),
+    is_planned: Boolean(day.is_planned),
   };
 }
 
@@ -119,8 +153,15 @@ function sanitizeLearning(learning = {}) {
     coverage_percent: number(learning.coverage_percent),
     subjects_total: number(learning.subjects_total),
     has_data: Boolean(learning.has_data),
+    metric_version: number(learning.metric_version),
+    affected_lessons_total: number(learning.affected_lessons_total),
+    planned_lessons_total: number(learning.planned_lessons_total),
+    unconfirmed_lessons_total: number(learning.unconfirmed_lessons_total),
+    missed_lesson_threshold_minutes: number(learning.missed_lesson_threshold_minutes),
+    calculation_state: learning.calculation_state || '',
     subjects: array(learning.subjects).map(sanitizeSubject),
     lessons: array(learning.lessons).map(sanitizeLesson),
+    planned_lessons: array(learning.planned_lessons).map(sanitizeLesson),
   };
 }
 
@@ -151,6 +192,17 @@ function sanitizeLesson(lesson = {}) {
     room_name: lesson.room_name || '',
     reason_name: lesson.reason_name || '',
     comment: lesson.comment || '',
+    state: lesson.state || 'actual',
+    attendance_status: lesson.attendance_status || '',
+    is_planned: Boolean(lesson.is_planned),
+    is_partial: Boolean(lesson.is_partial),
+    is_unconfirmed: Boolean(lesson.is_unconfirmed),
+    counts_as_missed_lesson: lesson.counts_as_missed_lesson !== false,
+    overlap_minutes: number(lesson.overlap_minutes),
+    absence_minutes: number(lesson.absence_minutes),
+    scheduled_minutes: number(lesson.scheduled_minutes),
+    no_mark_minutes: number(lesson.no_mark_minutes),
+    conflict_minutes: number(lesson.conflict_minutes),
   };
 }
 

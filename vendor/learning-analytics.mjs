@@ -1,5 +1,6 @@
 import { percentOf } from './analytics.mjs';
 import { isWithoutReasonCode } from './absence-reasons.mjs';
+import { buildStudentLessonAnalytics } from './attendance-analytics-contract.mjs';
 import {
   DEFAULT_ACTIVE_WEEKDAYS,
   addDays,
@@ -10,7 +11,6 @@ import {
   formatSqlDateTime,
   isoWeekday,
   lessonsForStudentDay,
-  overlapMinutesForPeriod,
   parseDateTimeMs,
 } from './schedule-analytics.mjs';
 
@@ -42,6 +42,10 @@ export function buildLearningAnalytics({
   publishedSchoolDays = [],
   activeWeekdays = DEFAULT_ACTIVE_WEEKDAYS,
   includeLessons = false,
+  presenceEvents = null,
+  conflicts = [],
+  lessonFacts = [],
+  now = '',
 } = {}) {
   if (!range) {
     return includeLessons ? { ...EMPTY_LEARNING, lessons: [] } : { ...EMPTY_LEARNING };
@@ -52,11 +56,13 @@ export function buildLearningAnalytics({
   const publishedDaySet = new Set(publishedSchoolDays.map(dateOnly).filter(Boolean));
   const activeWeekdaySet = new Set((activeWeekdays || DEFAULT_ACTIVE_WEEKDAYS).map(Number));
   const missedLessons = [];
+  const plannedLessons = [];
   const dataGaps = [];
   const periodIds = new Set();
   const uncoveredPeriodIds = new Set();
 
   for (const period of periods) {
+    if (period.deleted_at || period.cancelled_at) continue;
     const periodId = String(period.id || '');
     if (!periodId) continue;
     periodIds.add(periodId);
@@ -73,16 +79,36 @@ export function buildLearningAnalytics({
         continue;
       }
 
-      for (const lesson of lessonsForStudentDay(scheduleIndex, period, student, day)) {
-        const overlapMinutes = overlapMinutesForPeriod(period, lesson, range);
-        if (overlapMinutes <= MISSED_LESSON_MIN_OVERLAP_MINUTES) continue;
-        missedLessons.push(createMissedLesson(period, student, lesson, overlapMinutes));
+      const lessons = lessonsForStudentDay(scheduleIndex, period, student, day);
+      if (!lessons.length) {
+        hasGap = true;
+        dataGaps.push({ ...createDataGap(period, student, day), code: 'no_student_schedule', message: 'Нет опубликованных уроков ученика' });
       }
     }
 
     if (hasGap) {
       uncoveredPeriodIds.add(periodId);
     }
+  }
+
+  for (const student of studentById.values()) {
+    const projection = buildStudentLessonAnalytics({ range, student, periods, presenceEvents: presenceEvents || [], conflicts, lessonFacts, scheduleIndex, publishedSchoolDays, activeWeekdays, now });
+    if (presenceEvents !== null) for (const day of projection.quality.missingScheduleDates) {
+      if (dataGaps.some(gap => gap.student_id === student.student_id && gap.date === day)) continue;
+      const gap = createDataGap({ student_id: student.student_id, class_id: student.class_id }, student, day);
+      if (publishedDaySet.has(day)) Object.assign(gap, { code: 'no_student_schedule', message: 'Нет опубликованных уроков ученика' });
+      dataGaps.push(gap);
+    }
+    for (const result of projection._lessons) {
+      // Period-only consumers retain their scope; UI callers provide the full presence evidence.
+      const row = presenceEvents === null && !lessonFacts.length ? {
+        ...result, missedMinutes: result.confirmedAbsenceMinutes, noMarkMinutes: 0,
+        missedLessons: result.confirmedAbsenceMinutes > MISSED_LESSON_MIN_OVERLAP_MINUTES ? 1 : 0,
+        reasonMinutes: result.reasonMinutes.filter(reason => reason.code !== 'no_mark'),
+      } : result;
+      if (row.missedMinutes > 0 || row.conflictMinutes > 0) missedLessons.push(createProjectionLesson(row, student));
+    }
+    plannedLessons.push(...projection._plannedLessons.map(row => createProjectionLesson(row, student)));
   }
 
   missedLessons.sort(compareMissedLessons);
@@ -94,12 +120,53 @@ export function buildLearningAnalytics({
     periodIds,
     uncoveredPeriodIds,
   });
+  learning.metric_version = 2;
+  learning.missed_lesson_threshold_minutes = MISSED_LESSON_MIN_OVERLAP_MINUTES;
+  learning.affected_lessons_total = missedLessons.length;
+  learning.planned_lessons_total = plannedLessons.length;
+  learning.planned_absence_minutes = plannedLessons.reduce((sum, lesson) => sum + lesson.overlap_minutes, 0);
+  learning.unconfirmed_lessons_total = missedLessons.filter(lesson => lesson.is_unconfirmed).length;
+  learning.calculation_state = dataGaps.length ? 'partial' : (missedLessons.length || plannedLessons.length || scheduleRows.length) ? 'calculated' : 'no_schedule';
 
   if (includeLessons) {
     learning.lessons = missedLessons;
+    learning.planned_lessons = plannedLessons.sort(compareMissedLessons);
   }
 
   return learning;
+}
+
+function createProjectionLesson(row, student) {
+  const lesson = row.lesson;
+  const reasons = row.reasonMinutes || [];
+  const distinct = values => [...new Set(values.filter(Boolean))].join('; ');
+  const planned = row.state === 'planned';
+  const missedMinutes = Number(row.missedMinutes || 0);
+  const lessonMinutes = (lesson.ends_ms - lesson.starts_ms) / 60_000;
+  const isPartial = missedMinutes > 0 && missedMinutes < lessonMinutes;
+  const isUnconfirmed = Number(row.noMarkMinutes || 0) > 0;
+  const absenceIds = [...new Set(reasons.map(reason => reason.absenceId).filter(Boolean))];
+  return {
+    ...createMissedLesson({ id: absenceIds.join(','), student_id: student.student_id, class_id: student.class_id, reason_code: distinct(reasons.map(reason => reason.code)), reason_name: distinct(reasons.map(reason => reason.name)), comment: distinct(reasons.map(reason => reason.comment)), confirmation_status: distinct(reasons.map(reason => reason.confirmationStatus)), attention_status: reasons.some(reason => reason.attentionStatus === 'needs_attention') ? 'needs_attention' : 'normal' }, student, lesson, missedMinutes),
+    id: `${student.student_id}:${lesson.entry_ids.join(',')}:${planned ? 'planned' : 'actual'}`,
+    absence_ids: absenceIds,
+    schedule_entry_ids: lesson.entry_ids,
+    state: planned ? 'planned' : 'actual',
+    attendance_status: row.conflictMinutes > 0 ? 'conflict' : isUnconfirmed ? 'unconfirmed_absence' : isPartial ? 'partial' : 'confirmed_absence',
+    is_planned: planned,
+    is_unconfirmed: isUnconfirmed,
+    is_partial: isPartial,
+    has_conflict: row.conflictMinutes > 0,
+    counts_as_missed_lesson: !planned && missedMinutes > MISSED_LESSON_MIN_OVERLAP_MINUTES,
+    overlap_minutes: missedMinutes,
+    absence_minutes: missedMinutes,
+    scheduled_minutes: row.scheduledMinutes,
+    lesson_minutes: lessonMinutes,
+    confirmed_absence_minutes: row.confirmedAbsenceMinutes,
+    no_mark_minutes: row.noMarkMinutes,
+    conflict_minutes: row.conflictMinutes,
+    is_without_reason: reasons.some(reason => ['without_reason', 'no_mark'].includes(reason.code)),
+  };
 }
 
 function buildStudentMap(students, periods) {
@@ -130,7 +197,7 @@ function buildStudentMap(students, periods) {
 function createMissedLesson(period, student, lesson, overlapMinutes) {
   return {
     id: `${period.id}:${lesson.entry_ids.join(',')}`,
-    absence_id: String(period.id),
+    absence_id: String(period.id || ''),
     student_id: String(period.student_id),
     student_name: student.student_name || period.student_name || '',
     class_id: String(period.class_id || student.class_id || ''),
@@ -170,7 +237,7 @@ function createMissedLesson(period, student, lesson, overlapMinutes) {
 
 function createDataGap(period, student, day) {
   return {
-    absence_id: String(period.id),
+    absence_id: String(period.id || ''),
     student_id: String(period.student_id),
     student_name: student.student_name || period.student_name || '',
     class_id: String(period.class_id || student.class_id || ''),
@@ -232,19 +299,21 @@ function aggregateLearning({
     }
   }
 
-  const totalLessons = missedLessons.length;
+  const countMissed = lessons => lessons.filter(lesson => lesson.counts_as_missed_lesson !== false).length;
+  const totalLessons = countMissed(missedLessons);
   const subjectRows = Array.from(subjectBuckets.values()).map((bucket) => {
     const stats = lessonBucketStats(bucket.lessons);
     return {
       subject_id: bucket.subject_id,
       subject_name: bucket.subject_name,
       subject_type: bucket.subject_type,
-      missed_lessons: bucket.lessons.length,
+      missed_lessons: countMissed(bucket.lessons),
+      affected_lessons: bucket.lessons.length,
       students: stats.students,
       days: stats.days,
       classes: stats.classes,
-      percent: percentOf(bucket.lessons.length, totalLessons),
-      bar_width: percentOf(bucket.lessons.length, totalLessons),
+      percent: percentOf(countMissed(bucket.lessons), totalLessons),
+      bar_width: percentOf(countMissed(bucket.lessons), totalLessons),
     };
   }).sort(compareLearningRows);
 
@@ -253,13 +322,14 @@ function aggregateLearning({
     return {
       class_id: bucket.class_id,
       class_name: bucket.class_name,
-      missed_lessons: bucket.lessons.length,
+      missed_lessons: countMissed(bucket.lessons),
+      affected_lessons: bucket.lessons.length,
       students: stats.students,
       subjects: stats.subjects,
       days: stats.days,
       data_gaps: bucket.dataGaps.length,
       href: `/attendance/analytics?class=${encodeURIComponent(bucket.class_id)}&month=${encodeURIComponent(range.month)}`,
-      bar_width: percentOf(bucket.lessons.length, totalLessons),
+      bar_width: percentOf(countMissed(bucket.lessons), totalLessons),
     };
   }).sort(compareLearningRows);
 
@@ -270,16 +340,17 @@ function aggregateLearning({
       student_name: bucket.student_name,
       class_id: bucket.class_id,
       class_name: bucket.class_name,
-      missed_lessons: bucket.lessons.length,
+      missed_lessons: countMissed(bucket.lessons),
+      affected_lessons: bucket.lessons.length,
       subjects: stats.subjects,
       days: stats.days,
       without_reason: bucket.lessons.filter((lesson) => lesson.is_without_reason).length,
       needs_attention: bucket.lessons.filter((lesson) => lesson.needs_attention).length,
       data_gaps: bucket.dataGaps.length,
       href: `/attendance?class=${encodeURIComponent(bucket.class_id)}&student=${encodeURIComponent(bucket.student_id)}&analyticsMonth=${encodeURIComponent(range.month)}#learning-analytics`,
-      bar_width: percentOf(bucket.lessons.length, totalLessons),
+      bar_width: percentOf(countMissed(bucket.lessons), totalLessons),
     };
-  }).filter((row) => row.missed_lessons > 0 || row.data_gaps > 0)
+  }).filter((row) => row.affected_lessons > 0 || row.data_gaps > 0)
     .sort(compareLearningRows);
 
   const dailyRows = Array.from(dailyBuckets.values()).map((bucket) => {
@@ -287,11 +358,12 @@ function aggregateLearning({
     return {
       date: bucket.date,
       date_label: formatDateLabel(bucket.date),
-      missed_lessons: bucket.lessons.length,
+      missed_lessons: countMissed(bucket.lessons),
+      affected_lessons: bucket.lessons.length,
       students: stats.students,
       subjects: stats.subjects,
       data_gaps: bucket.dataGaps.length,
-      bar_width: percentOf(bucket.lessons.length, totalLessons),
+      bar_width: percentOf(countMissed(bucket.lessons), totalLessons),
     };
   });
 
@@ -314,7 +386,7 @@ function aggregateLearning({
     data_gaps: dataGaps,
     data_gaps_total: dataGaps.length,
     conflict_lessons_total: conflictLessonsTotal,
-    has_data: totalLessons > 0,
+    has_data: missedLessons.length > 0,
   };
 }
 
@@ -396,7 +468,7 @@ function expandPeriodDaysWithinRange(period, range) {
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) return [];
 
   const startDate = dateOnly(formatSqlDateTime(startMs));
-  const endDate = dateOnly(formatSqlDateTime(endMs));
+  const endDate = dateOnly(formatSqlDateTime(endMs > startMs ? endMs - 1 : endMs));
   const days = [];
   for (let day = startDate; day <= endDate; day = addDays(day, 1)) {
     days.push(day);

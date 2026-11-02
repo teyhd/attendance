@@ -160,3 +160,30 @@ function hasOwnKeyDeep(value, key) {
   if (Array.isArray(value)) return value.some((item) => hasOwnKeyDeep(item, key));
   return Object.values(value).some((item) => hasOwnKeyDeep(item, key));
 }
+import { withMissedLessons } from './student-analytics-view.mjs';
+
+test('missed lessons unite absence periods and lateness without duplicate lessons', () => {
+  const lesson = { date: '2026-09-02', starts_at: '2026-09-02 09:00:00', ends_at: '2026-09-02 09:45:00', subject_id: '1', teacher_id: '2', reason_name: 'Болезнь' };
+  const second = { ...lesson, starts_at: '2026-09-02 10:00:00', ends_at: '2026-09-02 10:45:00' };
+  const result = withMissedLessons({ kpi: {}, learning: { lessons: [lesson, { ...lesson, comment: 'Уточнение' }] }, lateness: { events: [{ date: lesson.date, missed_lessons_list: [lesson, second] }] } });
+  assert.equal(result.missed_lessons.length, 2);
+  assert.equal(result.kpi.missed_lessons, 2);
+  assert.equal(result.missed_lessons[0].reason_name, 'Болезнь; Опоздание');
+  assert.equal(result.missed_lessons[0].comment, 'Уточнение');
+  assert.equal(lesson.reason_name, 'Болезнь');
+  assert.equal(sanitizeStudentMonthlyAnalytics(result).missed_lessons.length, 2);
+});
+
+test('canonical details preserve partial and planned rows without reintroducing legacy lateness', () => {
+  const partial = { state: 'actual', is_partial: true, overlap_minutes: 15, counts_as_missed_lesson: false };
+  const planned = { state: 'planned', is_planned: true, overlap_minutes: 45, counts_as_missed_lesson: false };
+  const result = withMissedLessons({ kpi: {}, learning: { metric_version: 2, lessons: [partial], planned_lessons: [planned] }, lateness: { events: [{ missed_lessons_list: [{ date: '2026-09-02', subject_name: 'Duplicate' }] }] } });
+  assert.equal(result.missed_lessons.length, 1);
+  assert.equal(result.kpi.missed_lessons, 0);
+  assert.equal(result.kpi.affected_lessons, 1);
+  assert.equal(result.planned_lessons.length, 1);
+  const sanitized = sanitizeStudentMonthlyAnalytics(result);
+  assert.equal(sanitized.missed_lessons[0].is_partial, true);
+  assert.equal(sanitized.missed_lessons[0].overlap_minutes, 15);
+  assert.equal(sanitized.planned_lessons[0].state, 'planned');
+});
