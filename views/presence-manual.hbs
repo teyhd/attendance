@@ -21,6 +21,7 @@
   }
 
   .manual-class-picker { display: none; }
+  [data-presence-class] { scroll-margin-top: var(--manual-scroll-margin, 13rem); }
   .manual-presence-card[hidden], [data-presence-class][hidden] { display: none; }
   .manual-history-dialog { width: min(32rem, calc(100% - 1rem)); max-height: calc(100dvh - 1rem); }
   .manual-history-content { max-height: 68dvh; overflow-y: auto; }
@@ -62,7 +63,7 @@
 </style>
 
 <section id="presence-top" data-presence-root data-date="{{board.date}}" data-audience="{{board.audience}}" class="manual-presence-board space-y-3">
-  <div class="sticky top-2 z-20 space-y-2">
+  <div data-manual-toolbar class="sticky top-2 z-20 space-y-2">
     <div class="rounded-md border border-gray-200 bg-white p-3 shadow-sm">
       <div class="manual-summary">
         <div>
@@ -85,18 +86,26 @@
           <span class="sr-only">{{#if board.is_adult}}Найти сотрудника{{else}}Найти ученика{{/if}}</span>
           <input type="search" data-manual-search autocomplete="off" placeholder="{{#if board.is_adult}}Найти сотрудника{{else}}Найти ученика{{/if}}" class="min-h-11 w-full rounded-md border border-slate-300 px-3">
         </label>
-        <label class="manual-class-picker text-sm font-medium">
-          <span>{{#if board.is_adult}}Кафедра{{else}}Класс{{/if}}</span>
-          <select data-manual-class-picker class="w-full" aria-label="{{#if board.is_adult}}Перейти к кафедре{{else}}Перейти к классу{{/if}}">
-            <option value="">Выберите</option>
-            {{#each board.classes}}<option value="{{anchor}}">{{name}}</option>{{/each}}
-          </select>
-        </label>
-        <div data-presence-class-list class="mt-3 flex gap-2 overflow-x-auto pb-1" aria-label="{{#if board.is_adult}}Кафедры{{else}}Классы{{/if}}">
-          {{#each board.classes}}
-            <a href="#{{anchor}}" title="{{name}}" class="shrink-0 rounded border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-800 hover:border-gray-900">{{name}}</a>
-          {{/each}}
-        </div>
+        {{#if board.is_adult}}
+          <label class="manual-class-picker text-sm font-medium">
+            <span>Кафедра</span>
+            <select data-manual-class-picker class="w-full" aria-label="Перейти к кафедре">
+              <option value="">Выберите</option>
+              {{#each board.classes}}<option value="{{anchor}}">{{name}}</option>{{/each}}
+            </select>
+          </label>
+          <div data-presence-class-list class="mt-3 flex gap-2 overflow-x-auto pb-1" aria-label="Кафедры">
+            {{#each board.classes}}
+              <a href="#{{anchor}}" title="{{name}}" class="shrink-0 rounded border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-800 hover:border-gray-900">{{name}}</a>
+            {{/each}}
+          </div>
+        {{else}}
+          <nav data-manual-class-keys class="class-keyboard mt-3" aria-label="Перейти к классу">
+            {{#each board.classes}}
+              <a href="#{{anchor}}" class="class-keyboard-key">{{name}}</a>
+            {{/each}}
+          </nav>
+        {{/if}}
       {{/if}}
     </div>
 
@@ -109,7 +118,7 @@
   {{#if board.classes.length}}
     <div class="space-y-3">
       {{#each board.classes}}
-        <section id="{{anchor}}" data-presence-class class="scroll-mt-4 rounded-md border border-gray-200 bg-white" style="scroll-margin-top: 13rem;">
+        <section id="{{anchor}}" data-presence-class class="rounded-md border border-gray-200 bg-white">
           <div class="flex items-center justify-between border-b border-gray-200 px-3 py-2">
             <h2 class="text-lg font-semibold text-gray-950">{{name}}</h2>
             <span class="text-sm text-gray-500">{{students_label}}</span>
@@ -193,6 +202,7 @@
   const cancelButton = root.querySelector('[data-presence-cancel]');
   const classList = root.querySelector('[data-presence-class-list]');
   const classPicker = root.querySelector('[data-manual-class-picker]');
+  const classKeys = root.querySelector('[data-manual-class-keys]');
   const search = root.querySelector('[data-manual-search]');
   const searchEmpty = root.querySelector('[data-manual-search-empty]');
   const classes = Array.from(root.querySelectorAll('[data-presence-class]'));
@@ -205,11 +215,25 @@
     const target = document.getElementById(classPicker.value);
     target?.scrollIntoView({ block: 'start' });
   });
-  classList?.addEventListener('click', (event) => {
+  (classKeys || classList)?.addEventListener('click', (event) => {
     if (!event.target.closest('a') || !search?.value) return;
     search.value = '';
     filterCards();
   });
+  if (classKeys) {
+    const toolbar = root.querySelector('[data-manual-toolbar]');
+    const updateScrollMargin = () => root.style.setProperty('--manual-scroll-margin', `${toolbar.offsetHeight + 16}px`);
+    const updateCurrentClass = () => {
+      for (const link of classKeys.querySelectorAll('a')) {
+        if (link.hash === window.location.hash) link.setAttribute('aria-current', 'location');
+        else link.removeAttribute('aria-current');
+      }
+    };
+    updateScrollMargin();
+    new ResizeObserver(updateScrollMargin).observe(toolbar);
+    updateCurrentClass();
+    window.addEventListener('hashchange', updateCurrentClass);
+  }
   search?.addEventListener('input', filterCards);
   const historyDialog = root.parentElement?.querySelector('[data-presence-history-dialog]');
   const historyTitle = historyDialog?.querySelector('[data-presence-history-title]');

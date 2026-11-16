@@ -86,6 +86,7 @@
   .presence-header { display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem; }
   .presence-toolbar-field { min-width: 0; }
   .presence-toolbar-field input, .presence-toolbar-field select { min-width: 0; }
+  .presence-class-keys { grid-column: 1 / -1; order: -1; }
   @media (max-width: 639px) {
     main:has(> .presence-board) { padding-block: 1rem; }
     .presence-board > :not([hidden]) ~ :not([hidden]) { margin-top: .75rem; }
@@ -185,10 +186,21 @@
   </div>
 
   <div class="sticky top-2 z-30 rounded-xl border border-slate-200 bg-white/95 backdrop-blur-sm">
-    <div class="grid grid-cols-[minmax(0,1fr)_minmax(6.5rem,.68fr)] gap-2 p-2 sm:grid-cols-[minmax(10rem,.7fr)_minmax(12rem,1fr)] xl:grid-cols-[14rem_18rem_minmax(0,1fr)] sm:gap-3 sm:p-4">
+    <div class="grid gap-2 p-2 sm:gap-3 sm:p-4 {{#if board.is_adult}}grid-cols-[minmax(0,1fr)_minmax(6.5rem,.68fr)] sm:grid-cols-[minmax(10rem,.7fr)_minmax(12rem,1fr)] xl:grid-cols-[14rem_18rem_minmax(0,1fr)]{{else}}grid-cols-1 sm:grid-cols-2{{/if}}">
+      {{#unless board.is_adult}}
+        <div class="presence-class-keys">
+          <label class="sr-only" for="presence-class-filter">Класс</label>
+          <select id="presence-class-filter" data-class-filter data-class-keyboard="Класс">
+            <option value="all">Все классы</option>
+            {{#each board.classes}}<option value="{{id}}">{{name}}</option>{{/each}}
+          </select>
+        </div>
+      {{/unless}}
       <label class="presence-toolbar-field relative sm:order-2"><span class="sr-only">{{#if board.is_adult}}Найти сотрудника{{else}}Найти ученика{{/if}}</span><svg class="pointer-events-none absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5" stroke-linecap="round"/></svg><input data-student-search type="search" autocomplete="off" placeholder="{{#if board.is_adult}}Поиск сотрудника{{else}}Поиск ученика{{/if}}" class="h-11 sm:h-12 w-full rounded-lg border border-slate-300 bg-white pl-11 pr-3 text-sm text-slate-950 placeholder:text-slate-500 focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-100 sm:text-base"></label>
-      <label class="presence-toolbar-field sm:order-1"><span class="sr-only">{{#if board.is_adult}}Выбрать кафедру{{else}}Выбрать класс{{/if}}</span><select data-class-filter class="h-11 sm:h-12 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-900 focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-100 sm:text-base"><option value="all">{{#if board.is_adult}}Все кафедры{{else}}Все классы{{/if}}</option>{{#each board.classes}}<option value="{{id}}">{{name}}</option>{{/each}}</select></label>
-      <div class="presence-filter-scroll col-span-2 overflow-x-auto sm:order-3 xl:col-span-1">
+      {{#if board.is_adult}}
+        <label class="presence-toolbar-field sm:order-1"><span class="sr-only">Выбрать кафедру</span><select data-class-filter class="h-11 sm:h-12 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-900 focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-100 sm:text-base"><option value="all">Все кафедры</option>{{#each board.classes}}<option value="{{id}}">{{name}}</option>{{/each}}</select></label>
+      {{/if}}
+      <div class="presence-filter-scroll overflow-x-auto sm:order-3 {{#if board.is_adult}}col-span-2 xl:col-span-1{{/if}}">
         <div class="inline-flex flex-wrap rounded-lg border border-slate-300" role="group" aria-label="Фильтр по статусу">
           <button type="button" data-status-filter="all" aria-pressed="true" class="min-h-11 rounded-l-md bg-blue-700 px-2 sm:px-4 text-sm font-medium text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400">Все статусы</button>
           <button type="button" data-status-filter="conflict" aria-pressed="false" {{#unless board.totals.conflicts}}hidden{{/unless}} class="min-h-11 rounded-r-md bg-white px-2 sm:px-4 text-sm font-medium text-red-700 hover:bg-red-50">Требуют уточнения</button>

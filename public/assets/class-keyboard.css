@@ -1,0 +1,50 @@
+select[data-class-keyboard][hidden] {
+  display: none;
+}
+
+.class-keyboard {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: .5rem;
+}
+
+.class-keyboard-key {
+  display: inline-flex;
+  min-width: 2.75rem;
+  min-height: 2.9375rem;
+  max-width: 100%;
+  align-items: center;
+  justify-content: center;
+  padding: .375rem .8125rem;
+  border: 1px solid #cbd5e1;
+  border-radius: .3125rem;
+  background: #fff;
+  color: #1e293b;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+
+.class-keyboard-key:hover {
+  border-color: #94a3b8;
+  background: #f8fafc;
+}
+
+.class-keyboard-key:is([aria-pressed="true"], [aria-current="location"]) {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1e40af;
+}
+
+.class-keyboard-key:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+@media (max-width: 39.99rem) {
+  .class-keyboard { gap: .375rem; }
+  .class-keyboard-key { min-height: 2.75rem; padding-inline: .625rem; }
+}

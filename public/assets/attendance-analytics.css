@@ -12,6 +12,7 @@ main:has(> .analytics-workspace) { padding-block: .75rem 1.5rem; }
 .analytics-top { padding: .625rem .75rem; }
 .analytics-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .375rem .75rem; }
 .analytics-toolbar h1 { font-size: clamp(1.125rem, 4.8vw, 1.5rem); }
+.analytics-class-keys { flex-basis: 100%; grid-column: 1 / -1; min-width: 0; }
 .analytics-context { margin-top: .125rem; color: var(--report-muted); font-size: .8125rem; }
 .analytics-controls { display: flex; flex-wrap: wrap; align-items: end; gap: .375rem .5rem; }
 .analytics-controls label { display: block; min-width: 0; font-size: .8125rem; }

@@ -51,6 +51,7 @@ main:has(> .attendance-workspace) { padding-block: .875rem 1.5rem; }
 .attendance-break-text { overflow-wrap: anywhere; }
 
 .attendance-columns { display: grid; min-width: 0; align-items: start; gap: .75rem; }
+.attendance-class-form { grid-column: 1 / -1; }
 .attendance-roster { display: grid; grid-template-columns: minmax(7rem, .65fr) minmax(0, 1.35fr); gap: .375rem .5rem; padding: .625rem .75rem; }
 .attendance-roster-title { display: none; align-items: center; justify-content: space-between; font-size: .8125rem; color: var(--attendance-muted); }
 .attendance-roster-title h2 { color: #0f172a; font-weight: 600; }
@@ -107,8 +108,7 @@ main:has(> .attendance-workspace) { padding-block: .875rem 1.5rem; }
 .attendance-mark-form :is(input:not([type="checkbox"]):not([type="hidden"]), select, textarea),
 .attendance-roster :is(select, input[type="search"]) { width: 100%; min-height: 2.5rem; padding: .375rem .625rem; }
 .attendance-roster select { min-width: 0; padding-inline-end: 1.375rem; text-overflow: ellipsis; }
-.attendance-roster #class-select { padding-inline: .5rem .875rem; }
-.attendance-roster-date { display: flex; align-items: center; gap: .5rem; margin-top: .375rem; font-size: .875rem; font-weight: 500; }
+.attendance-roster-date { display: flex; min-width: 0; align-items: center; gap: .5rem; font-size: .875rem; font-weight: 500; }
 .attendance-roster-date input { width: 100%; min-width: 0; min-height: 2.5rem; }
 .attendance-field-hint { color: var(--attendance-muted); font-size: .75rem; font-weight: 400; }
 .attendance-record:focus { outline: 2px solid var(--attendance-blue); outline-offset: -2px; }
@@ -194,7 +194,7 @@ main:has(> .attendance-workspace) { padding-block: .875rem 1.5rem; }
 }
 @media (max-width: 63.99rem) {
   .attendance-roster.is-searching .workspace-mobile-picker { display: none; }
-  .attendance-roster.is-searching form { grid-column: 1 / -1; }
+  .attendance-roster.is-searching .attendance-roster-date { grid-column: 1 / -1; }
   .attendance-roster.is-searching .workspace-desktop-students { display: block; }
   .attendance-roster.is-searching .attendance-roster-title { display: flex; grid-column: 1 / -1; }
   .attendance-roster-list { max-height: 10rem; overflow: auto; }

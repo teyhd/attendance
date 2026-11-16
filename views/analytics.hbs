@@ -55,7 +55,7 @@
         {{#if analytics.is_adult}}<div class="analytics-context">{{analytics.month_label}} · {{analytics.department_name}}</div>{{/if}}
       </div>
 
-      <form method="get" action="/attendance/analytics" data-analytics-controls class="no-print analytics-controls">
+      <form id="analytics-controls" method="get" action="/attendance/analytics" data-analytics-controls class="no-print analytics-controls">
         <input type="hidden" name="audience" value="{{audience}}" />
         {{#if analytics.is_adult}}
         <label class="text-sm text-gray-700"><span class="block mb-1">С</span><input required name="from" value="{{analytics.period.from}}" type="date" class="w-full rounded border-gray-300" /></label>
@@ -71,14 +71,6 @@
           <button type="submit" class="workspace-primary">Показать</button>
         {{else}}
           <label class="text-sm text-gray-700">
-            <span class="block mb-1">Класс</span>
-            <select name="class" class="w-full sm:w-44 rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
-              {{#each classOptions}}
-                <option value="{{id}}" {{#if selected}}selected{{/if}}>{{name}}</option>
-              {{/each}}
-            </select>
-          </label>
-          <label class="text-sm text-gray-700">
             <span class="mb-1 block">Месяц</span>
             <input name="month" value="{{analytics.month}}" type="month" class="w-full" />
           </label>
@@ -92,6 +84,16 @@
             <button type="button" data-print-analytics class="workspace-link">Распечатать</button>
           </div>
         </details>
+      {{#unless analytics.is_adult}}
+        <div class="analytics-class-keys no-print">
+          <label class="sr-only" for="analytics-class-filter">Класс</label>
+          <select id="analytics-class-filter" name="class" form="analytics-controls" data-class-keyboard="Класс">
+            {{#each classOptions}}
+              <option value="{{id}}" {{#if selected}}selected{{/if}}>{{name}}</option>
+            {{/each}}
+          </select>
+        </div>
+      {{/unless}}
     </div>
 
     {{#if audienceTabs.length}}
@@ -740,10 +742,10 @@
             <button type="button" data-phone-report-preset="7" aria-pressed="true" class="workspace-secondary min-h-11 px-3">7 дней</button>
             <button type="button" data-phone-report-preset="30" aria-pressed="false" class="workspace-secondary min-h-11 px-3">30 дней</button>
           </div>
-          <label class="min-w-0 text-sm font-medium text-slate-700">
-            <span class="mb-1 block">Класс</span>
-            <select data-phone-report-class class="min-h-11 w-full rounded-md border border-slate-300 bg-white px-2 sm:min-w-44"><option value="">Все доступные классы</option></select>
-          </label>
+          <div class="min-w-0 w-full">
+            <label class="sr-only" for="phone-report-class-filter">Класс</label>
+            <select id="phone-report-class-filter" data-phone-report-class data-class-keyboard="Класс"><option value="">Все доступные классы</option></select>
+          </div>
           <details data-phone-report-custom class="min-w-0 sm:w-full">
             <summary class="workspace-link flex min-h-11 cursor-pointer items-center text-sm">Свой период</summary>
             <form data-phone-report-dates class="grid grid-cols-2 gap-2 pb-1 sm:flex sm:flex-wrap sm:items-end">
@@ -894,9 +896,11 @@
 <script>
 (() => {
   const form = document.querySelector('[data-analytics-controls]');
-  form?.querySelectorAll('input[name="month"], select[name="class"], select[name="department"]').forEach((control) => {
-    control.addEventListener('change', () => { if (!form.elements.from) form.requestSubmit(); });
-  });
+  if (form && !form.elements.from) {
+    for (const name of ['month', 'class']) {
+      form.elements.namedItem(name)?.addEventListener('change', () => form.requestSubmit());
+    }
+  }
 
   document.querySelector('[data-print-analytics]')?.addEventListener('click', () => window.print());
 })();
@@ -981,6 +985,7 @@
     });
     panels.forEach((panel) => panel.classList.toggle('hidden', panel.dataset.analyticsPanel !== nextTab));
     document.querySelector('[data-analytics-controls]')?.toggleAttribute('data-phone-report-hidden', nextTab === 'phones');
+    document.querySelector('.analytics-class-keys')?.toggleAttribute('data-phone-report-hidden', nextTab === 'phones');
     document.querySelector('.analytics-download')?.toggleAttribute('data-phone-report-hidden', nextTab === 'phones');
     sessionStorage.setItem(storageKey, nextTab);
     if (updateHash) window.history.replaceState(null, '', `#analytics-${nextTab}`);
@@ -1269,7 +1274,9 @@
     state.classId = classId;
     state.search = '';
     state.limit = 20;
-    panel.querySelector('[data-phone-report-class]').value = classId;
+    const select = panel.querySelector('[data-phone-report-class]');
+    select.value = classId;
+    select.dispatchEvent(new Event('input'));
     load({ focusRanking });
   }
 

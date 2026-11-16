@@ -179,25 +179,23 @@
   {{/if}}
 
   <div class="attendance-columns">
+    <form id="attendance-class-form" method="get" action="/attendance" class="attendance-class-form min-w-0">
+      <input type="hidden" name="student" value="{{selectedStudentId}}" />
+      <input type="hidden" name="filter" value="{{activeFilter}}" />
+      <input type="hidden" name="tab" value="{{selectedTab}}" />
+      <label for="class-select" class="sr-only">Класс</label>
+      <select id="class-select" data-testid="class-select" name="class" data-class-keyboard="Класс">
+        {{#each classes}}
+          <option value="{{id}}" {{#if (eq ../selectedClass id)}}selected{{/if}}>{{name}}</option>
+        {{/each}}
+      </select>
+    </form>
     <aside data-attendance-roster class="attendance-roster workspace-surface">
-      <form id="attendance-class-form" method="get" action="/attendance" class="min-w-0">
-        <input type="hidden" name="student" value="{{selectedStudentId}}" />
-        <input type="hidden" name="filter" value="{{activeFilter}}" />
-        <input type="hidden" name="tab" value="{{selectedTab}}" />
-        <div class="flex min-w-0 items-center gap-2 text-sm font-medium">
-          <label for="class-select">Класс</label>
-          <select id="class-select" data-testid="class-select" name="class">
-            {{#each classes}}
-              <option value="{{id}}" {{#if (eq ../selectedClass id)}}selected{{/if}}>{{name}}</option>
-            {{/each}}
-          </select>
-        </div>
         <div class="attendance-roster-date">
           <label for="attendance-date">Дата</label>
-          <input id="attendance-date" type="date" name="date" value="{{selectedDate}}" required>
-          <noscript><button type="submit">Показать</button></noscript>
+          <input id="attendance-date" type="date" name="date" value="{{selectedDate}}" form="attendance-class-form" required>
+          <noscript><button type="submit" form="attendance-class-form">Показать</button></noscript>
         </div>
-      </form>
       {{#if children.length}}
         <label class="workspace-mobile-picker min-w-0">
           <span class="sr-only">Ученик</span>
