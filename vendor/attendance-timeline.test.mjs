@@ -68,17 +68,22 @@ test('future lessons and planned absences do not affect actual metrics', () => {
   assert.equal(result.planned.absence_minutes, 60);
 });
 
-test('weekends without a schedule are not reported as schedule gaps', () => {
+test('weekends with active slots, published lessons and arrivals do not affect attendance', () => {
+  const days = ['2026-09-05', '2026-09-06'];
   const result = buildScheduledAttendanceAnalytics({
-    range: makeRange(['2026-09-05']),
+    range: makeRange(days),
     students: [student],
-    scheduleRows: [],
-    publishedSchoolDays: [],
-    activeWeekdays: [1, 2, 3, 4, 5],
-    now: '2026-09-05 18:00:00',
+    scheduleRows: [{ ...scheduleRows[0], lesson_date: days[0], day_of_week: 6 }],
+    publishedSchoolDays: days,
+    activeWeekdays: [1, 2, 3, 4, 5, 6, 7],
+    presenceEvents: [event('10', '2026-09-05 09:30:00', 'arrival', '10')],
+    now: '2026-09-06 18:00:00',
   });
 
   assert.equal(result.quality.schedule_gap_student_days, 0);
+  assert.equal(result.actual.scheduled_minutes, 0);
+  assert.equal(result.actual.attendance_percent, null);
+  assert.deepEqual(result.students[0].days, []);
 });
 
 test('adult analytics exposes observed time without an invented attendance norm', () => {
@@ -141,7 +146,7 @@ test('absence days survive missing schedules, include future plans and exclude m
     { student_id: '10', starts_at: '2026-09-01 08:00:00', ends_at: '2026-09-08 00:00:00', reason_name: 'Семья', comment: 'План', is_excused: 1 },
   ] });
   const row = result.students[0];
-  assert.equal(row.absence_details.length, 7);
+  assert.equal(row.absence_details.length, 5);
   assert.equal(row.days.find(day => day.date === '2026-09-04').reason_label, 'Семья');
   assert.equal(row.days.find(day => day.date === '2026-09-07').status_code, 'planned');
   assert.equal(row.days.find(day => day.date === '2026-09-08'), undefined);

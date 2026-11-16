@@ -12,8 +12,8 @@ const periods = [
     student_name: 'Анна Сергеева',
     class_id: '5',
     class_name: '5',
-    starts_at: '2026-05-10 08:00:00',
-    ends_at: '2026-05-10 12:00:00',
+    starts_at: '2026-05-11 08:00:00',
+    ends_at: '2026-05-11 12:00:00',
     reason_code: 'without_reason',
     reason_name: 'Без причины',
     confirmation_status: 'needs_clarification',
@@ -41,7 +41,7 @@ const periods = [
     class_id: '7',
     class_name: '7',
     starts_at: '2026-05-08 08:00:00',
-    ends_at: '2026-05-09 23:59:00',
+    ends_at: '2026-05-11 10:00:00',
     reason_code: 'trip',
     reason_name: 'Поездка',
     confirmation_status: 'confirmed',
@@ -117,6 +117,7 @@ test('risk worklist supports all configured sort modes', () => {
 
   const days = buildRiskWorklist({ range, periods, learning, filters: { sort: 'days' } });
   assert.equal(days.items[0].student_id, '30');
+  assert.equal(days.items[0].absence_days, 2);
 
   const lessons = buildRiskWorklist({ range, periods, learning, filters: { sort: 'lessons' } });
   assert.equal(lessons.items[0].student_id, '20');

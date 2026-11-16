@@ -80,14 +80,14 @@ test('countActualPresenceDays counts unique non-cancelled arrival days only', ()
   ]), 2);
 });
 
-test('expectedPresenceDates uses published days before weekday fallback', () => {
+test('expectedPresenceDates ignores weekends in published dates and active slots', () => {
   const range = buildMonthRange('2026-05');
   assert.deepEqual(
     expectedPresenceDates(range, { publishedSchoolDays: ['2026-05-03', '2026-05-04'], activeWeekdays: [1] }),
-    ['2026-05-03', '2026-05-04'],
+    ['2026-05-04'],
   );
   assert.deepEqual(
-    expectedPresenceDates(range, { publishedSchoolDays: [], activeWeekdays: [1] }).slice(0, 2),
+    expectedPresenceDates(range, { publishedSchoolDays: ['2026-05-02'], activeWeekdays: [1, 6, 7] }).slice(0, 2),
     ['2026-05-04', '2026-05-11'],
   );
 });
@@ -100,6 +100,7 @@ test('buildClassPresenceSummary keeps factual presence separate from excused abs
     arrivals: [
       { student_id: '10', event_type: 'arrival', attendance_date: '2026-05-04' },
       { student_id: '11', event_type: 'arrival', attendance_date: '2026-05-04' },
+      { student_id: '11', event_type: 'arrival', attendance_date: '2026-05-03' },
     ],
     lateness: {
       late_days_total: 1,
