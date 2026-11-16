@@ -44,14 +44,14 @@
   .manual-presence-actions {
     align-self: center;
     display: grid;
+    justify-items: end;
     gap: .25rem;
-    width: clamp(6.25rem, 34vw, 7.25rem);
     padding: .5rem .5rem .5rem 0;
   }
 
   .manual-presence-actions:not(:has(button:not([hidden]):not(.hidden))) { display: none; }
-  .manual-presence-actions > button {
-    width: 100%;
+  .manual-presence-actions > [data-phone-after-notice] {
+    width: clamp(6.25rem, 34vw, 7.25rem);
     min-height: 2.75rem;
     padding: .375rem .25rem;
     white-space: normal;
@@ -60,6 +60,16 @@
     line-height: 1.1;
     overflow-wrap: anywhere;
   }
+
+  .manual-presence-icon {
+    display: grid;
+    width: 2.75rem;
+    height: 2.75rem;
+    place-items: center;
+    padding: 0;
+  }
+
+  .manual-presence-icon svg { width: 1.5rem; height: 1.5rem; }
 </style>
 
 <section id="presence-top" data-presence-root data-date="{{board.date}}" data-audience="{{board.audience}}" class="manual-presence-board space-y-3">
@@ -155,9 +165,18 @@
                 <div class="manual-presence-actions">
                   {{#unless ../../board.is_adult}}
                     <button type="button" data-phone-after-notice class="workspace-secondary" hidden>Сдал после замечания</button>
-                    <button type="button" data-manual-phone data-student-id="{{id}}" aria-label="Телефон · {{name}}" aria-haspopup="dialog" class="workspace-secondary">Телефон</button>
+                    <button type="button" data-manual-phone data-student-id="{{id}}" aria-label="Телефон · {{name}}" aria-haspopup="dialog" title="Телефон" class="workspace-secondary manual-presence-icon">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+                        <rect x="7" y="3" width="10" height="18" rx="2" />
+                        <path d="M11 17h2" />
+                      </svg>
+                    </button>
                   {{/unless}}
-                  <button type="button" data-presence-edit data-student-id="{{id}}" aria-label="История за сегодня · {{name}}" aria-haspopup="dialog" class="workspace-secondary">История</button>
+                  <button type="button" data-presence-edit data-student-id="{{id}}" aria-label="История за сегодня · {{name}}" aria-haspopup="dialog" title="История за сегодня" class="workspace-secondary manual-presence-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M3 12a9 9 0 1 1 2.6 6.4M3 5v7h7M12 7v5l3 2" />
+                    </svg>
+                  </button>
                 </div>
                 <div class="grid grid-cols-2 gap-1.5 {{#unless state.conflict_id}}hidden{{/unless}}" data-conflict-actions>
                   <button type="button" data-conflict-resolve="keep_presence" data-conflict-id="{{state.conflict_id}}" class="rounded border border-emerald-300 bg-white px-2 py-1.5 text-xs font-medium text-emerald-800 hover:bg-emerald-50">Подтвердить приход</button>
