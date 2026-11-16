@@ -1,3 +1,5 @@
+import { isSchoolWeekday, isoWeekday } from './schedule-analytics.mjs';
+
 const MONTH_NAMES = [
   'Январь',
   'Февраль',
@@ -79,7 +81,7 @@ export function countActualPresenceDays(events = []) {
 }
 
 export function expectedPresenceDates(range, { publishedSchoolDays = [], activeWeekdays = [1, 2, 3, 4, 5] } = {}) {
-  const rangeDays = Array.isArray(range?.days) ? range.days : [];
+  const rangeDays = Array.isArray(range?.days) ? range.days.filter(isSchoolWeekday) : [];
   if (!rangeDays.length) return [];
 
   const rangeDaySet = new Set(rangeDays);
@@ -88,7 +90,7 @@ export function expectedPresenceDates(range, { publishedSchoolDays = [], activeW
 
   const weekdaySet = new Set((activeWeekdays || [])
     .map(Number)
-    .filter((day) => day >= 1 && day <= 7));
+    .filter((day) => day >= 1 && day <= 5));
   const fallbackWeekdays = weekdaySet.size ? weekdaySet : new Set([1, 2, 3, 4, 5]);
   return rangeDays.filter((day) => fallbackWeekdays.has(isoWeekday(day)));
 }
@@ -106,9 +108,12 @@ export function buildClassPresenceSummary({
   needsClarification = 0,
   withoutReason = 0,
   riskStudentsTotal = 0,
+  observedPresence = false,
 } = {}) {
-  const presenceDays = countActualPresenceDays(arrivals);
   const schoolDays = expectedPresenceDates(range, { publishedSchoolDays, activeWeekdays });
+  const schoolDaySet = new Set(schoolDays);
+  const presenceDays = countActualPresenceDays(observedPresence ? arrivals : arrivals.filter((event) =>
+    schoolDaySet.has(dateOnly(event?.attendance_date || event?.arrival_at || event?.occurred_at))));
   const expectedPresenceDays = Math.max(0, Number(studentsTotal || 0)) * schoolDays.length;
   const lateDays = Number(lateness?.late_days_total || 0);
   const coveredArrivalDays = Number.isFinite(Number(lateness?.coverage?.covered_arrival_days))
@@ -191,13 +196,6 @@ function presenceDayKeys(events = []) {
     if (studentId && day) keys.add(`${studentId}|${day}`);
   }
   return keys;
-}
-
-function isoWeekday(dateText) {
-  const [year, month, day] = String(dateText || '').split('-').map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day));
-  const weekday = date.getUTCDay();
-  return weekday === 0 ? 7 : weekday;
 }
 
 function endOfStartDay(value) {

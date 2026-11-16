@@ -135,3 +135,28 @@ function event(studentId, occurredAt, eventType, id) {
     event_type: eventType,
   };
 }
+
+test('absence days survive missing schedules, include future plans and exclude midnight boundary', () => {
+  const result = buildScheduledAttendanceAnalytics({ range, students: [student], now: '2026-09-04 12:00:00', periods: [
+    { student_id: '10', starts_at: '2026-09-01 08:00:00', ends_at: '2026-09-08 00:00:00', reason_name: 'Семья', comment: 'План', is_excused: 1 },
+  ] });
+  const row = result.students[0];
+  assert.equal(row.absence_details.length, 7);
+  assert.equal(row.days.find(day => day.date === '2026-09-04').reason_label, 'Семья');
+  assert.equal(row.days.find(day => day.date === '2026-09-07').status_code, 'planned');
+  assert.equal(row.days.find(day => day.date === '2026-09-08'), undefined);
+  assert.equal(row.absence_details[0].comment_label, 'План');
+  assert.equal(result.actual.scheduled_minutes, 0);
+  assert.equal(result.actual.missed_minutes, 0);
+});
+
+test('overlapping periods retain both reasons without duplicate absence days', () => {
+  const row = buildScheduledAttendanceAnalytics({ range, students: [student], scheduleRows, publishedSchoolDays: ['2026-09-01'], now: '2026-09-01 12:00:00', periods: [
+    { student_id: '10', starts_at: '2026-09-01 09:00:00', ends_at: '2026-09-01 09:30:00', reason_name: 'Семья', is_excused: 1 },
+    { student_id: '10', starts_at: '2026-09-01 09:15:00', ends_at: '2026-09-01 10:00:00', reason_name: 'Без причины', is_excused: 0 },
+  ] }).students[0];
+  assert.equal(row.absence_details.length, 1);
+  assert.equal(row.absence_details[0].reason_label, 'Семья; Без причины');
+  assert.equal(row.absence_details[0].is_unexcused, true);
+  assert.equal(row.confirmed_absence_minutes, 60);
+});

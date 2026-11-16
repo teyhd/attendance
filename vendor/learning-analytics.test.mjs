@@ -171,3 +171,44 @@ test('absence without published schedule creates data gap and no missed lessons'
   assert.equal(analytics.data_gaps.length, 1);
   assert.equal(analytics.data_gaps[0].code, 'no_published_schedule');
 });
+
+test('published week without matching student lessons is reported as a data gap', () => {
+  const result = buildLearningAnalytics({ range, students: [student], periods: [period()], scheduleRows: [], publishedSchoolDays: ['2026-05-04'], includeLessons: true });
+  assert.equal(result.lessons.length, 0);
+  assert.equal(result.data_gaps_total, 1);
+  assert.equal(result.data_gaps[0].code, 'no_student_schedule');
+  assert.equal(result.uncovered_absence_periods, 1);
+});
+
+test('a 15 minute partial absence stays visible without becoming a whole missed lesson KPI', () => {
+  const result = buildLearningAnalytics({ range, students: [student], periods: [period()], scheduleRows: [schedule()], publishedSchoolDays: ['2026-05-04'], includeLessons: true });
+  assert.equal(result.missed_lessons_total, 0);
+  assert.equal(result.affected_lessons_total, 1);
+  assert.equal(result.lessons[0].overlap_minutes, 15);
+  assert.equal(result.lessons[0].is_partial, true);
+  assert.equal(result.lessons[0].counts_as_missed_lesson, false);
+});
+
+test('future absence lessons are separated from actual lessons and all KPI aggregates', () => {
+  const result = buildLearningAnalytics({ range, students: [student], periods: [period({ ends_at: '2026-05-04 09:40:00' })], presenceEvents: [], scheduleRows: [schedule()], publishedSchoolDays: ['2026-05-04'], includeLessons: true, now: '2026-05-03 12:00:00' });
+  assert.equal(result.missed_lessons_total, 0);
+  assert.equal(result.affected_lessons_total, 0);
+  assert.deepEqual(result.lessons, []);
+  assert.equal(result.planned_lessons.length, 1);
+  assert.equal(result.planned_lessons[0].state, 'planned');
+  assert.equal(result.planned_lessons[0].counts_as_missed_lesson, false);
+  assert.equal(result.planned_absence_minutes, 40);
+});
+
+test('no attendance mark creates visible unconfirmed missed lesson details', () => {
+  const result = buildLearningAnalytics({ range, students: [student], presenceEvents: [], scheduleRows: [schedule()], publishedSchoolDays: ['2026-05-04'], includeLessons: true, now: '2026-05-04 12:00:00' });
+  assert.equal(result.missed_lessons_total, 1);
+  assert.equal(result.lessons[0].is_unconfirmed, true);
+  assert.equal(result.lessons[0].no_mark_minutes, 40);
+  assert.equal(result.lessons[0].reason_name, 'Нет отметки · не подтверждено');
+});
+
+test('absence ending at midnight does not create a missing schedule day after it', () => {
+  const result = buildLearningAnalytics({ range, students: [student], periods: [period({ ends_at: '2026-05-05 00:00:00' })], scheduleRows: [schedule()], publishedSchoolDays: ['2026-05-04'] });
+  assert.equal(result.data_gaps_total, 0);
+});

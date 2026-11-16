@@ -1,0 +1,7 @@
+<section class="workspace-surface mx-auto max-w-xl space-y-4 p-6 sm:p-8" aria-labelledby="request-error-title">
+  <h1 id="request-error-title" class="workspace-title">{{title}}</h1>
+  <p class="text-slate-700">{{message}}</p>
+  {{#if actionHref}}
+    <a class="workspace-primary" href="{{actionHref}}">{{actionLabel}}</a>
+  {{/if}}
+</section>

@@ -1,35 +1,37 @@
 import { mlog } from './vendor/logs.mjs';
 
-process.on('uncaughtException', (err) => {
-  mlog('Глобальный косяк приложения!!! ', err.stack);
-});
-
 import 'dotenv/config';
 
 import * as db from './vendor/db.mjs';
 import { isWithoutReasonCode } from './vendor/absence-reasons.mjs';
-import { buildAttendanceActions } from './vendor/attendance-ui.mjs';
-import { canManagePresenceClass, presenceViewClassScope } from './vendor/presence.mjs';
+import { canManageMentorSchedule, canViewMentorSchedule, registerMentorScheduleRoutes } from './vendor/mentor-schedule.mjs';
+import { schoolSqlNow } from './vendor/mentor-work.mjs';
+import { expandWeeklyAbsences } from './vendor/attendance-recurrence.mjs';
+import { canManagePresenceClass, presenceViewClassScope, presenceHistoryCapabilities, historyVersion } from './vendor/presence.mjs';
 import {
   getAuthUserFromRequest,
+  renderRequestError,
   requireApiAuth,
   requireOwnAttendanceAuth,
   requirePageAuth,
   requirePermission,
+  requireAbsenceAudience,
   setupAuthRoutes,
 } from './vendor/auth.mjs';
 import { sanitizeStudentMonthlyAnalytics } from './vendor/student-analytics-view.mjs';
+import { buildStudentExportReport, parseStudentExportOptions, renderStudentAttendanceCsv, STUDENT_EXPORT_MODE_LABELS } from './vendor/student-attendance-export.mjs';
+import { renderStudentAttendancePdf } from './vendor/student-attendance-pdf.mjs';
 import { verifyInternalServiceRequest } from './vendor/internal-service-auth.mjs';
 
 import express from 'express';
 import exphbs from 'express-handlebars';
 import cookieParser from 'cookie-parser';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 let i_count = 1;
 const PORT = process.env.PORT || 789;
-const app = express();
+export const app = express();
 const LEGACY_EXCUSED_REASON_CODE = 'excused';
 const hbs = exphbs.create({
   defaultLayout: 'main',
@@ -86,6 +88,8 @@ const hbs = exphbs.create({
     roleLabel(user) {
       return roleLabel(user);
     },
+    canViewMentorSchedule,
+    canManageMentorSchedule,
     urlEncode(value) {
       return encodeURIComponent(String(value ?? ''));
     },
@@ -134,7 +138,6 @@ const viewsPath = path.join(appDir, 'views');
 const publicPath = path.join(appDir, 'public');
 
 app.set('views', viewsPath);
-mlog(publicPath);
 app.use(express.static(publicPath));
 
 app.use(cookieParser());
@@ -151,8 +154,7 @@ app.use(express.json({
   },
 }));
 setupAuthRoutes(app);
-
-await db.ensureAttendanceSchema();
+registerMentorScheduleRoutes(app, db.attendanceDb, db.getMentorWorkPresence);
 
 app.post('/internal/v1/feedback-snapshots', requireProgressService, asyncHandler(async (req, res) => {
   try {
@@ -190,37 +192,42 @@ app.post('/internal/v1/attendance/lessons/resolve', requireDiaryService, asyncHa
     return sendApiError(res, err);
   }
 }));
+
+
 const AUDIENCE_CHILDREN = 'children';
 const AUDIENCE_ADULTS = 'adults';
 
 app.get('/', (req, res) => {
   const user = getAuthUserFromRequest(req);
-  res.redirect(user?.landing || '/attendance');
+  res.redirect(user?.landing || '/api/auth/login');
 });
 
-app.get('/attendance', requirePageAuth, asyncHandler(async (req, res) => {
-  const baseClasses = await db.getClasses();
-  const mentorClassIds = await db.getMentorClassIds(req.authUser?.id);
-  const classes = orderClassesByPreference(baseClasses, mentorClassIds);
-  const selectedClass = resolveSelectedClass(classes, req.query.class);
-  const selectedDate = normalizeDateInput(req.query.date) || formatDateInput(new Date());
-  const schoolDay = await db.getSchoolDayBounds(selectedDate);
-  const activeFilter = normalizeAttendanceFilter(req.query.filter);
-  const q = '';
-  const allClassChildren = selectedClass ? await db.getStudentsByClass(selectedClass) : [];
-  const searchedChildren = allClassChildren;
-  const requestedStudent = req.query.student;
-  const summary = selectedClass ? await db.getAttendanceSummary({ classId: selectedClass, date: selectedDate }) : null;
-  const classDayAbsences = selectedClass
-    ? await db.listAbsencePeriods({ classId: selectedClass, from: selectedDate, to: selectedDate, limit: 500 })
-    : [];
+app.get('/attendance', requirePageAuth, asyncHandler((req, res) => {
+  const { date, class: classId, student, filter, tab, record, analyticsMonth, success, error } = req.query;
+  if (student && /^\d{4}-\d{2}$/.test(String(analyticsMonth)) && !date && !filter && !success && !error) {
+    const params = new URLSearchParams({ month: analyticsMonth, student, tab: 'lessons' });
+    if (classId) params.set('class', classId);
+    return res.redirect(`/attendance/analytics?${params}`);
+  }
+  return renderAttendance(req, res, { date, classId, student, filter, tab, record, success, error });
+}));
+
+async function renderAttendance(req, res, { date, classId: requestedClass, student: requestedStudent, filter, tab, record, success, error, draft, editDraft }) {
+  const selectedDate = normalizeDateInput(date) || formatDateInput(new Date());
+  const canManage = Boolean(req.authUser?.permissions?.mark_absence);
+  const activeFilter = normalizeAttendanceFilter(filter);
   const nowSql = formatSqlDateTime(new Date());
-  const classActiveAbsences = selectedClass
-    ? await db.listAbsencePeriods({ classId: selectedClass, currentOrFuture: true, limit: 500 })
-    : [];
+  const [workspace, schoolDay, absenceReasons] = await Promise.all([
+    loadAttendanceWorkspace(req.authUser?.id, requestedClass, requestedStudent, selectedDate),
+    canManage ? db.getSchoolDayBounds(selectedDate) : null,
+    canManage ? db.getAbsenceReasons() : [],
+  ]);
+  const {
+    classes, mentorClassIds, selectedClass, allClassChildren, classDayAbsences, classActiveAbsences,
+    classStats, summary, selectedChild, childAbsences, currentAbsences, studentContext,
+  } = workspace;
   const classCurrentAbsences = classActiveAbsences.filter((absence) => isCurrentAbsence(absence, nowSql));
   const classFutureAbsences = classActiveAbsences.filter((absence) => isFutureAbsence(absence, nowSql));
-  const classStats = selectedClass ? await db.getClassAbsenceStats(selectedClass, { days: 30 }) : new Map();
   const activeAbsenceByStudent = new Map(
     classCurrentAbsences.map((absence) => [String(absence.student_id), absence]),
   );
@@ -231,51 +238,48 @@ app.get('/attendance', requirePageAuth, asyncHandler(async (req, res) => {
     classDayAbsences.map((absence) => [String(absence.student_id), absence]),
   );
 
-  const filteredChildren = searchedChildren
-    .map((child) => {
-      const currentAbsence = activeAbsenceByStudent.get(String(child.id));
-      const futureAbsence = futureAbsenceByStudent.get(String(child.id));
-      const dayAbsence = dayAbsenceByStudent.get(String(child.id));
-      const stats = classStats.get(String(child.id)) || {};
-      return {
-        ...child,
-        hasAbsence: Boolean(currentAbsence),
-        hasCurrentAbsence: Boolean(currentAbsence),
-        hasFutureAbsence: Boolean(futureAbsence),
-        currentAbsence,
-        futureAbsence,
-        dayAbsence,
-        stats,
-        isFrequent: Boolean(stats.frequent_absence),
-        hasMissingReason: isWithoutReasonCode(currentAbsence?.reason_code)
-          || isWithoutReasonCode(futureAbsence?.reason_code)
-          || isWithoutReasonCode(dayAbsence?.reason_code),
-        needsAttention: currentAbsence?.attention_status === 'needs_attention'
-          || futureAbsence?.attention_status === 'needs_attention'
-          || dayAbsence?.attention_status === 'needs_attention',
-      };
-    });
-
-  const selectedChild = allClassChildren.find((c) => String(c.id) === String(requestedStudent))
-    || filteredChildren[0]
-    || allClassChildren[0]
-    || null;
   const selectedStudentId = selectedChild?.id || '';
-  const canManage = Boolean(req.authUser?.permissions?.mark_absence);
-  const children = filteredChildren.map((child) => ({
-    ...child,
-    isActive: selectedStudentId && String(selectedStudentId) === String(child.id),
-    href: attendanceUrl({
-      classId: selectedClass,
-      studentId: child.id,
-      date: selectedDate,
-      filter: activeFilter,
-    }),
-  }));
+  const selectedMonth = selectedDate.slice(0, 7);
+  const analyticsParams = new URLSearchParams({ month: selectedMonth, attendanceDate: selectedDate });
+  if (selectedClass) analyticsParams.set('class', selectedClass);
+  const analyticsHref = `/attendance/analytics?${analyticsParams}`;
+  if (selectedStudentId) analyticsParams.set('student', selectedStudentId);
+  const studentAnalyticsHref = `/attendance/analytics?${analyticsParams}`;
+  const selectedRecord = /^\d+$/.test(String(record ?? '')) && [...childAbsences, ...classDayAbsences].find((absence) =>
+    String(absence.id) === String(record) && String(absence.student_id) === String(selectedStudentId));
+  if (selectedRecord && !childAbsences.some((absence) => String(absence.id) === record)) childAbsences.unshift(selectedRecord);
+  const selectedTab = ['active', 'history'].includes(tab) || (tab === 'mark' && canManage) ? tab : '';
+  const children = allClassChildren.map((child) => {
+    const currentAbsence = activeAbsenceByStudent.get(String(child.id));
+    const futureAbsence = futureAbsenceByStudent.get(String(child.id));
+    const dayAbsence = dayAbsenceByStudent.get(String(child.id));
+    const stats = classStats.get(String(child.id)) || {};
+    return {
+      ...child,
+      isActive: selectedStudentId && String(selectedStudentId) === String(child.id),
+      href: attendanceUrl({ classId: selectedClass, studentId: child.id, date: selectedDate, filter: activeFilter }),
+      hasAbsence: Boolean(currentAbsence),
+      hasCurrentAbsence: Boolean(currentAbsence),
+      hasFutureAbsence: Boolean(futureAbsence),
+      currentAbsence,
+      futureAbsence,
+      dayAbsence,
+      stats,
+      isFrequent: Boolean(stats.frequent_absence),
+      hasMissingReason: isWithoutReasonCode(currentAbsence?.reason_code)
+        || isWithoutReasonCode(futureAbsence?.reason_code)
+        || isWithoutReasonCode(dayAbsence?.reason_code),
+      needsAttention: currentAbsence?.attention_status === 'needs_attention'
+        || futureAbsence?.attention_status === 'needs_attention'
+        || dayAbsence?.attention_status === 'needs_attention',
+    };
+  });
   const attendanceSummaryFilters = buildAttendanceSummaryFilters(summary, {
     activeFilter,
     classId: selectedClass,
+    studentId: selectedStudentId,
     date: selectedDate,
+    tab: selectedTab,
   });
   const attendanceFilterTable = buildAttendanceFilterTable({
     activeFilter,
@@ -284,21 +288,24 @@ app.get('/attendance', requirePageAuth, asyncHandler(async (req, res) => {
     absences: classDayAbsences,
   });
 
-  const childAbsences = selectedStudentId
-    ? await db.listAbsencePeriods({ studentId: selectedStudentId, limit: 100 })
-    : [];
-  const currentAbsences = selectedStudentId
-    ? await db.listAbsencePeriods({ studentId: selectedStudentId, currentOrFuture: true, limit: 50 })
-    : [];
+  for (const absence of [...childAbsences, ...currentAbsences]) {
+    absence.is_historical = String(absence.starts_at).slice(0, 10) < String(nowSql).slice(0, 10);
+    if (canManage && editDraft && String(absence.id) === String(selectedRecord?.id)) {
+      absence.editDraft = editDraft;
+      if (editDraft.fullEdit) {
+        absence.reason_code = editDraft.reason;
+        absence.confirmation_status = editDraft.confirmationStatus;
+        absence.attention_status = editDraft.attentionStatus;
+      }
+    }
+  }
   const activeNowAbsences = currentAbsences.filter((absence) => isCurrentAbsence(absence, nowSql));
-  const futureAbsences = currentAbsences.filter((absence) => isFutureAbsence(absence, nowSql));
-  const studentContext = selectedStudentId
-    ? await db.getStudentContext(selectedStudentId, { days: 30 })
-    : null;
-  const reasons = (await db.getAbsenceReasons())
-    .filter((reason) => reason.code !== LEGACY_EXCUSED_REASON_CODE);
+  const futureAbsences = currentAbsences.filter((absence) => isFutureAbsence(absence, nowSql)).reverse();
+  const reasons = absenceReasons.filter((reason) => reason.code !== LEGACY_EXCUSED_REASON_CODE);
 
-  res.render('attendance', {
+  const formDraft = canManage && draft && String(requestedClass) === selectedClass
+    && String(requestedStudent) === String(selectedStudentId) ? draft : null;
+  return res.render('attendance', {
     title: 'Пропуски',
     currentUser: req.authUser,
     activePage: 'attendance',
@@ -320,17 +327,56 @@ app.get('/attendance', requirePageAuth, asyncHandler(async (req, res) => {
     studentContext,
     selectedClass,
     selectedDate,
+    analyticsHref,
+    studentAnalyticsHref,
+    selectedTab,
+    selectedRecordId: selectedRecord?.id,
     schoolDay,
     activeFilter,
-    q,
     reasons,
     defaultFrom: defaultDateTimeForDate(selectedDate, schoolDay),
-    attendanceActions: buildAttendanceActions(canManage),
-    success: req.query.success,
-    error: req.query.error,
+    draft: formDraft,
+    success,
+    batchCreatedCount: /^batch-([1-9]\d?)$/.exec(String(success || ''))?.[1] || '',
+    error,
     canManage,
   });
-}));
+}
+
+async function loadAttendanceWorkspace(userId, requestedClass, requestedStudent, selectedDate) {
+  const [baseClasses, mentorClassIds] = await Promise.all([db.getClasses(), db.getMentorClassIds(userId)]);
+  const classes = orderClassesByPreference(baseClasses, mentorClassIds);
+  const selectedClass = resolveSelectedClass(classes, requestedClass);
+  const selectedClassItem = classes.find((item) => String(item.id) === selectedClass);
+  const [roster, classDayAbsences, classActiveAbsences, classStats, summary] = selectedClass
+    ? await Promise.all([
+      loadAttendanceRoster(selectedClass, requestedStudent),
+      db.listAbsencePeriods({ classId: selectedClass, from: selectedDate, to: selectedDate, limit: 500 }),
+      db.listAbsencePeriods({ classId: selectedClass, currentOrFuture: true, limit: 500 }),
+      db.getClassAbsenceStats(selectedClass, { days: 30 }),
+      db.getAttendanceSummary({ classId: selectedClass, date: selectedDate, studentsTotal: selectedClassItem.students_count }),
+    ])
+    : [null, [], [], new Map(), null];
+  return {
+    classes, mentorClassIds, selectedClass, classDayAbsences, classActiveAbsences, classStats, summary,
+    allClassChildren: roster?.children ?? [], selectedChild: roster?.selectedChild ?? null,
+    childAbsences: roster?.childAbsences ?? [], currentAbsences: roster?.currentAbsences ?? [],
+    studentContext: roster?.studentContext ?? null,
+  };
+}
+
+async function loadAttendanceRoster(classId, requestedStudent) {
+  const children = await db.getStudentsByClass(classId);
+  const selectedChild = children.find((child) => String(child.id) === String(requestedStudent)) ?? children[0] ?? null;
+  const [childAbsences, currentAbsences, studentContext] = selectedChild
+    ? await Promise.all([
+      db.listAbsencePeriods({ studentId: selectedChild.id, limit: 100 }),
+      db.listAbsencePeriods({ studentId: selectedChild.id, currentOrFuture: true, limit: 50 }),
+      db.getStudentContext(selectedChild.id, { days: 30, student: selectedChild }),
+    ])
+    : [[], [], null];
+  return { children, selectedChild, childAbsences, currentAbsences, studentContext };
+}
 
 app.get('/attendance/me', requireOwnAttendanceAuth, asyncHandler(async (req, res) => {
   const analytics = sanitizeStudentMonthlyAnalytics(
@@ -354,6 +400,8 @@ app.get('/attendance/analytics', requirePageAuth, asyncHandler(async (req, res) 
   if (audience === AUDIENCE_ADULTS) {
     const analytics = await db.getAdultAttendanceAnalytics({
       month: req.query.month,
+      from: req.query.from,
+      to: req.query.to,
       departmentId: req.query.department,
       metricVersion: 2,
     });
@@ -363,6 +411,7 @@ app.get('/attendance/analytics', requirePageAuth, asyncHandler(async (req, res) 
       currentUser: req.authUser,
       activePage: 'analytics',
       audience,
+      adultView: true,
       audienceTabs,
       analytics,
       classOptions: [],
@@ -373,15 +422,19 @@ app.get('/attendance/analytics', requirePageAuth, asyncHandler(async (req, res) 
     });
   }
 
-  const mentorClassIds = await db.getMentorClassIds(req.authUser?.id);
-  const availableClasses = await db.getClasses();
+  const [mentorClassIds, availableClasses] = await Promise.all([
+    db.getMentorClassIds(req.authUser?.id),
+    db.getClasses(),
+  ]);
   const classId = req.query.class || mentorClassIds[0] || availableClasses[0]?.id || undefined;
-  const analytics = await db.getMonthlyAttendanceAnalytics({
-    month: req.query.month,
-    classId,
-    metricVersion: 2,
-  });
-  analytics.journal_school_day = await db.getSchoolDayBounds(formatDateInput(new Date()));
+  const [analytics, journalSchoolDay] = await Promise.all([
+    db.getMonthlyAttendanceAnalytics({ month: req.query.month, classId, metricVersion: 2, availableClasses }),
+    db.getSchoolDayBounds(formatDateInput(new Date())),
+  ]);
+  analytics.journal_school_day = journalSchoolDay;
+  const selectedStudent = /^\d+$/.test(String(req.query.student ?? '')) ? req.query.student : '';
+  const attendanceDate = normalizeDateInput(req.query.attendanceDate) || (analytics.month && analytics.month !== formatDateInput(new Date()).slice(0, 7)
+    ? `${analytics.month}-01` : undefined);
 
   res.render('analytics', {
     title: 'Аналитика посещаемости',
@@ -393,20 +446,26 @@ app.get('/attendance/analytics', requirePageAuth, asyncHandler(async (req, res) 
     classOptions: orderClassesByPreference(analytics.available_classes, mentorClassIds),
     departmentOptions: [],
     kpiCards: buildAnalyticsKpiCards(analytics),
+    canViewPhoneAnalytics: canViewPhoneAnalytics(req.authUser),
     canManage,
     canManagePresence,
+    attendanceHref: attendanceUrl({ classId, studentId: selectedStudent, date: attendanceDate }),
   });
+}));
+
+app.get('/api/attendance/analytics/phones', requireApiAuth, asyncHandler(async (req, res) => {
+  if (!canViewPhoneAnalytics(req.authUser)) return res.status(403).json({ error: 'forbidden' });
+  try {
+    const scope = await getPhoneEditScope(req.authUser);
+    const report = await db.getPhoneAnalytics({ from: req.query.from, to: req.query.to, classId: req.query.class, scope });
+    return res.set('Cache-Control', 'private, no-store').json(report);
+  } catch (err) { return sendApiError(res, err); }
 }));
 
 app.get('/attendance/presence', requirePageAuth, asyncHandler(async (req, res) => {
   const audience = normalizePageAudience(req.query.audience, req.authUser);
-  const selectedDate = formatDateInput(new Date());
-  const classIds = await getPresenceViewClassScope(req.authUser, audience);
   const canManage = Boolean(req.authUser?.permissions?.manage_presence);
-  const board = toPublicPresenceBoard(
-    await db.getPresenceBoard({ date: selectedDate, audience, classIds }),
-    { canManage },
-  );
+  const board = await getPublicPresenceBoard(req.authUser, audience);
 
   res.render('presence', {
     title: 'Сейчас в школе',
@@ -414,6 +473,7 @@ app.get('/attendance/presence', requirePageAuth, asyncHandler(async (req, res) =
     activePage: 'presence',
     wideLayout: true,
     audience,
+    adultView: audience === AUDIENCE_ADULTS,
     audienceTabs: buildAudienceTabs('/attendance/presence', audience, req.query, req.authUser),
     board,
     canManage,
@@ -424,54 +484,81 @@ app.get('/attendance/presence/manual', requirePageAuth, requirePermission('manag
   const audience = normalizePageAudience(req.query.audience, req.authUser);
   const selectedDate = formatDateInput(new Date());
   const classIds = await getPresenceClassScope(req.authUser, audience);
-  const board = await db.getPresenceBoard({ date: selectedDate, audience, classIds });
+  const board = await db.getPresenceBoard({ date: selectedDate, audience, classIds, includePhoneChecks: true });
 
   res.render('presence-manual', {
-    title: 'Ручной ввод',
+    title: 'Приход и уход',
     currentUser: req.authUser,
     activePage: 'presence-manual',
     audience,
+    adultView: audience === AUDIENCE_ADULTS,
     audienceTabs: buildAudienceTabs('/attendance/presence/manual', audience, req.query, req.authUser),
     board,
   });
 }));
 
+
 app.get('/attendance/:childId/new', requirePageAuth, asyncHandler(async (req, res) => {
   const { childId } = req.params;
-  const selectedClass = req.query.class;
   const child = await db.getStudentById(childId);
-  if (!child) return res.status(404).send('Ученик не найден');
+  if (!child || !child.classId) return renderRequestError(req, res, { status: 404, title: 'Ученик не найден' });
 
-  const redirectClass = selectedClass || child.classId;
-  return res.redirect(attendanceUrl({ classId: redirectClass, studentId: child.id }));
+  const tab = req.authUser.permissions.mark_absence ? 'mark' : 'active';
+  return res.redirect(attendanceUrl({ classId: child.classId, studentId: child.id, date: normalizeDateInput(req.query.date), tab }));
 }));
 
 app.post('/attendance', requirePageAuth, requirePermission('mark_absence'), asyncHandler(async (req, res) => {
+  const body = req.body ?? {};
+  const input = absenceInputFromBody(body, req.authUser);
+  const repeating = body.repeatWeekly === '1';
   try {
-    const absence = await db.createAbsencePeriod(absenceInputFromBody(req.body, req.authUser));
-    res.redirect(attendanceUrl({
+    const created = repeating
+      ? await db.createAbsencePeriodsBatch(expandWeeklyAbsences(input, body.repeatUntil, body.repeatWeekdays))
+      : [await db.createAbsencePeriod(input)];
+    const absence = created[0];
+    return res.redirect(303, `${attendanceUrl({
       classId: absence.class_id,
       studentId: absence.student_id,
-      date: dateOnlyFromDateTime(absence.starts_at) || req.body.date,
-      analyticsMonth: req.body.analyticsMonth,
-      success: 'created',
-    }));
+      date: dateOnlyFromDateTime(absence.starts_at) || body.date,
+      filter: body.filter,
+      analyticsMonth: body.analyticsMonth,
+      success: repeating ? `batch-${created.length}` : 'created',
+    })}#attendance-feedback`);
   } catch (err) {
-    res.redirect(attendanceUrl({
-      classId: req.body.classId,
-      studentId: req.body.childId,
-      date: req.body.date,
-      analyticsMonth: req.body.analyticsMonth,
+    const repeatWeekdays = Array.isArray(body.repeatWeekdays) ? body.repeatWeekdays : [body.repeatWeekdays];
+    res.set('Cache-Control', 'no-store');
+    res.status(err?.status >= 400 && err.status < 500 ? err.status : 500);
+    return renderAttendance(req, res, {
+      classId: input.classId,
+      student: input.studentId,
+      date: body.date,
+      filter: body.filter,
       error: userErrorMessage(err),
-    }));
+      draft: {
+        from: String(input.startsAt ?? ''),
+        to: String(input.endsAt ?? ''),
+        reason: String(input.reasonCode ?? ''),
+        comment: String(input.comment ?? ''),
+        repeatWeekly: repeating,
+        repeatUntil: String(body.repeatUntil ?? ''),
+        repeatWeekdays: repeatWeekdays.filter((day) => typeof day === 'string' && /^[1-7]$/.test(day)),
+      },
+    });
   }
 }));
+
+function attendanceRecordReturn(body, context) {
+  const tab = body?.returnTab;
+  if (tab !== 'active' && tab !== 'history') return attendanceUrl(context);
+  const url = attendanceUrl({ ...context, tab, date: body.date || context.date, filter: body.filter });
+  return `${url}#attendance-feedback`;
+}
 
 app.post('/attendance/:absenceId/update', requirePageAuth, requirePermission('mark_absence'), asyncHandler(async (req, res) => {
   try {
     const absence = await db.updateAbsencePeriod(req.params.absenceId, absenceInputFromBody(req.body, req.authUser));
     if (!absence) {
-      return res.redirect(attendanceUrl({
+      return res.redirect(attendanceRecordReturn(req.body, {
         classId: req.body.classId,
         studentId: req.body.childId,
         date: req.body.date,
@@ -479,7 +566,7 @@ app.post('/attendance/:absenceId/update', requirePageAuth, requirePermission('ma
         error: 'Отметка не найдена',
       }));
     }
-    return res.redirect(attendanceUrl({
+    return res.redirect(attendanceRecordReturn(req.body, {
       classId: absence.class_id,
       studentId: absence.student_id,
       date: dateOnlyFromDateTime(absence.starts_at) || req.body.date,
@@ -487,19 +574,36 @@ app.post('/attendance/:absenceId/update', requirePageAuth, requirePermission('ma
       success: 'updated',
     }));
   } catch (err) {
-    return res.redirect(attendanceUrl({
-      classId: req.body.classId,
-      studentId: req.body.childId,
-      date: req.body.date,
-      analyticsMonth: req.body.analyticsMonth,
+    const body = req.body ?? {};
+    const mode = body.editMode === 'comment' ? 'comment' : 'edit';
+    const input = (name) => typeof body[name] === 'string' ? body[name] : '';
+    return renderAttendance(req, res.status(err?.status >= 400 && err.status < 500 ? err.status : 500).set('Cache-Control', 'no-store'), {
+      classId: body.classId,
+      student: body.childId,
+      date: body.date,
+      filter: body.filter,
+      tab: 'history',
+      record: req.params.absenceId,
       error: userErrorMessage(err),
-    }));
+      editDraft: {
+        commentOnly: mode === 'comment',
+        fullEdit: mode === 'edit',
+        comment: input('comment'), changeReason: input('changeReason'), expected: input('expectedUpdatedAt'),
+        from: input('from'), to: input('to'), reason: input('reason'),
+        confirmationStatus: input('confirmationStatus'), attentionStatus: input('attentionStatus'),
+      },
+    });
   }
 }));
 
-app.post('/attendance/:absenceId/delete', requirePageAuth, requirePermission('mark_absence'), asyncHandler(async (req, res) => {
-  const deleted = await db.softDeleteAbsencePeriod(req.params.absenceId, req.authUser?.id);
-  res.redirect(attendanceUrl({
+app.post('/attendance/:absenceId/delete', requirePageAuth, requirePermission('mark_absence'), requireAbsenceAudience(db.getAbsencePeriodById), asyncHandler(async (req, res) => {
+  let deleted;
+  try {
+    deleted = await db.softDeleteAbsencePeriod(req.params.absenceId, req.authUser?.id, req.body || {});
+  } catch (err) {
+    return res.redirect(attendanceRecordReturn(req.body, { classId: req.body.classId, studentId: req.body.childId, date: req.body.date, error: err.message }));
+  }
+  res.redirect(attendanceRecordReturn(req.body, {
     classId: req.body.classId,
     studentId: req.body.childId,
     date: req.body.date,
@@ -509,9 +613,9 @@ app.post('/attendance/:absenceId/delete', requirePageAuth, requirePermission('ma
   }));
 }));
 
-app.post('/attendance/:absenceId/resolve', requirePageAuth, requirePermission('mark_absence'), asyncHandler(async (req, res) => {
+app.post('/attendance/:absenceId/resolve', requirePageAuth, requirePermission('mark_absence'), requireAbsenceAudience(db.getAbsencePeriodById), asyncHandler(async (req, res) => {
   const absence = await db.resolveAbsenceAttention(req.params.absenceId, req.authUser?.id);
-  res.redirect(attendanceUrl({
+  res.redirect(attendanceRecordReturn(req.body, {
     classId: req.body.classId || absence?.class_id,
     studentId: req.body.childId || absence?.student_id,
     date: req.body.date,
@@ -524,6 +628,7 @@ app.post('/attendance/:absenceId/resolve', requirePageAuth, requirePermission('m
 // Read model for Diary and analytics: absence periods with filters.
 app.get('/api/attendance/absences', requireApiAuth, asyncHandler(async (req, res) => {
   const periods = await db.listAbsencePeriods({
+    childrenOnly: !isAdmin(req.authUser),
     from: req.query.from,
     to: req.query.to,
     classId: req.query.classId,
@@ -534,14 +639,43 @@ app.get('/api/attendance/absences', requireApiAuth, asyncHandler(async (req, res
 }));
 
 app.get('/api/attendance/presence/events', requireApiAuth, asyncHandler(async (req, res) => {
+  const audience = normalizeApiAudience(req.query.audience);
+  if (!canUseAudience(req.authUser, audience)) return res.status(403).json({ error: 'forbidden' });
   const events = await db.listPresenceEvents({
     from: req.query.from,
     to: req.query.to,
     classId: req.query.classId,
     studentId: req.query.studentId,
     limit: req.query.limit,
+    audience,
+    classIds: await getPresenceViewClassScope(req.authUser, audience),
+    allowLate: Boolean(req.authUser.permissions.mark_absence),
   });
   res.json({ items: events.map(toPublicPresenceEvent) });
+}));
+
+app.get('/api/attendance/students/:id/history', requireApiAuth, asyncHandler(async (req, res) => {
+  try {
+    const student = await db.getStudentById(req.params.id);
+    if (!student) return res.status(404).json({ error: 'not_found' });
+    const classIds = await getPresenceViewClassScope(req.authUser, AUDIENCE_CHILDREN);
+    const access = { roleId: req.authUser.rawRoleId, classIds, canMarkAbsence: Boolean(req.authUser.permissions.mark_absence) };
+    const history = await db.getStudentAttendanceHistory(req.params.id, {
+      cursor: req.query.cursor, from: req.query.from, to: req.query.to,
+      includeCancelled: req.query.includeCancelled, limit: req.query.limit,
+      presenceClassIds: classIds, allowLate: access.canMarkAbsence,
+    });
+    return res.json({ ...history, items: history.items.map((item) => ({
+      kind: item.kind, id: item.id, occurred_at: item.occurred_at,
+      record: {
+        ...(item.kind === 'absence' ? toPublicAbsence(item.record) : toPublicPresenceEvent(item.record)),
+        ...(item.kind === 'absence'
+          ? { can_edit: access.canMarkAbsence && !item.record.deleted_at, can_cancel: access.canMarkAbsence && !item.record.deleted_at }
+          : presenceHistoryCapabilities(item.record, access)),
+        changes: item.record.changes,
+      },
+    })) });
+  } catch (err) { return sendApiError(res, err); }
 }));
 
 app.get('/api/attendance/presence/board', requireApiAuth, asyncHandler(async (req, res) => {
@@ -549,14 +683,10 @@ app.get('/api/attendance/presence/board', requireApiAuth, asyncHandler(async (re
   if (!canUseAudience(req.authUser, audience)) {
     return res.status(403).json({ error: 'forbidden' });
   }
-  const classIds = await getPresenceViewClassScope(req.authUser, audience);
-  const canManage = Boolean(req.authUser?.permissions?.manage_presence);
-  const board = toPublicPresenceBoard(
-    await db.getPresenceBoard({ date: formatDateInput(new Date()), audience, classIds }),
-    { canManage },
-  );
-  return res.json({ ...board, can_manage_presence: canManage });
+  const board = await getPublicPresenceBoard(req.authUser, audience);
+  return res.set('Cache-Control', 'no-store').json(board);
 }));
+
 app.get('/api/attendance/conflicts', requireApiAuth, requirePermission('manage_presence'), asyncHandler(async (req, res) => {
   const audience = normalizeApiAudience(req.query.audience);
   if (!canUseAudience(req.authUser, audience)) return res.status(403).json({ error: 'forbidden' });
@@ -602,11 +732,79 @@ app.get('/api/attendance/students/:id/analytics', requireApiAuth, asyncHandler(a
 
 app.get('/api/v2/attendance/students/:id/analytics', requireApiAuth, asyncHandler(async (req, res) => {
   const analytics = await db.getStudentMonthlyAnalytics(req.params.id, { month: req.query.month, metricVersion: 2 });
+  const canManagePresence = await canManageStudentPresence(req.authUser, analytics.student?.class_id);
   return res.json({
     ...analytics,
     can_manage: Boolean(req.authUser?.permissions?.mark_absence),
-    can_manage_presence: await canManageStudentPresence(req.authUser, analytics.student?.class_id),
+    can_manage_presence: canManagePresence,
+    can_manage_phone: await canManageStudentPhone(req.authUser, {
+      id: req.params.id, classId: analytics.student?.class_id,
+    }),
   });
+}));
+
+app.get('/api/attendance/students/:id/export', requireApiAuth, asyncHandler(async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  try {
+    if (!/^[1-9]\d*$/.test(req.params.id) || !Number.isSafeInteger(Number(req.params.id))) {
+      return res.status(404).json({ error: 'not_found', message: 'Ученик не найден.' });
+    }
+    let options;
+    try {
+      options = parseStudentExportOptions(req.query);
+    } catch (err) {
+      throw new db.ValidationError(err.message);
+    }
+    const student = await db.getStudentById(req.params.id);
+    if (!student) return res.status(404).json({ error: 'not_found', message: 'Ученик не найден.' });
+
+    const { range, mode, format } = options;
+    const data = await db.getStudentAttendanceExport(student, range);
+    const report = buildStudentExportReport(data, range, mode);
+    const file = format === 'pdf' ? await renderStudentAttendancePdf(report) : renderStudentAttendanceCsv(report);
+    const name = report.student.name.replace(/[\\/:*?"<>|\x00-\x1f]/g, ' ').trim().slice(0, 100);
+    const type = mode === 'all' ? 'Посещаемость' : STUDENT_EXPORT_MODE_LABELS[mode];
+    return res.attachment(`${type} - ${name} - ${range.from} - ${range.to}.${format}`)
+      .type(format === 'pdf' ? 'application/pdf' : 'text/csv; charset=utf-8').send(file);
+  } catch (err) {
+    return sendApiError(res, err);
+  }
+}));
+
+async function requireStudentPhoneAccess(req, res, next) {
+  const student = await db.getStudentById(req.params.id);
+  if (!student) return res.status(404).json({ error: 'not_found' });
+  if (!await canManageStudentPhone(req.authUser, student)) {
+    return res.status(403).json({ error: 'forbidden' });
+  }
+  req.phoneStudent = student;
+  res.set('Cache-Control', 'no-store');
+  return next();
+}
+
+app.get('/api/attendance/students/:id/phone-handover', requireApiAuth, asyncHandler(requireStudentPhoneAccess), asyncHandler(async (req, res) => {
+  const days = await db.listStudentPhoneHandover(req.phoneStudent.id, req.query.month);
+  return res.json({ days });
+}));
+
+app.get('/api/attendance/students/:id/phone-handover/:date', requireApiAuth, asyncHandler(requireStudentPhoneAccess), asyncHandler(async (req, res) => {
+  try {
+    const day = await db.getStudentPhoneHandoverDay(req.phoneStudent.id, req.params.date);
+    return res.json({ day });
+  } catch (err) { return sendApiError(res, err); }
+}));
+
+app.patch('/api/attendance/students/:id/phone-handover/:date', requireApiAuth, asyncHandler(requireStudentPhoneAccess), asyncHandler(async (req, res) => {
+  try {
+    const day = await db.updateStudentPhoneHandover({
+      studentId: req.phoneStudent.id, date: req.params.date, actorId: req.authUser.id,
+      submitted: req.body?.submitted, action: req.body?.action, answers: req.body?.answers, expectedRevision: req.body?.expectedRevision,
+    });
+    return res.json({ day });
+  } catch (err) {
+    if (err.status === 409 && err.phoneDay) return res.status(409).json({ error: 'conflict', message: err.message, day: err.phoneDay });
+    return sendApiError(res, err);
+  }
 }));
 
 app.get('/api/v2/attendance/people/:id/analytics', requireApiAuth, asyncHandler(async (req, res) => {
@@ -644,6 +842,8 @@ app.get('/api/attendance/analytics/monthly', requireApiAuth, asyncHandler(async 
     const analytics = await db.getAdultAttendanceAnalytics({
       month: req.query.month,
       departmentId: req.query.departmentId || req.query.department,
+      from: req.query.from,
+      to: req.query.to,
     });
     return res.json(analytics);
   }
@@ -666,6 +866,8 @@ app.get('/api/v2/attendance/analytics/monthly', requireApiAuth, asyncHandler(asy
     return res.json(await db.getAdultAttendanceAnalytics({
       month: req.query.month,
       departmentId: req.query.departmentId || req.query.department,
+      from: req.query.from,
+      to: req.query.to,
       metricVersion: 2,
     }));
   }
@@ -703,6 +905,7 @@ app.post('/api/attendance/presence/toggle', requireApiAuth, requirePermission('m
     res.status(result.duplicate ? 200 : 201).json({
       event: toPublicPresenceEvent(result.event),
       state: result.state,
+      phone_check: result.phoneCheck,
       conflicts: (result.conflicts || []).map(toPublicAttendanceConflict),
       duplicate: Boolean(result.duplicate),
     });
@@ -731,7 +934,24 @@ app.post('/api/attendance/presence/late', requireApiAuth, requirePermission('mar
   }
 }));
 
-app.post('/api/attendance/presence/events/:id/cancel', requireApiAuth, requirePermission('manage_presence'), asyncHandler(async (req, res) => {
+app.patch('/api/attendance/presence/events/:id', requireApiAuth, requirePermission('mark_absence'), asyncHandler(async (req, res) => {
+  try {
+    const audience = normalizeApiAudience(req.body?.audience);
+    if (!canUseAudience(req.authUser, audience)) return res.status(403).json({ error: 'forbidden' });
+    const access = {
+      roleId: req.authUser.rawRoleId, classIds: await getPresenceClassScope(req.authUser, audience),
+      canMarkAbsence: Boolean(req.authUser.permissions.mark_absence),
+    };
+    const result = await db.updatePresenceEvent(req.params.id, {
+      occurredAt: req.body.occurredAt, eventType: req.body.eventType, reason: req.body.reason,
+      expectedUpdatedAt: req.body.expectedUpdatedAt, audience, actorId: req.authUser.id,
+    }, access);
+    if (!result) return res.status(404).json({ error: 'not_found' });
+    return res.json({ event: toPublicPresenceEvent(result.event), conflicts: result.conflicts.map(toPublicAttendanceConflict) });
+  } catch (err) { return sendApiError(res, err); }
+}));
+
+app.post('/api/attendance/presence/events/:id/cancel', requireApiAuth, requirePermission('mark_absence'), asyncHandler(async (req, res) => {
   try {
     const audience = normalizeApiAudience(req.body?.audience);
     if (!canUseAudience(req.authUser, audience)) {
@@ -742,6 +962,10 @@ app.post('/api/attendance/presence/events/:id/cancel', requireApiAuth, requirePe
       audience,
       classIds,
       allowAutomaticLatest: isAdmin(req.authUser),
+      roleId: req.authUser.rawRoleId,
+      canMarkAbsence: Boolean(req.authUser.permissions.mark_absence),
+      reason: req.body?.reason,
+      expectedUpdatedAt: req.body?.expectedUpdatedAt,
     });
     if (!result) {
       return res.status(404).json({ error: 'not_found' });
@@ -787,15 +1011,15 @@ app.patch('/api/attendance/absences/:id', requireApiAuth, requirePermission('mar
   }
 }));
 
-app.delete('/api/attendance/absences/:id', requireApiAuth, requirePermission('mark_absence'), asyncHandler(async (req, res) => {
-  const deleted = await db.softDeleteAbsencePeriod(req.params.id, req.authUser?.id);
-  if (!deleted) {
-    return res.status(404).json({ error: 'not_found' });
-  }
-  return res.json({ deleted: true });
+app.delete('/api/attendance/absences/:id', requireApiAuth, requirePermission('mark_absence'), requireAbsenceAudience(db.getAbsencePeriodById), asyncHandler(async (req, res) => {
+  try {
+    const deleted = await db.softDeleteAbsencePeriod(req.params.id, req.authUser?.id, req.body || {});
+    if (!deleted) return res.status(404).json({ error: 'not_found' });
+    return res.json({ deleted: true });
+  } catch (err) { return sendApiError(res, err); }
 }));
 
-app.post('/api/attendance/absences/:id/resolve', requireApiAuth, requirePermission('mark_absence'), asyncHandler(async (req, res) => {
+app.post('/api/attendance/absences/:id/resolve', requireApiAuth, requirePermission('mark_absence'), requireAbsenceAudience(db.getAbsencePeriodById), asyncHandler(async (req, res) => {
   const absence = await db.resolveAbsenceAttention(req.params.id, req.authUser?.id);
   if (!absence) {
     return res.status(404).json({ error: 'not_found' });
@@ -803,21 +1027,41 @@ app.post('/api/attendance/absences/:id/resolve', requireApiAuth, requirePermissi
   return res.json(toPublicAbsence(absence));
 }));
 
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/') || req.path.startsWith('/internal/')) return next();
+  return renderRequestError(req, res, { status: 404, title: 'Страница не найдена' });
+});
+
 app.use((err, req, res, next) => {
-  mlog('Ошибка обработки запроса', err?.stack || err);
   if (res.headersSent) return next(err);
+  mlog('Ошибка обработки запроса', err?.stack || err);
   if (req.path?.startsWith('/api/') || req.path?.startsWith('/internal/')) {
     if (err?.status && err.status < 500) {
       return res.status(err.status).json({ error: 'validation_error', message: err.message });
     }
     return res.status(500).json({ error: 'internal_error' });
   }
-  return res.status(500).send('Не удалось загрузить данные посещаемости');
+  const status = err?.status >= 400 && err.status < 500 ? err.status : 500;
+  const requestError = status === 500
+    ? { status, title: 'Не удалось загрузить посещаемость', message: 'Повторите попытку через несколько минут.' }
+    : { status, title: 'Не удалось открыть страницу', message: err.message };
+  if (req.path === '/attendance/analytics' && status === 400) {
+    requestError.actionHref = '/attendance/analytics';
+    requestError.actionLabel = 'Вернуться в аналитику';
+  }
+  return renderRequestError(req, res, requestError);
 });
 
-app.listen(PORT, () => {
-  mlog(`Приложение запущено на порту ${PORT}`);
-});
+const entryPoint = process.env.pm_exec_path || process.argv[1];
+if (entryPoint && pathToFileURL(path.resolve(entryPoint)).href === import.meta.url) {
+  process.on('uncaughtException', (err) => {
+    mlog('Глобальный косяк приложения!!! ', err.stack);
+  });
+  await db.ensureAttendanceSchema();
+  app.listen(PORT, () => {
+    mlog(`Приложение запущено на порту ${PORT}`);
+  });
+}
 
 function asyncHandler(fn) {
   return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -906,10 +1150,57 @@ async function getPresenceViewClassScope(user, audience) {
     : [];
   return presenceViewClassScope(user?.role, { audience, mentorClassIds });
 }
+
 async function canManageStudentPresence(user, classId) {
   if (!user?.permissions?.manage_presence) return false;
   const classIds = await getPresenceClassScope(user, AUDIENCE_CHILDREN);
   return canManagePresenceClass(classIds, classId);
+}
+
+async function getPhoneEditScope(user) {
+  const role = Number(user?.rawRoleId);
+  if (role === 5) return { classIds: null, assigned: [] };
+  if (![3, 4].includes(role)) return { classIds: [], assigned: [] };
+  const [classIds, assigned] = await Promise.all([
+    db.getMentorClassIds(user.id),
+    role === 3 ? db.getMentorStudentAssignments(user.id) : [],
+  ]);
+  return { classIds, assigned };
+}
+
+function canViewPhoneAnalytics(user) {
+  return [3, 4, 5].includes(Number(user?.rawRoleId));
+}
+
+function phoneEditPredicate({ classIds, assigned }) {
+  const studentIds = new Set(assigned.map(({ id }) => String(id)));
+  const classes = new Set(classIds);
+  return (student) => classIds === null || classes.has(String(student.classId)) || studentIds.has(String(student.id));
+}
+
+async function canManageStudentPhone(user, student) {
+  return phoneEditPredicate(await getPhoneEditScope(user))(student);
+}
+
+async function getPublicPresenceBoard(user, audience) {
+  const children = audience === AUDIENCE_CHILDREN;
+  const mentor = children && Number(user?.rawRoleId) === 3;
+  const scope = children ? await getPhoneEditScope(user) : { classIds: [], assigned: [] };
+  const canEditPhone = phoneEditPredicate(scope);
+  const mentorClassIds = mentor ? scope.classIds : [];
+  const viewClasses = mentor ? [...new Set([...mentorClassIds, ...scope.assigned.map(({ classId }) => classId)])]
+    : presenceViewClassScope(user?.role, { audience });
+  const canManage = Boolean(user?.permissions?.manage_presence);
+  const board = await db.getPresenceBoard({
+    date: formatDateInput(new Date()), audience, classIds: viewClasses,
+    includePhoneChecks: children && (scope.classIds === null || scope.classIds.length > 0 || scope.assigned.length > 0),
+    filterStudent: mentor ? canEditPhone : null,
+  });
+  return toPublicPresenceBoard(board, {
+    canManage,
+    canManageRow: (student) => canManage && (!mentor || canManagePresenceClass(mentorClassIds, student.classId)),
+    canEditPhone,
+  });
 }
 
 function isAdmin(user) {
@@ -919,8 +1210,8 @@ function isAdmin(user) {
 function buildAudienceTabs(basePath, activeAudience, query = {}, user = null) {
   if (!user?.permissions?.view_adult_attendance) return [];
   return [
-    { id: AUDIENCE_CHILDREN, label: 'Дети' },
-    { id: AUDIENCE_ADULTS, label: 'Взрослые' },
+    { id: AUDIENCE_CHILDREN, label: 'Ученики' },
+    { id: AUDIENCE_ADULTS, label: 'Сотрудники' },
   ].map((item) => ({
     ...item,
     active: item.id === activeAudience,
@@ -956,6 +1247,8 @@ function absenceInputFromBody(body, user) {
     confirmationStatus: body.confirmationStatus ?? body.confirmation_status,
     attentionStatus: body.attentionStatus ?? body.attention_status,
     actorId: user?.id || null,
+    expectedUpdatedAt: body.expectedUpdatedAt,
+    changeReason: body.changeReason,
   };
 }
 
@@ -966,6 +1259,11 @@ function presenceInputFromBody(body, user) {
     idempotencyKey: body.idempotencyKey ?? body.idempotency_key,
     audience: normalizeApiAudience(body.audience),
     actorId: user?.id || null,
+    phoneSubmitted: body.phoneSubmitted,
+    phoneAction: body.phoneAction,
+    phoneRevision: body.phoneRevision,
+    expectedDate: body.expectedDate,
+    expectedLastEventId: body.expectedLastEventId,
   };
 }
 
@@ -994,6 +1292,9 @@ function toPublicAbsence(absence) {
     created_by: absence.created_by ? Number(absence.created_by) : null,
     created_at: absence.created_at,
     updated_at: absence.updated_at,
+    expected_updated_at: historyVersion(absence),
+    deleted_at: absence.deleted_at || null,
+    deleted_by: absence.deleted_by ? Number(absence.deleted_by) : null,
   };
 }
 
@@ -1018,16 +1319,19 @@ function toPublicPresenceEvent(event) {
     cancelled_by: event.cancelled_by ? Number(event.cancelled_by) : null,
     created_at: event.created_at,
     updated_at: event.updated_at,
+    expected_updated_at: historyVersion(event),
   };
 }
 
-function toPublicPresenceBoard(board, { canManage = false } = {}) {
+function toPublicPresenceBoard(board, { canManage, canManageRow, canEditPhone }) {
   return {
     audience: board?.audience || AUDIENCE_CHILDREN,
     is_adult: Boolean(board?.is_adult),
     date: board?.date || '',
     date_label: formatPresenceDateLabel(board?.date) || board?.date_label || '',
     generated_at: board?.generated_at || '',
+    can_manage_presence: canManage,
+    can_edit_phone: board.classes.some(({ students }) => students.some(canEditPhone)),
     totals: {
       classes: Number(board?.totals?.classes || 0),
       students: Number(board?.totals?.students || 0),
@@ -1043,16 +1347,30 @@ function toPublicPresenceBoard(board, { canManage = false } = {}) {
       name: classItem.name || '',
       anchor: classItem.anchor || '',
       students_label: classItem.students_label || '',
-      students: (classItem.students || []).map((student) => ({
-        id: String(student.id || ''),
-        name: student.name || '',
-        classId: String(student.classId || ''),
-        className: student.className || classItem.name || '',
-        state: toPublicPresenceBoardState(student.state, { canManage }),
-        presence_events: canManage
-          ? (student.presence_events || []).map(toPublicPresenceHistoryEvent)
-          : [],
-      })),
+      schedule: classItem.schedule ? {
+        status_code: classItem.schedule.status_code || 'empty',
+        status_label: classItem.schedule.status_label || 'Нет расписания',
+        has_lesson: Boolean(classItem.schedule.has_lesson),
+        subject_label: classItem.schedule.subject_label || '',
+        time_label: classItem.schedule.time_label || '',
+        room_label: classItem.schedule.room_label || '',
+        has_room: Boolean(classItem.schedule.has_room),
+      } : null,
+      students: (classItem.students || []).map((student) => {
+        const canManagePresence = canManageRow(student);
+        const canEditStudentPhone = canEditPhone(student);
+        return {
+          id: String(student.id || ''),
+          name: student.name || '',
+          classId: String(student.classId || ''),
+          className: student.className || classItem.name || '',
+          state: toPublicPresenceBoardState(student.state, { canManage: canManagePresence }),
+          can_manage_presence: canManagePresence,
+          can_edit_phone: canEditStudentPhone,
+          phone_check: canEditStudentPhone ? student.phone_check || null : null,
+          presence_events: canManagePresence ? (student.presence_events || []).map(toPublicPresenceHistoryEvent) : [],
+        };
+      }),
     })),
   };
 }
@@ -1076,6 +1394,11 @@ function toPublicPresenceBoardState(state, { canManage = false } = {}) {
     is_late: Boolean(state?.is_late),
     late_minutes: Number.isInteger(state?.late_minutes) ? state.late_minutes : null,
     late_label: state?.late_label || '',
+    late_lesson: state?.late_lesson ? {
+      subject_name: state.late_lesson.subject_name,
+      teacher_name: state.late_lesson.teacher_name,
+      starts_at: state.late_lesson.starts_at,
+    } : null,
     current_status_code: state?.current_status_code || 'none',
     current_status_label: state?.current_status_label || 'Нет отметки',
     status_code: state?.status_code || 'none',
@@ -1115,31 +1438,30 @@ function buildAnalyticsKpiCards(analytics) {
       {
         label: 'Посещаемость',
         value: hasScheduled ? `${Number(kpi.attendance_percent || 0)}%` : '—',
-        hint: 'по опубликованному расписанию',
+        hint: hasScheduled ? `${formatMinutesAsHours(kpi.attended_minutes)} из ${formatMinutesAsHours(kpi.scheduled_minutes)} по расписанию` : '',
         border_class: hasScheduled ? 'border-emerald-500' : 'border-gray-300',
       },
       {
-        label: 'Пропущено',
+        label: 'Пропущено учебного времени',
         value: formatMinutesAsHours(kpi.missed_minutes),
-        hint: 'фактическое учебное время',
         border_class: Number(kpi.missed_minutes || 0) ? 'border-amber-500' : 'border-emerald-500',
       },
       {
-        label: 'Нет отметки',
+        label: 'Из них без отметки',
         value: formatMinutesAsHours(kpi.no_mark_minutes),
-        hint: 'считается отсутствием',
         border_class: Number(kpi.no_mark_minutes || 0) ? 'border-red-500' : 'border-emerald-500',
       },
       {
-        label: 'Конфликты',
+        label: 'Отметки расходятся',
         value: Number(analytics.quality?.conflicts || 0),
-        hint: 'исключены из процента',
+        hint: 'Один случай на ученика в день',
+        ...(analytics.quality?.conflicts ? { href: '#data-quality', target_id: 'data-quality' } : {}),
         border_class: Number(analytics.quality?.conflicts || 0) ? 'border-red-500' : 'border-emerald-500',
       },
       {
-        label: 'Запланировано',
+        label: 'Будущие пропуски',
         value: formatMinutesAsHours(kpi.planned_absence_minutes),
-        hint: `${Number(kpi.planned_absence_days || 0)} ученик-дн. · не входит в факт`,
+        hint: 'Не входят в процент посещаемости',
         border_class: 'border-sky-500',
       },
     ];
@@ -1203,31 +1525,31 @@ function buildAdultAnalyticsKpiCards(analytics) {
   if (Number(analytics.metric_version || 1) === 2) {
     return [
       {
-        label: 'В школе',
+        label: 'Время в школе',
         value: kpi.onsite_hours_label || formatMinutesAsHours(kpi.onsite_minutes),
-        hint: 'наблюдаемое время, без нормы',
+        hint: 'По отметкам прихода и ухода',
         border_class: Number(kpi.onsite_minutes || 0) ? 'border-emerald-500' : 'border-gray-300',
       },
       {
-        label: 'Дни с приходом',
+        label: 'Дни присутствия',
         value: Number(kpi.present_days || 0),
         hint: 'по фактическим отметкам',
         border_class: Number(kpi.present_days || 0) ? 'border-emerald-500' : 'border-gray-300',
       },
       {
-        label: 'Сегодня пришли',
-        value: summary.present_today_label || Number(kpi.present_today || 0),
-        border_class: Number(kpi.present_today || 0) ? 'border-emerald-500' : 'border-gray-300',
+        label: 'Дни с опозданием',
+        value: analytics.staff_arrivals?.late_days || 0,
+        hint: `Сотрудников: ${analytics.staff_arrivals?.late_people || 0}`,
+        href: '#adult-people', target_id: 'adult-people', action_label: 'Смотреть сотрудников',
       },
       {
-        label: 'Сегодня ушли',
-        value: summary.departed_today_label || Number(kpi.departed_today || 0),
-        border_class: Number(kpi.departed_today || 0) ? 'border-slate-500' : 'border-gray-300',
+        label: 'Нет отметки прихода',
+        value: analytics.staff_arrivals?.no_arrival_days || 0,
+        hint: 'дни со сменой или очным уроком',
       },
       {
-        label: 'Конфликты',
+        label: 'Отметки расходятся',
         value: Number(kpi.open_conflicts || 0),
-        hint: 'требуют решения',
         border_class: Number(kpi.open_conflicts || 0) ? 'border-red-500' : 'border-emerald-500',
       },
     ];
@@ -1286,12 +1608,14 @@ function formatMinutesAsHours(value) {
   return `${hours.toLocaleString('ru-RU')} ч.`;
 }
 
-function attendanceUrl({ classId, studentId, date, filter, q, analyticsMonth, success, error }) {
+function attendanceUrl({ classId, studentId, date, filter, tab, record, q, analyticsMonth, success, error }) {
   const params = new URLSearchParams();
   if (classId) params.set('class', classId);
   if (studentId) params.set('student', studentId);
   if (date) params.set('date', date);
   if (filter) params.set('filter', normalizeAttendanceFilter(filter));
+  if (tab) params.set('tab', tab);
+  if (record) params.set('record', record);
   if (q) params.set('q', q);
   if (analyticsMonth) params.set('analyticsMonth', analyticsMonth);
   if (success) params.set('success', success);
@@ -1315,8 +1639,7 @@ function sendApiError(res, err) {
 }
 
 function formatDateTimeLocal(date) {
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  return schoolSqlNow(date).slice(0, 16).replace(' ', 'T');
 }
 
 function defaultDateTimeForDate(value, schoolDay = null) {
@@ -1332,8 +1655,7 @@ function defaultDateTimeForDate(value, schoolDay = null) {
 }
 
 function formatDateInput(date) {
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  return schoolSqlNow(date).slice(0, 10);
 }
 
 function formatDisplayDateOnly(value) {
@@ -1343,8 +1665,7 @@ function formatDisplayDateOnly(value) {
 }
 
 function formatSqlDateTime(date) {
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  return schoolSqlNow(date);
 }
 
 function dateOnlyFromDateTime(value) {
@@ -1446,8 +1767,10 @@ function buildAttendanceSummaryFilters(summary, context = {}) {
         : 'border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50/40',
       href: attendanceUrl({
         classId: context.classId,
+        studentId: context.studentId,
         date: context.date,
         filter: filter.id,
+        tab: context.tab,
       }),
     };
   });
@@ -1474,6 +1797,8 @@ function buildAttendanceFilterTable({ activeFilter, classId, date, absences = []
         studentId: absence.student_id,
         date,
         filter: activeFilter,
+        tab: 'history',
+        record: absence.id,
       }),
       reason_class: isWithoutReasonCode(absence.reason_code)
         ? 'bg-amber-100 text-amber-800'

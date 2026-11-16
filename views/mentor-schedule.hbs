@@ -1,0 +1,181 @@
+<link rel="stylesheet" href="/assets/mentor-schedule.css?v=2">
+
+<section class="ms-page" data-mentor-schedule data-week="{{monday}}" data-revision="{{revision}}">
+  <header class="ms-header">
+    <div>
+      <h1>{{title}}</h1>
+    </div>
+    {{#if (and canManage hasPersonalSchedule)}}
+      <a href="{{switchView}}" class="ms-button" data-week-link>{{#if editing}}Мой график{{else}}График наставников{{/if}}</a>
+    {{/if}}
+  </header>
+
+  <div class="ms-toolbar">
+    <div class="ms-week">
+      <a href="{{previous}}" class="ms-button ms-arrow" aria-label="Предыдущая неделя" data-week-link>‹</a>
+      <strong>{{dateLabel}} <small class="ms-timezone">МСК</small></strong>
+      <a href="{{next}}" class="ms-button ms-arrow" aria-label="Следующая неделя" data-week-link>›</a>
+    </div>
+    <div class="ms-week-actions">
+      <a href="{{current}}" class="ms-button" data-week-link>Текущая неделя</a>
+      {{#if workReport.length}}<a href="#mentor-work-report" class="ms-button">Часы за неделю</a>{{/if}}
+      {{#if editing}}<span class="ms-status" data-status role="status">{{status}}</span>{{/if}}
+    </div>
+  </div>
+
+  {{#if editing}}
+    {{#if roster.length}}
+      <p data-publish-result class="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900" role="status" hidden></p>
+      <form data-schedule-form>
+        <div class="ms-day-picker" role="group" aria-label="День недели">
+          {{#each days}}
+            <button type="button" data-select-day="{{index}}" aria-pressed="{{#if active}}true{{else}}false{{/if}}">
+              <strong>{{shortName}}</strong><span>{{dateLabel}}</span>
+            </button>
+          {{/each}}
+        </div>
+        <div class="ms-sheet">
+          <table aria-label="График наставников на неделю">
+            <thead>
+              <tr>
+                <th scope="col">Наставник</th>
+                {{#each days}}
+                  <th scope="col" data-day="{{index}}" {{#if active}}data-active-day{{/if}} {{#if today}}aria-current="date"{{/if}}>
+                    {{name}} <span>{{dateLabel}}</span>
+                  </th>
+                {{/each}}
+                <th scope="col" class="ms-total-column">За неделю</th>
+              </tr>
+            </thead>
+            <tbody>
+              {{#each roster}}
+                <tr data-mentor="{{id}}" data-mentor-name="{{name}}">
+                  <th scope="row">
+                    <span class="ms-person">{{name}}</span>
+                    <span class="ms-mobile-total">Неделя <strong data-week-total>{{total}}</strong></span>
+                    <button type="button" class="ms-link ms-repeat" data-repeat-monday hidden>Повторить смену на всю неделю</button>
+                  </th>
+                  {{#each days}}
+                    <td data-day="{{index}}" data-day-name="{{name}}" {{#if active}}data-active-day{{/if}}>
+                      <div class="ms-shift">
+                        <label>
+                          <span>Приход</span>
+                          <input type="time" step="60" data-start value="{{start}}" aria-label="{{personName}}, {{name}}, приход">
+                        </label>
+                        <label>
+                          <span>Уход</span>
+                          <input type="time" step="60" data-end value="{{end}}" aria-label="{{personName}}, {{name}}, уход">
+                        </label>
+                      </div>
+                      <div class="ms-shift-footer">
+                        <span data-day-total>{{#if start}}{{duration}}{{else}}—{{/if}}</span>
+                        <button type="button" class="ms-link" data-clear aria-label="{{personName}}, {{name}}, очистить смену" {{#unless start}}hidden{{/unless}}>Очистить</button>
+                      </div>
+                    </td>
+                  {{/each}}
+                  <td class="ms-total-column" data-week-total>{{total}}</td>
+                </tr>
+              {{/each}}
+            </tbody>
+          </table>
+        </div>
+        <p class="ms-lunch">Из каждой смены вычитается 30 минут на обед.</p>
+        <div class="ms-save-bar">
+          <p data-schedule-message role="status" aria-live="polite"></p>
+          <div class="ms-save-buttons">
+            <button class="ms-button" type="submit" data-save>Сохранить черновик</button>
+            <button class="ms-button ms-primary" type="button" data-publish>Опубликовать</button>
+          </div>
+        </div>
+      </form>
+      <dialog class="ms-dialog" data-publish-dialog aria-labelledby="ms-publish-title">
+        <form method="dialog">
+          <h2 id="ms-publish-title">Опубликовать график?</h2>
+          <p data-publish-summary></p>
+          <div class="ms-dialog-actions">
+            <button class="ms-button" value="cancel" autofocus>Отмена</button>
+            <button class="ms-button ms-primary" value="publish">Опубликовать</button>
+          </div>
+        </form>
+      </dialog>
+      <script src="/assets/mentor-schedule.js?v=2" defer></script>
+    {{else}}
+      <p class="ms-empty">В справочнике пока нет активных наставников с доступом к посещаемости.</p>
+    {{/if}}
+  {{else}}
+    {{#if published}}
+      <div class="ms-personal-heading">
+        <h2>Смены на неделю</h2>
+        <strong>{{personal.total}}</strong>
+      </div>
+      {{#if personal.hasShifts}}
+        <div class="ms-personal">
+          {{#each personal.days}}
+            <article class="ms-day-card" {{#if today}}aria-current="date"{{/if}}>
+              <div><h3>{{name}}</h3><span>{{dateLabel}}{{#if today}} · Сегодня{{/if}}</span></div>
+              {{#if start}}
+                <div class="ms-personal-shift">
+                  <span><small>Приход</small><strong>{{start}}</strong></span>
+                  <span><small>Уход</small><strong>{{end}}</strong></span>
+                </div>
+                <p>{{duration}} работы</p>
+              {{else}}
+                <p>Выходной</p>
+              {{/if}}
+            </article>
+          {{/each}}
+        </div>
+        <p class="ms-lunch">Из каждой смены вычитается 30 минут на обед.</p>
+      {{else}}
+        <p class="ms-empty">На этой неделе у вас нет смен.</p>
+      {{/if}}
+    {{else}}
+      <p class="ms-empty">График на эту неделю ещё не опубликован.</p>
+    {{/if}}
+  {{/if}}
+
+  {{#if workReport.length}}
+    <section class="ms-report" id="mentor-work-report" aria-labelledby="ms-report-title">
+      <div>
+        <h2 id="ms-report-title">Часы по графику и по отметкам</h2>
+        <p class="ms-report-basis">По графику: часы без обеда. По отметкам: время между приходом и уходом с понедельника по пятницу.</p>
+        <p class="ms-report-basis">Разница считается по сменам, где отмечены и приход, и уход, до вычета обеда.</p>
+      </div>
+      {{#each workReport}}
+        <details class="ms-report-person" {{#unless ../editing}}open{{/unless}}>
+          <summary>
+            <span class="ms-report-person-heading">
+              <strong>{{name}}</strong>
+              {{#if incompleteDays}}<span class="ms-report-review">Дней на проверку: {{incompleteDays}}</span>{{/if}}
+            </span>
+            <span class="ms-report-totals">
+              <span><small>По графику</small><strong>{{plan}}</strong></span>
+              <span><small>По отметкам</small><strong>{{fact}}</strong></span>
+              <span><small>Разница</small><strong data-variance="{{varianceTone}}">{{variance}}</strong></span>
+            </span>
+          </summary>
+          <div class="ms-report-content">
+            <p class="ms-report-basis">Можно сравнить {{comparableDays}} из {{elapsedShifts}} прошедших смен</p>
+            <table class="ms-report-table" aria-label="Часы по графику и по отметкам по дням">
+              <thead>
+                <tr><th scope="col">День</th><th scope="col">План</th><th scope="col">Приход / уход</th><th scope="col">Факт</th><th scope="col">Разница</th><th scope="col">Отметки</th></tr>
+              </thead>
+              <tbody>
+                {{#each days}}
+                  <tr {{#if today}}aria-current="date"{{/if}}>
+                    <th scope="row">{{shortName}} {{dateLabel}}</th>
+                    <td data-label="По графику">{{planned}}{{#if planNet}} <small>{{planNet}} без обеда</small>{{/if}}</td>
+                    <td data-label="Приход / уход">{{arrival}} / {{departure}}</td>
+                    <td data-label="По отметкам">{{actual}}</td>
+                    <td data-label="Разница" data-variance="{{varianceTone}}">{{variance}}</td>
+                    <td class="ms-report-day-status" {{#if needsReview}}data-review{{/if}}>{{status}}</td>
+                  </tr>
+                {{/each}}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      {{/each}}
+    </section>
+  {{/if}}
+</section>

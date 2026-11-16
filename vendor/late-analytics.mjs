@@ -7,6 +7,7 @@ import {
   formatMinutes,
   formatSqlDateTime,
   isoWeekday,
+  isSchoolWeekday,
   lessonsForStudentDay,
   overlapMinutesForInterval,
   parseDateTimeMs,
@@ -60,7 +61,8 @@ export function buildLateAnalytics({
   const scheduleIndex = buildScheduleIndex(scheduleRows);
   const publishedDaySet = new Set(publishedSchoolDays.map(dateOnly).filter(Boolean));
   const activeWeekdaySet = new Set((activeWeekdays || DEFAULT_ACTIVE_WEEKDAYS).map(Number));
-  const firstArrivals = firstArrivalRows(arrivals, range).filter((arrival) => activeWeekdaySet.has(isoWeekday(arrival.attendance_date)));
+  const firstArrivals = firstArrivalRows(arrivals, range).filter(({ attendance_date }) =>
+    isSchoolWeekday(attendance_date) && activeWeekdaySet.has(isoWeekday(attendance_date)));
   const lateEvents = [];
   const dataGaps = [];
 

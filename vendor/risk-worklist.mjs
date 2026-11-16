@@ -1,5 +1,6 @@
 import { expandDateRangeWithinMonth } from './analytics.mjs';
 import { isWithoutReasonCode } from './absence-reasons.mjs';
+import { isSchoolWeekday } from './schedule-analytics.mjs';
 
 const RISK_FILTERS = new Set(['all', 'attention', 'missing_reason', 'clarification', 'schedule_gap', 'missed_lessons', 'late']);
 const RISK_SORTS = new Set(['priority', 'latest', 'days', 'lessons', 'late', 'late_minutes', 'name']);
@@ -25,8 +26,9 @@ export function buildRiskWorklist({ range, periods = [], learning = {}, lateness
   const reasonBuckets = new Map();
 
   for (const period of periods || []) {
+    const days = expandDateRangeWithinMonth(period.starts_at, period.ends_at || period.starts_at, range).filter(isSchoolWeekday);
+    if (!days.length) continue;
     const bucket = ensureBucket(buckets, period, range);
-    const days = expandDateRangeWithinMonth(period.starts_at, period.ends_at || period.starts_at, range);
     bucket.periods += 1;
     bucket.period_ids.add(String(period.id || ''));
     for (const day of days) bucket.absence_days_set.add(`${bucket.student_id}|${day}`);

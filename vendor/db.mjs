@@ -1,4 +1,6 @@
 import mysql from 'mysql2';
+import { buildAdultArrivalAnalytics } from './adult-arrival-analytics.mjs';
+import { getPublishedMentorWeeks, isWorkMentor, schoolSqlNow } from './mentor-work.mjs';
 import {
   buildClassPresenceSummary,
   buildMonthRange,
@@ -23,12 +25,25 @@ import {
   canManagePresenceClass,
   isManualPresenceEvent,
   resolvePresenceToggle,
+  presenceHistoryCapabilities,
+  historyVersion,
+  assertHistoryVersion,
+  encodeHistoryCursor,
+  decodeHistoryCursor,
+  assertPresenceSequenceCorrection,
 } from './presence.mjs';
 import { buildLearningAnalytics } from './learning-analytics.mjs';
 import { buildLateAnalytics } from './late-analytics.mjs';
-import { buildScheduleIndex, lessonsForStudentDay, normalizeScheduleLesson } from './schedule-analytics.mjs';
+import {
+  buildClassLessonStatus,
+  buildScheduleIndex,
+  isSchoolWeekday,
+  lessonsForStudentDay,
+  normalizeScheduleLesson,
+} from './schedule-analytics.mjs';
 import { buildRiskWorklist } from './risk-worklist.mjs';
 import { buildStudentAttendanceAnalytics } from './student-attendance-analytics.mjs';
+import { withMissedLessons } from './student-analytics-view.mjs';
 import {
   ATTENDANCE_CONFLICT_RESOLUTIONS,
   ATTENDANCE_CONFLICT_TYPES,
@@ -43,12 +58,11 @@ import {
 import {
   buildAnalyticsRange,
   buildAttendanceAnalyticsContract,
+  buildStudentLessonAnalytics,
   normalizeAnalyticsItems,
 } from './attendance-analytics-contract.mjs';
-import {
-  buildLessonResolutionContract,
-  normalizeLessonResolutionRequests,
-} from './attendance-lesson-resolver.mjs';
+
+import { buildLessonResolutionContract, normalizeLessonResolutionRequests } from './attendance-lesson-resolver.mjs';
 
 const FAR_FUTURE = '9999-12-31 23:59:59';
 const SCHOOL_DAY_FALLBACK_START = '09:00:00';
@@ -106,6 +120,7 @@ const sets = {
 };
 
 const usr = mysql.createPool(sets).promise();
+export { usr as attendanceDb };
 
 export class ValidationError extends Error {
   constructor(message, status = 400) {
@@ -227,6 +242,25 @@ export async function ensureAttendanceSchema() {
   await ensureIndex('attendance', 'presence_events', 'idx_presence_date_class', 'attendance_date, class_id');
   await ensureIndex('attendance', 'presence_events', 'idx_presence_student_day_time', 'student_id, attendance_date, occurred_at');
   await ensureUniqueIndex('attendance', 'presence_events', 'idx_presence_idempotency', 'idempotency_key');
+  await ensureColumn('attendance', 'presence_events', 'revision', 'INT UNSIGNED NOT NULL DEFAULT 0');
+  await ensureColumn('attendance', 'absence_periods', 'revision', 'INT UNSIGNED NOT NULL DEFAULT 0');
+  await ensureColumn('attendance', 'absence_period_events', 'reason', 'VARCHAR(1000) NULL');
+  await usr.query(`
+    CREATE TABLE IF NOT EXISTS attendance.presence_event_changes (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      presence_event_id INT NOT NULL,
+      actor_id INT NULL,
+      event_type VARCHAR(32) NOT NULL,
+      reason VARCHAR(1000) NULL,
+      before_json LONGTEXT NULL,
+      after_json LONGTEXT NULL,
+      created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      KEY idx_presence_changes_event (presence_event_id, id),
+      CONSTRAINT fk_presence_change_event FOREIGN KEY (presence_event_id)
+        REFERENCES attendance.presence_events(id) ON DELETE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+  `);
 
   await usr.query(`
     CREATE TABLE IF NOT EXISTS attendance.presence_absence_conflicts (
@@ -444,6 +478,20 @@ export async function getStudentsByClass(classId) {
   return rows;
 }
 
+export async function getMentorStudentAssignments(userId) {
+  const id = Number(userId);
+  if (!Number.isInteger(id) || id <= 0) return [];
+  const [rows] = await usr.query(
+    `SELECT DISTINCT CAST(u.id AS CHAR) AS id, CAST(u.kaf AS CHAR) AS classId
+       FROM school_local.info_student_nastavnik n
+       JOIN sso.users u ON u.id = n.stud_id AND u.type = 1 AND u.status = 1
+       JOIN sso.kaf_name k ON k.id = u.kaf AND k.type = 1 AND k.id > 0
+      WHERE n.nastavnik_id = ?`,
+    [id],
+  );
+  return rows;
+}
+
 export async function getStudentById(id) {
   const [rows] = await usr.query(
     `SELECT
@@ -530,13 +578,13 @@ export async function getAdultsByDepartment(departmentId) {
   return rows;
 }
 
-export async function getPresenceBoard({ date, audience = AUDIENCE_CHILDREN, classIds = null } = {}) {
+export async function getPresenceBoard({ date, audience = AUDIENCE_CHILDREN, classIds = null, includePhoneChecks = false, filterStudent = null } = {}) {
   const selectedDate = normalizeDateOnly(date || todayDate());
   const normalizedAudience = normalizeDataAudience(audience);
   const visibleClassIds = normalizePresenceClassIds(classIds);
   const isAdults = normalizedAudience === AUDIENCE_ADULTS;
   const nowSql = sqlNow();
-  const [availableClasses, students, events, absences, conflicts, scheduleRows] = await Promise.all([
+  const [availableClasses, students, events, absences, conflicts, scheduleRows, phoneRows] = await Promise.all([
     isAdults ? getAdultDepartments() : getClasses(),
     getPresenceStudents(normalizedAudience, visibleClassIds),
     listPresenceEventsForDate(selectedDate, normalizedAudience, visibleClassIds),
@@ -545,7 +593,11 @@ export async function getPresenceBoard({ date, audience = AUDIENCE_CHILDREN, cla
     isAdults
       ? Promise.resolve([])
       : getPublishedScheduleRows({ start_date: selectedDate, end_date: selectedDate }, visibleClassIds),
+    includePhoneChecks && !isAdults
+      ? queryPhoneHandover(usr, 'attendance_date = ?', [selectedDate])
+      : [],
   ]);
+  const phonesByStudent = new Map(phoneRows.map((row) => [String(row.student_id), mapPhoneHandover(row)]));
   const classes = !isAdults && visibleClassIds !== null
     ? availableClasses.filter((classItem) => visibleClassIds.includes(Number(classItem.id)))
     : availableClasses;
@@ -555,6 +607,25 @@ export async function getPresenceBoard({ date, audience = AUDIENCE_CHILDREN, cla
   const absencesByStudent = presenceAbsencesByStudent(absences);
   const conflictsByStudent = attendanceConflictsByStudent(conflicts);
   const scheduleIndex = buildScheduleIndex(scheduleRows);
+  const adultArrivalByStudent = new Map();
+  if (isAdults) {
+    const range = buildAnalyticsRange(selectedDate, selectedDate);
+    const [adultScheduleRows, publishedSchoolDays, mentorWeeks] = await Promise.all([
+      getPublishedScheduleRows(range, null, students.filter(student => !isWorkMentor(student)).map(student => student.id)),
+      getPublishedScheduleDays(range),
+      students.some(isWorkMentor) ? getPublishedMentorWeeks(usr, range) : new Map(),
+    ]);
+    const arrivals = buildAdultArrivalAnalytics({
+      range,
+      people: students.map(student => ({ student_id: student.id, user_type: student.user_type })),
+      presenceEvents: events,
+      scheduleRows: adultScheduleRows,
+      publishedSchoolDays,
+      mentorWeeks,
+      now: schoolSqlNow(),
+    });
+    for (const person of arrivals.people) adultArrivalByStudent.set(person.person_id, person.days[0]);
+  }
   const classBuckets = new Map(classes.map((classItem) => [
     String(classItem.id),
     {
@@ -563,11 +634,19 @@ export async function getPresenceBoard({ date, audience = AUDIENCE_CHILDREN, cla
       students_label: isAdults
         ? personCountLabel(classItem.people_count ?? classItem.students_count)
         : studentCountLabel(classItem.students_count),
+      schedule: isAdults
+        ? null
+        : buildClassLessonStatus(scheduleRows, {
+          classId: classItem.id,
+          date: selectedDate,
+          now: nowSql,
+        }),
       students: [],
     },
   ]));
 
   for (const student of students) {
+    if (filterStudent && !filterStudent(student)) continue;
     const groupId = String(student.groupId || student.classId);
     const classBucket = classBuckets.get(groupId);
     if (!classBucket) continue;
@@ -584,6 +663,7 @@ export async function getPresenceBoard({ date, audience = AUDIENCE_CHILDREN, cla
       : lessonsForStudentDay(scheduleIndex, scheduleStudent, scheduleStudent, selectedDate)[0] || null;
     classBucket.students.push({
       ...student,
+      phone_check: phonesByStudent.get(String(student.id)) || null,
       presence_events: (eventsByStudent.get(String(student.id)) || []).map((event) => ({
         ...event,
         can_edit: isManualPresenceEvent(event),
@@ -594,11 +674,15 @@ export async function getPresenceBoard({ date, audience = AUDIENCE_CHILDREN, cla
         conflicts: studentConflicts,
         firstArrival,
         firstLesson,
+        arrivalAssessment: adultArrivalByStudent.get(String(student.id)) || null,
       }),
     });
   }
 
   const boardClasses = [...classBuckets.values()].filter((classItem) => classItem.students.length > 0);
+  if (filterStudent) {
+    for (const classItem of boardClasses) classItem.students_label = studentCountLabel(classItem.students.length);
+  }
   const totals = buildPresenceBoardTotals(boardClasses);
 
   return {
@@ -612,11 +696,22 @@ export async function getPresenceBoard({ date, audience = AUDIENCE_CHILDREN, cla
   };
 }
 
-export async function togglePresenceEvent({ studentId, classId, actorId, idempotencyKey, audience = AUDIENCE_CHILDREN } = {}) {
+export async function togglePresenceEvent({
+  studentId, classId, actorId, idempotencyKey, audience = AUDIENCE_CHILDREN,
+  phoneSubmitted, phoneAction, phoneRevision, expectedDate, expectedLastEventId,
+} = {}) {
   const normalizedAudience = normalizeDataAudience(audience);
+  const isChild = normalizedAudience === AUDIENCE_CHILDREN;
+  if (phoneSubmitted !== undefined) {
+    if (!isChild) throw new ValidationError('Отметка о телефоне доступна только для ученика');
+    validatePhoneHandover(phoneSubmitted, phoneRevision, phoneAction);
+  }
   const student = await assertPresencePerson(studentId, classId, normalizedAudience);
   const nowSql = sqlNow();
   const attendanceDate = dateOnlyFromSql(nowSql);
+  if (expectedDate !== undefined && expectedDate !== attendanceDate) {
+    throw new ValidationError('Дата изменилась. Обновите страницу и повторите отметку.', 409);
+  }
   const normalizedIdempotencyKey = normalizeIdempotencyKey(idempotencyKey);
   const conn = await usr.getConnection();
   let lockAcquired = false;
@@ -631,28 +726,53 @@ export async function togglePresenceEvent({ studentId, classId, actorId, idempot
     if (normalizedIdempotencyKey) {
       const existing = await getPresenceEventByIdempotencyKey(conn, normalizedIdempotencyKey);
       if (existing) {
+        if (String(existing.student_id) !== String(student.id)) throw new ValidationError('Ключ отметки уже использован', 409);
         const conflicts = await createConflictsForPresenceEvent(conn, existing);
+        const phoneCheck = isChild ? await getPhoneHandoverDay(conn, student.id, attendanceDate) : null;
         await conn.commit();
         return {
           event: existing,
           conflicts,
           state: presenceStateFromEvent(existing, conflicts),
+          phoneCheck,
           duplicate: true,
         };
       }
     }
 
     const latestEvent = await getLatestPresenceEventForUpdate(conn, student.id, attendanceDate);
+    if (expectedLastEventId !== undefined && String(latestEvent?.id || '') !== String(expectedLastEventId)) {
+      throw new ValidationError('Приход или уход уже изменился. Обновите страницу и повторите отметку.', 409);
+    }
     const decision = resolvePresenceToggle({ latestEvent, now: nowSql });
     if (!decision.shouldInsert) {
       const conflicts = await createConflictsForPresenceEvent(conn, latestEvent);
+      const phoneCheck = isChild ? await getPhoneHandoverDay(conn, student.id, attendanceDate) : null;
       await conn.commit();
       return {
         event: latestEvent,
         conflicts,
         state: presenceStateFromEvent(latestEvent, conflicts),
+        phoneCheck,
         duplicate: true,
       };
+    }
+
+    const action = decision.eventType === PRESENCE_EVENT_TYPES.DEPARTURE ? 'pickup' : 'handover';
+    if (phoneSubmitted !== undefined && (phoneAction ?? 'handover') !== action) {
+      throw new ValidationError('Обновите страницу и заново ответьте на вопрос о телефоне.', 409);
+    }
+    let phoneCheck = isChild ? await getPhoneHandoverDay(conn, student.id, attendanceDate) : null;
+    if (isChild && action === 'pickup') {
+      const hasHandover = phoneCheck?.submitted === true || Boolean(phoneCheck?.submitted_after_notice_at);
+      const needsPickupAnswer = hasHandover && phoneCheck?.picked_up !== true;
+      if (phoneSubmitted === false) {
+        throw new ValidationError('Подтвердите получение телефона кнопкой «Забрал» или закройте окно.');
+      }
+      if (needsPickupAnswer !== (phoneSubmitted !== undefined)
+        || (phoneRevision !== undefined && phoneRevision !== (phoneCheck?.revision ?? 0))) {
+        throw new ValidationError('Отметки о телефоне изменились. Нажмите «Отметить уход» ещё раз.', 409);
+      }
     }
 
     const [result] = await conn.query(
@@ -671,23 +791,37 @@ export async function togglePresenceEvent({ studentId, classId, actorId, idempot
     );
     const event = await getPresenceEventById(conn, result.insertId);
     const conflicts = await createConflictsForPresenceEvent(conn, event);
+    if (phoneSubmitted !== undefined) {
+      let answers = action === 'pickup' ? { picked_up: true } : { submitted: phoneSubmitted };
+      if (action === 'handover' && phoneCheck?.submitted_after_notice_at) {
+        // A new arrival cannot rewrite the initial answer or the separate adult mark.
+        answers = phoneSubmitted ? { picked_up: null } : {};
+      } else if (action === 'handover' && phoneSubmitted && latestEvent?.event_type === PRESENCE_EVENT_TYPES.DEPARTURE) {
+        answers.picked_up = null;
+      }
+      phoneCheck = await writePhoneHandover(conn, phoneCheck, {
+        studentId: student.id, date: attendanceDate, actorId, answers, expectedRevision: phoneRevision,
+      });
+    }
     await conn.commit();
     return {
       event,
       conflicts,
       state: presenceStateFromEvent(event, conflicts),
+      phoneCheck,
       duplicate: false,
     };
   } catch (err) {
     await conn.rollback();
     if (isDuplicateKeyError(err) && normalizedIdempotencyKey) {
       const event = await getPresenceEventByIdempotencyKey(usr, normalizedIdempotencyKey);
-      if (event) {
+      if (event && String(event.student_id) === String(student.id)) {
         const conflicts = await createConflictsForPresenceEvent(usr, event);
         return {
           event,
           conflicts,
           state: presenceStateFromEvent(event, conflicts),
+          phoneCheck: isChild ? await getPhoneHandoverDay(usr, student.id, attendanceDate) : null,
           duplicate: true,
         };
       }
@@ -697,6 +831,258 @@ export async function togglePresenceEvent({ studentId, classId, actorId, idempot
     if (lockAcquired) {
       await releasePresenceLock(conn, student.id, attendanceDate);
     }
+    conn.release();
+  }
+}
+
+async function queryPhoneHandover(executor, where, params) {
+  const [rows] = await executor.query(
+    `SELECT student_id, attendance_date, submitted, picked_up, submitted_after_notice_at, submitted_after_notice_by, revision
+      FROM attendance.student_phone_handover WHERE ${where}`,
+    params,
+  );
+  return rows;
+}
+
+function mapPhoneHandover(row) {
+  return {
+    date: row.attendance_date,
+    submitted: row.submitted === null ? null : Number(row.submitted) === 1,
+    picked_up: row.picked_up === null ? null : Number(row.picked_up) === 1,
+    submitted_after_notice_at: row.submitted_after_notice_at || null,
+    submitted_after_notice_by: row.submitted_after_notice_by ? Number(row.submitted_after_notice_by) : null,
+    revision: Number(row.revision),
+  };
+}
+
+async function getPhoneHandoverDay(executor, studentId, date) {
+  const [row] = await queryPhoneHandover(executor, 'student_id = ? AND attendance_date = ?', [studentId, date]);
+  return row ? mapPhoneHandover(row) : null;
+}
+
+function emptyPhoneDay(date) {
+  return { date, submitted: null, picked_up: null, submitted_after_notice_at: null, submitted_after_notice_by: null, revision: 0 };
+}
+
+export async function getStudentPhoneHandoverDay(studentId, date) {
+  const day = normalizeDateOnly(date);
+  const result = await getPhoneHandoverDay(usr, studentId, day);
+  return { ...(result || emptyPhoneDay(day)), can_edit: day <= todayDate() };
+}
+
+function validatePhoneHandover(answer, expectedRevision, action = 'handover') {
+  if (!['handover', 'pickup'].includes(action)) throw new ValidationError('Неизвестный тип отметки о телефоне');
+  if (typeof answer !== 'boolean') throw new ValidationError('Выберите ответ о телефоне');
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new ValidationError('Обновите отметку о телефоне');
+}
+
+async function writePhoneHandover(conn, current, { studentId, date, actorId, answers, expectedRevision }) {
+  const previous = current || emptyPhoneDay(date);
+  if (previous.revision !== expectedRevision) {
+    const error = new ValidationError('Отметки уже изменились. Проверьте актуальные ответы и сохраните заново.', 409);
+    error.phoneDay = { ...previous, can_edit: true };
+    throw error;
+  }
+  const { submitted_after_notice: afterNotice, ...ordinaryAnswers } = answers;
+  const next = { ...previous, ...ordinaryAnswers };
+  if (afterNotice === true && !next.submitted_after_notice_at) {
+    next.submitted_after_notice_at = sqlNow();
+    next.submitted_after_notice_by = actorId || null;
+    next.picked_up = null;
+  } else if (afterNotice === null) {
+    next.submitted_after_notice_at = null;
+    next.submitted_after_notice_by = null;
+  }
+  if (next.submitted_after_notice_at && next.submitted !== false) {
+    throw new ValidationError('Отметка «Сдал после замечания» возможна после ответа «Не сдал». Для изменения начального ответа сначала снимите эту отметку.');
+  }
+  if (next.submitted === previous.submitted && next.picked_up === previous.picked_up
+    && next.submitted_after_notice_at === previous.submitted_after_notice_at) return previous;
+  await conn.query(`INSERT INTO attendance.student_phone_handover
+    (student_id, attendance_date, submitted, picked_up, submitted_after_notice_at, submitted_after_notice_by, updated_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE submitted = VALUES(submitted), picked_up = VALUES(picked_up),
+    submitted_after_notice_at = VALUES(submitted_after_notice_at), submitted_after_notice_by = VALUES(submitted_after_notice_by),
+    updated_by = VALUES(updated_by), revision = revision + 1`, [
+    studentId, date, next.submitted, next.picked_up, next.submitted_after_notice_at, next.submitted_after_notice_by, actorId || null,
+  ]);
+  const revision = previous.revision + 1;
+  if (next.submitted_after_notice_at !== previous.submitted_after_notice_at) {
+    await conn.query(`INSERT INTO attendance.student_phone_notice_changes
+      (student_id, attendance_date, revision, actor_id, previous_at, previous_by, submitted_at, submitted_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, [
+      studentId, date, revision, actorId || null, previous.submitted_after_notice_at, previous.submitted_after_notice_by,
+      next.submitted_after_notice_at, next.submitted_after_notice_by,
+    ]);
+  }
+  return { ...next, revision };
+}
+
+export async function listStudentPhoneHandover(studentId, month) {
+  const range = buildMonthRange(month);
+  const today = todayDate();
+  const end = range.end_date < today ? range.end_date : today;
+  if (range.start_date > end) return [];
+  const schoolDays = await getPhoneSchoolDates(range.start_date, end);
+  if (!schoolDays.length) return [];
+  const [rows, [arrivals]] = await Promise.all([
+    queryPhoneHandover(usr, `student_id = ? AND attendance_date IN (${sqlPlaceholders(schoolDays)})`, [studentId, ...schoolDays]),
+    usr.query(`SELECT DISTINCT DATE_FORMAT(attendance_date, '%Y-%m-%d') AS date
+      FROM attendance.presence_events WHERE student_id = ? AND attendance_date IN (${sqlPlaceholders(schoolDays)})
+      AND event_type = 'arrival' AND cancelled_at IS NULL`, [studentId, ...schoolDays]),
+  ]);
+  const byDate = new Map(rows.map((row) => [row.attendance_date, mapPhoneHandover(row)]));
+  const arrivalDates = new Set(arrivals.map(({ date }) => date));
+  return schoolDays.map((date) => ({
+    ...(byDate.get(date) || emptyPhoneDay(date)),
+    has_arrival: arrivalDates.has(date),
+    can_edit: true,
+  }));
+}
+
+const phoneAnalyticsFields = ['handed_in', 'not_handed_in', 'handed_in_after_notice', 'unknown', 'observed', 'arrived', 'arrival_answered',
+  'answers_without_arrival', 'picked_up', 'not_picked_up', 'pickup_unknown'];
+
+export async function getPhoneAnalytics({ from, to, classId, scope }) {
+  const today = todayDate();
+  const end = to === undefined ? today : normalizeDateOnly(to);
+  const defaultStart = new Date(`${end}T12:00:00Z`);
+  defaultStart.setUTCDate(defaultStart.getUTCDate() - 6);
+  const start = from === undefined ? defaultStart.toISOString().slice(0, 10) : normalizeDateOnly(from);
+  const span = (Date.parse(end) - Date.parse(start)) / 86_400_000 + 1;
+  if (end > today || span < 1 || span > 90) throw new ValidationError('Укажите период до 90 дней, не позднее сегодня.');
+
+  const selectedClass = classId === undefined ? null : String(toPositiveInt(classId, 'класса'));
+  const classIds = scope.classIds;
+  const studentIds = scope.assigned.map(({ id }) => id);
+  const scopeClauses = [];
+  const scopeParams = [];
+  if (classIds?.length) {
+    scopeClauses.push(`u.kaf IN (${sqlPlaceholders(classIds)})`);
+    scopeParams.push(...classIds);
+  }
+  if (studentIds.length) {
+    scopeClauses.push(`u.id IN (${sqlPlaceholders(studentIds)})`);
+    scopeParams.push(...studentIds);
+  }
+  const scopeSql = classIds === null ? '' : `AND (${scopeClauses.join(' OR ') || '1 = 0'})`;
+  const [schoolDays, todayOnly] = await Promise.all([
+    getPhoneSchoolDates(start, end),
+    end === today ? [] : getPhoneSchoolDates(today, today),
+  ]);
+  const todayIsSchoolDay = schoolDays.includes(today) || todayOnly.includes(today);
+  const schoolDaySql = schoolDays.length ? `IN (${sqlPlaceholders(schoolDays)})` : 'IN (NULL)';
+  const [rows] = await usr.query(
+    `WITH pupils AS (
+       SELECT u.id, u.name, u.kaf AS class_id, k.name AS class_name
+       FROM sso.users u JOIN sso.kaf_name k ON k.id = u.kaf
+       WHERE u.type = 1 AND u.status = 1 AND k.type = 1 AND k.id > 0 ${scopeSql}
+     ), arrivals AS (
+       SELECT DISTINCT e.student_id, e.attendance_date
+       FROM attendance.presence_events e JOIN pupils s ON s.id = e.student_id
+       WHERE e.attendance_date ${schoolDaySql} AND e.event_type = 'arrival' AND e.cancelled_at IS NULL
+     ), answers AS (
+       SELECT p.student_id, p.attendance_date, p.submitted, p.picked_up, p.submitted_after_notice_at
+       FROM attendance.student_phone_handover p JOIN pupils s ON s.id = p.student_id
+       WHERE p.attendance_date ${schoolDaySql} AND p.submitted IS NOT NULL
+     ), observed_days AS (
+       SELECT student_id, attendance_date FROM arrivals
+       UNION DISTINCT
+       SELECT student_id, attendance_date FROM answers
+     )
+     SELECT CAST(s.id AS CHAR) AS id, s.name, CAST(s.class_id AS CHAR) AS class_id, s.class_name,
+       COUNT(d.attendance_date) AS observed,
+       COUNT(a.attendance_date) AS arrived,
+       COUNT(CASE WHEN p.submitted = 1 THEN 1 END) AS handed_in,
+       COUNT(CASE WHEN p.submitted = 0 THEN 1 END) AS not_handed_in,
+       COUNT(CASE WHEN p.submitted = 0 AND p.submitted_after_notice_at IS NOT NULL THEN 1 END) AS handed_in_after_notice,
+       COUNT(CASE WHEN a.attendance_date IS NOT NULL AND p.submitted IS NULL THEN 1 END) AS unknown,
+       COUNT(CASE WHEN a.attendance_date IS NOT NULL AND p.submitted IS NOT NULL THEN 1 END) AS arrival_answered,
+       COUNT(CASE WHEN a.attendance_date IS NULL AND p.submitted IS NOT NULL THEN 1 END) AS answers_without_arrival,
+       COUNT(CASE WHEN (p.submitted = 1 OR p.submitted_after_notice_at IS NOT NULL) AND p.picked_up = 1 THEN 1 END) AS picked_up,
+       COUNT(CASE WHEN (p.submitted = 1 OR p.submitted_after_notice_at IS NOT NULL) AND p.picked_up = 0 THEN 1 END) AS not_picked_up,
+       COUNT(CASE WHEN (p.submitted = 1 OR p.submitted_after_notice_at IS NOT NULL) AND p.picked_up IS NULL THEN 1 END) AS pickup_unknown,
+       MAX(CASE
+         WHEN t.submitted = 1 THEN 'arrival'
+         WHEN t.submitted = 0 AND t.submitted_after_notice_at IS NOT NULL THEN 'after_notice'
+       END) AS submitted_today
+     FROM pupils s
+     LEFT JOIN observed_days d ON d.student_id = s.id
+     LEFT JOIN arrivals a ON a.student_id = d.student_id AND a.attendance_date = d.attendance_date
+     LEFT JOIN answers p ON p.student_id = d.student_id AND p.attendance_date = d.attendance_date
+     LEFT JOIN attendance.student_phone_handover t ON t.student_id = s.id AND t.attendance_date = ?
+     GROUP BY s.id, s.name, s.class_id, s.class_name
+     ORDER BY s.name, s.id`,
+    [...scopeParams, ...schoolDays, ...schoolDays, todayIsSchoolDay ? today : null],
+  );
+  const totals = emptyPhoneAnalyticsCounts();
+  const classesById = new Map();
+  const students = [];
+  const submittedTodayByClass = new Map();
+  for (const row of rows) {
+    let classRow = classesById.get(row.class_id);
+    if (!classRow) {
+      classRow = { id: row.class_id, name: row.class_name, ...emptyPhoneAnalyticsCounts() };
+      classesById.set(row.class_id, classRow);
+    }
+    const student = { id: row.id, name: row.name, class_id: row.class_id };
+    for (const field of phoneAnalyticsFields) {
+      const value = Number(row[field]) || 0;
+      student[field] = value;
+      classRow[field] += value;
+      totals[field] += value;
+    }
+    if (selectedClass === row.class_id) students.push(student);
+    if (todayIsSchoolDay && row.submitted_today && (!selectedClass || selectedClass === row.class_id)) {
+      if (!submittedTodayByClass.has(row.class_id)) submittedTodayByClass.set(row.class_id, []);
+      submittedTodayByClass.get(row.class_id).push({
+        id: row.id,
+        name: row.name,
+        after_notice: row.submitted_today === 'after_notice',
+      });
+    }
+  }
+  if (selectedClass && !classesById.has(selectedClass)) throw new ValidationError('Класс недоступен.', 404);
+  const classes = [...classesById.values()].sort((a, b) => compareClassNames(a.name, b.name));
+  const submittedToday = classes.filter(({ id }) => submittedTodayByClass.has(id))
+    .map(({ id, name }) => ({ id, name, students: submittedTodayByClass.get(id) }));
+  return { from: start, to: end, today, today_is_school_day: todayIsSchoolDay, school_days: schoolDays, scope: classIds === null ? 'school' : 'assigned',
+    totals, classes, students, submitted_today: submittedToday };
+}
+
+function emptyPhoneAnalyticsCounts() {
+  return Object.fromEntries(phoneAnalyticsFields.map((field) => [field, 0]));
+}
+
+export async function updateStudentPhoneHandover({ studentId, date, actorId, submitted, action = 'handover', answers, expectedRevision }) {
+  if (answers === undefined) {
+    if (!['handover', 'pickup'].includes(action)) throw new ValidationError('Неизвестный тип отметки о телефоне');
+    answers = { [action === 'pickup' ? 'picked_up' : 'submitted']: submitted };
+  }
+  const entries = answers && typeof answers === 'object' && !Array.isArray(answers) ? Object.entries(answers) : [];
+  if (!entries.length || entries.some(([field, value]) => {
+    if (field === 'submitted_after_notice') return value !== null && value !== true;
+    return !['submitted', 'picked_up'].includes(field) || (value !== null && typeof value !== 'boolean');
+  })) throw new ValidationError('Выберите ответ о телефоне');
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new ValidationError('Обновите отметку о телефоне');
+  const day = normalizeDateOnly(date);
+  if (day > todayDate()) throw new ValidationError('Нельзя поставить отметку о телефоне на будущую дату');
+  const conn = await usr.getConnection();
+  let locked = false;
+  let transaction = false;
+  try {
+    locked = await acquirePresenceLock(conn, studentId);
+    if (!locked) throw new ValidationError('Повторите сохранение через секунду', 409);
+    await conn.beginTransaction();
+    transaction = true;
+    const current = await getPhoneHandoverDay(conn, studentId, day);
+    const result = await writePhoneHandover(conn, current, { studentId, date: day, actorId, answers: Object.fromEntries(entries), expectedRevision });
+    await conn.commit();
+    return { ...result, can_edit: true };
+  } catch (err) {
+    if (transaction) await conn.rollback();
+    throw err;
+  } finally {
+    if (locked) await releasePresenceLock(conn, studentId);
     conn.release();
   }
 }
@@ -782,75 +1168,39 @@ export async function createManualLatePresenceEvent({ studentId, classId, occurr
 }
 
 export async function cancelPresenceEvent(eventId, actorId, {
-  audience = AUDIENCE_CHILDREN,
-  classIds = null,
-  allowAutomaticLatest = false,
+  audience = AUDIENCE_CHILDREN, classIds = null, allowAutomaticLatest = false,
+  roleId, canMarkAbsence = false, reason: inputReason, expectedUpdatedAt,
 } = {}) {
-  const normalizedAudience = normalizeDataAudience(audience);
-  const allowedClassIds = normalizePresenceClassIds(classIds);
-  const attendanceDate = todayDate();
   const id = toPositiveInt(eventId, 'eventId');
   const conn = await usr.getConnection();
-  let lockAcquired = false;
-  let lockStudentId = '';
-  let lockDate = '';
-
+  let lockedStudent = null;
   try {
+    const initial = await getPresenceEventById(conn, id);
+    if (!initial) return null;
+    if (!await acquirePresenceLock(conn, initial.student_id)) throw new ValidationError('Повторите отмену через секунду', 409);
+    lockedStudent = initial.student_id;
     await conn.beginTransaction();
     const event = await getActivePresenceEventByIdForUpdate(conn, id);
-    if (!event) {
-      await conn.commit();
-      return null;
-    }
-    if (event.audience !== normalizedAudience) {
-      throw new ValidationError('Отметка относится к другому разделу', 409);
-    }
-    if (!canManagePresenceClass(allowedClassIds, event.class_id)) {
-      throw new ValidationError('Нет доступа к ребёнку из этого класса', 403);
-    }
-
-    lockStudentId = event.student_id;
-    lockDate = event.attendance_date;
-    lockAcquired = await acquirePresenceLock(conn, lockStudentId, lockDate);
-    if (!lockAcquired) {
-      throw new ValidationError('Повторите отмену через секунду', 409);
-    }
-
-    const latestEvent = await getLatestPresenceEventForUpdate(conn, lockStudentId, lockDate);
-    if (!canCancelPresenceEvent(event, {
-      latestEvent,
-      attendanceDate,
-      allowAutomaticLatest,
-    })) {
-      throw new ValidationError('Эту отметку нельзя отменить', 409);
-    }
-
-    await conn.query(
-      `UPDATE attendance.presence_events
-          SET cancelled_at = CURRENT_TIMESTAMP,
-              cancelled_by = ?,
-              updated_at = CURRENT_TIMESTAMP
-        WHERE id = ? AND cancelled_at IS NULL`,
-      [actorId || null, id],
-    );
+    if (!event) throw new ValidationError('Отметка уже отменена. Обновите историю.', 409);
+    if (event.audience !== normalizeDataAudience(audience)) throw new ValidationError('Отметка относится к другому разделу', 403);
+    const access = { roleId: roleId ?? (allowAutomaticLatest ? 5 : 3), classIds, canMarkAbsence };
+    if (!presenceHistoryCapabilities(event, access).can_cancel) throw new ValidationError('Нет доступа к отмене отметки', 403);
+    assertHistoryVersion(event, expectedUpdatedAt);
+    const latest = await getLatestPresenceEventForUpdate(conn, event.student_id, event.attendance_date);
+    const legacyAutomaticUndo = allowAutomaticLatest && !expectedUpdatedAt && event.attendance_date === todayDate()
+      && String(latest?.id) === String(event.id);
+    const reason = historyChangeReason(inputReason, event.occurred_at, { required: !isManualPresenceEvent(event) && !legacyAutomaticUndo });
+    await conn.query(`UPDATE attendance.presence_events SET cancelled_at = CURRENT_TIMESTAMP, cancelled_by = ?,
+      revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND cancelled_at IS NULL`, [actorId || null, id]);
+    const after = await getPresenceEventById(conn, id);
+    await recordPresenceChange(conn, { eventId: id, actorId, eventType: 'cancelled', reason, before: event, after });
     await resolveStaleConflictsForPresence(conn, id, actorId);
-    const newLatestEvent = await getLatestPresenceEventForUpdate(conn, lockStudentId, lockDate);
-    const conflicts = await createConflictsForPresenceEvent(conn, newLatestEvent);
+    const remainingLatest = await getLatestPresenceEventForUpdate(conn, event.student_id, event.attendance_date);
+    const conflicts = await createConflictsForPresenceEvent(conn, remainingLatest);
     await conn.commit();
-    return {
-      event,
-      conflicts,
-      state: presenceStateFromEvent(newLatestEvent, conflicts),
-    };
-  } catch (err) {
-    await conn.rollback();
-    throw err;
-  } finally {
-    if (lockAcquired) {
-      await releasePresenceLock(conn, lockStudentId, lockDate);
-    }
-    conn.release();
-  }
+    return { event: after, conflicts, state: presenceStateFromEvent(remainingLatest, conflicts) };
+  } catch (err) { await conn.rollback(); throw err; }
+  finally { if (lockedStudent) await releasePresenceLock(conn, lockedStudent); conn.release(); }
 }
 
 export async function getAbsenceReasons({ includeInactive = false } = {}) {
@@ -878,6 +1228,7 @@ export async function getAbsenceReasons({ includeInactive = false } = {}) {
 export async function listAbsencePeriods(filters = {}) {
   const where = ['p.deleted_at IS NULL'];
   const params = [];
+  if (filters.childrenOnly) where.push('u.type = 1');
 
   if (filters.studentId) {
     where.push('p.student_id = ?');
@@ -931,6 +1282,13 @@ export async function listAbsencePeriods(filters = {}) {
 export async function listPresenceEvents(filters = {}) {
   const where = ['e.cancelled_at IS NULL'];
   const params = [];
+  if (filters.audience) where.push(filters.audience === AUDIENCE_ADULTS ? `u.type IN (${STAFF_USER_TYPES_SQL})` : 'u.type = 1');
+  if (filters.classIds !== undefined && filters.classIds !== null) {
+    const ids = normalizePresenceClassIds(filters.classIds);
+    const scoped = ids.length ? `e.class_id IN (${sqlPlaceholders(ids)})` : '0 = 1';
+    where.push(filters.allowLate ? `(${scoped} OR (u.type = 1 AND e.source = 'mentor_manual_late'))` : scoped);
+    params.push(...ids);
+  }
 
   if (filters.studentId) {
     where.push('e.student_id = ?');
@@ -965,6 +1323,134 @@ export async function listPresenceEvents(filters = {}) {
     params,
   );
   return rows.map(mapPresenceEvent);
+}
+
+export async function getStudentAttendanceHistory(studentId, filters = {}, executor = usr) {
+  const id = toPositiveInt(studentId, 'studentId');
+  const limit = Math.max(1, Math.min(100, Math.trunc(Number(filters.limit) || 50)));
+  const cursor = decodeHistoryCursor(filters.cursor);
+  const from = filters.from ? normalizeDateTime(filters.from, { field: 'from', required: true }) : null;
+  const to = filters.to ? normalizeDateTime(filters.to, { field: 'to', required: true, dateOnlyEnd: true }) : null;
+  if (from && to && from > to) throw new ValidationError('Начало периода позже окончания');
+  const includeCancelled = filters.includeCancelled === true || filters.includeCancelled === '1';
+  const presenceScope = normalizePresenceClassIds(filters.presenceClassIds);
+  const presenceWhere = ['e.student_id = ?', 'u.type = 1'];
+  const presenceParams = [id];
+  if (!includeCancelled) presenceWhere.push('e.cancelled_at IS NULL');
+  if (presenceScope !== null) {
+    const scoped = presenceScope.length ? `e.class_id IN (${sqlPlaceholders(presenceScope)})` : '0 = 1';
+    presenceWhere.push(filters.allowLate ? `(${scoped} OR e.source = 'mentor_manual_late')` : scoped);
+    presenceParams.push(...presenceScope);
+  }
+  const where = [];
+  const params = [id, ...presenceParams];
+  if (from) { where.push('h.occurred_at >= ?'); params.push(from); }
+  if (to) { where.push('h.occurred_at <= ?'); params.push(to); }
+  if (cursor) {
+    where.push('(h.occurred_at < ? OR (h.occurred_at = ? AND (h.kind < ? OR (h.kind = ? AND h.id < ?))))');
+    params.push(cursor.occurred_at, cursor.occurred_at, cursor.kind, cursor.kind, cursor.id);
+  }
+  params.push(limit + 1);
+  const [rows] = await executor.query(`
+    SELECT h.kind, CAST(h.id AS CHAR) AS id, DATE_FORMAT(h.occurred_at, '%Y-%m-%d %H:%i:%s') AS occurred_at
+    FROM (
+      SELECT 'absence' AS kind, p.id, p.starts_at AS occurred_at
+      FROM attendance.absence_periods p JOIN sso.users u ON u.id = p.student_id
+      WHERE p.student_id = ? AND u.type = 1 ${includeCancelled ? '' : 'AND p.deleted_at IS NULL'}
+      UNION ALL
+      SELECT 'presence' AS kind, e.id, e.occurred_at
+      FROM attendance.presence_events e JOIN sso.users u ON u.id = e.student_id
+      WHERE ${presenceWhere.join(' AND ')}
+    ) h ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+    ORDER BY h.occurred_at DESC, h.kind DESC, h.id DESC LIMIT ?`, params);
+  const page = rows.slice(0, limit);
+  const records = new Map();
+  for (const kind of ['absence', 'presence']) {
+    const ids = page.filter((item) => item.kind === kind).map((item) => item.id);
+    if (!ids.length) continue;
+    const isAbsence = kind === 'absence';
+    const [recordRows] = await executor.query(
+      `${isAbsence ? absenceSelectSql() : presenceEventSelectSql()} WHERE ${isAbsence ? 'p' : 'e'}.id IN (${sqlPlaceholders(ids)})`, ids);
+    const [changeRows] = await executor.query(`
+      SELECT c.${isAbsence ? 'absence_id' : 'presence_event_id'} AS record_id, c.event_type,
+        DATE_FORMAT(c.created_at, '%Y-%m-%d %H:%i:%s') AS created_at,
+        COALESCE(a.name, CASE WHEN c.actor_id IS NULL THEN 'Система' ELSE CONCAT('Сотрудник ', c.actor_id) END) AS actor_name,
+        c.reason, c.before_json, c.after_json
+      FROM attendance.${isAbsence ? 'absence_period_events' : 'presence_event_changes'} c
+      LEFT JOIN sso.users a ON a.id = c.actor_id
+      WHERE c.${isAbsence ? 'absence_id' : 'presence_event_id'} IN (${sqlPlaceholders(ids)})
+      ORDER BY c.created_at DESC, c.id DESC`, ids);
+    for (const row of recordRows) {
+      const record = isAbsence ? mapAbsencePeriod(row) : mapPresenceEvent(row);
+      record.expected_updated_at = historyVersion(record);
+      record.changes = changeRows.filter((change) => String(change.record_id) === String(row.id)).map((change) => ({
+        event_type: change.event_type, created_at: change.created_at, actor_name: change.actor_name,
+        reason: change.reason || '', before: parseHistoryJson(change.before_json), after: parseHistoryJson(change.after_json),
+      }));
+      records.set(`${kind}:${row.id}`, record);
+    }
+  }
+  return {
+    items: page.map((item) => ({ ...item, record: records.get(`${item.kind}:${item.id}`) })).filter((item) => item.record),
+    next_cursor: rows.length > limit ? encodeHistoryCursor(page.at(-1)) : null,
+  };
+}
+
+function parseHistoryJson(value) {
+  if (!value) return null;
+  try { return typeof value === 'string' ? JSON.parse(value) : value; } catch { return null; }
+}
+
+function historyChangeReason(value, occurredAt, { required = false } = {}) {
+  const reason = normalizeComment(value);
+  if ((required || String(occurredAt).slice(0, 10) < todayDate()) && !reason) {
+    throw new ValidationError('Укажите причину исправления исторической отметки');
+  }
+  return reason;
+}
+
+async function recordPresenceChange(conn, { eventId, actorId, eventType, reason, before, after }) {
+  await conn.query(`INSERT INTO attendance.presence_event_changes
+    (presence_event_id, actor_id, event_type, reason, before_json, after_json) VALUES (?, ?, ?, ?, ?, ?)`,
+  [eventId, actorId || null, eventType, reason || null, before ? JSON.stringify(before) : null, after ? JSON.stringify(after) : null]);
+}
+
+export async function updatePresenceEvent(eventId, input, access = {}) {
+  const id = toPositiveInt(eventId, 'eventId');
+  const occurredAt = normalizeDateTime(input.occurredAt, { field: 'occurredAt', required: true });
+  if (occurredAt > sqlNow()) throw new ValidationError('Время отметки не может быть в будущем');
+  if (!['arrival', 'departure'].includes(input.eventType)) throw new ValidationError('Некорректный тип отметки');
+  const conn = await usr.getConnection();
+  let lockedStudent = null;
+  try {
+    const initial = await getPresenceEventById(conn, id);
+    if (!initial) return null;
+    if (!await acquirePresenceLock(conn, initial.student_id)) throw new ValidationError('Повторите сохранение через секунду', 409);
+    lockedStudent = initial.student_id;
+    await conn.beginTransaction();
+    const before = await getActivePresenceEventByIdForUpdate(conn, id);
+    if (!before) throw new ValidationError('Отметка отменена. Обновите историю.', 409);
+    if (before.audience !== normalizeDataAudience(input.audience)) throw new ValidationError('Отметка относится к другому разделу', 403);
+    if (!presenceHistoryCapabilities(before, access).can_edit) throw new ValidationError('Нет доступа к изменению отметки', 403);
+    assertHistoryVersion(before, input.expectedUpdatedAt);
+    const reason = historyChangeReason(input.reason, [before.occurred_at, occurredAt].sort()[0], { required: !isManualPresenceEvent(before) });
+    if (before.source === 'mentor_manual_late' && input.eventType !== 'arrival') throw new ValidationError('Опоздание должно оставаться отметкой прихода');
+    const [affectedRows] = await conn.query(`${presenceEventSelectSql()}
+      WHERE e.student_id = ? AND e.attendance_date IN (?, ?) AND e.cancelled_at IS NULL FOR UPDATE`,
+    [before.student_id, before.attendance_date, dateOnlyFromSql(occurredAt)]);
+    assertPresenceSequenceCorrection(affectedRows.map(mapPresenceEvent), before, {
+      ...before, occurred_at: occurredAt, attendance_date: dateOnlyFromSql(occurredAt), event_type: input.eventType,
+    });
+    await conn.query(`UPDATE attendance.presence_events SET occurred_at = ?, attendance_date = ?, event_type = ?,
+      revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [occurredAt, dateOnlyFromSql(occurredAt), input.eventType, id]);
+    const after = await getPresenceEventById(conn, id);
+    await recordPresenceChange(conn, { eventId: id, actorId: input.actorId, eventType: 'updated', reason, before, after });
+    await resolveStaleConflictsForPresence(conn, id, input.actorId);
+    const conflicts = await createConflictsForPresenceEvent(conn, after);
+    await conn.commit();
+    return { event: after, conflicts };
+  } catch (err) { await conn.rollback(); throw err; }
+  finally { if (lockedStudent) await releasePresenceLock(conn, lockedStudent); conn.release(); }
 }
 
 export async function listAttendanceConflicts(filters = {}) {
@@ -1051,7 +1537,7 @@ export async function resolveAttendanceConflict(id, resolutionValue, actorId, { 
       if (String(conflict.occurred_at) <= String(before.starts_at)) {
         await conn.query(
           `UPDATE attendance.absence_periods
-              SET deleted_at = CURRENT_TIMESTAMP, deleted_by = ?, updated_by = ?
+              SET deleted_at = CURRENT_TIMESTAMP, deleted_by = ?, updated_by = ?, revision = revision + 1
             WHERE id = ? AND deleted_at IS NULL`,
           [actorId || null, actorId || null, before.id],
         );
@@ -1059,7 +1545,7 @@ export async function resolveAttendanceConflict(id, resolutionValue, actorId, { 
       } else {
         await conn.query(
           `UPDATE attendance.absence_periods
-              SET ends_at = ?, confirmation_status = 'confirmed', updated_by = ?
+              SET ends_at = ?, confirmation_status = 'confirmed', updated_by = ?, revision = revision + 1
             WHERE id = ? AND deleted_at IS NULL`,
           [conflict.occurred_at, actorId || null, before.id],
         );
@@ -1067,12 +1553,18 @@ export async function resolveAttendanceConflict(id, resolutionValue, actorId, { 
         await recordAbsenceEvent({ absenceId: before.id, actorId, eventType: 'closed_by_presence', before, after }, conn);
       }
     } else {
+      const beforePresence = await getPresenceEventById(conn, conflict.presence_event_id);
       await conn.query(
         `UPDATE attendance.presence_events
-            SET cancelled_at = CURRENT_TIMESTAMP, cancelled_by = ?, updated_at = CURRENT_TIMESTAMP
+            SET cancelled_at = CURRENT_TIMESTAMP, cancelled_by = ?, updated_at = CURRENT_TIMESTAMP, revision = revision + 1
           WHERE id = ? AND cancelled_at IS NULL`,
         [actorId || null, conflict.presence_event_id],
       );
+      await recordPresenceChange(conn, {
+        eventId: conflict.presence_event_id, actorId, eventType: 'cancelled_by_conflict',
+        reason: 'Подтверждено отсутствие при согласовании отметок', before: beforePresence,
+        after: await getPresenceEventById(conn, conflict.presence_event_id),
+      });
     }
 
     await conn.query(
@@ -1117,12 +1609,62 @@ export async function createAbsencePeriod(input) {
     await conn.beginTransaction();
     lockAcquired = await acquirePresenceLock(conn, data.studentId);
     if (!lockAcquired) throw new ValidationError('Повторите сохранение через секунду', 409);
-    await assertNoOverlap({
+    const created = await insertAbsencePeriod(conn, data);
+    await conn.commit();
+    return created;
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    if (lockAcquired) await releasePresenceLock(conn, data.studentId);
+    conn.release();
+  }
+}
+
+export async function createAbsencePeriodsBatch(inputs) {
+  if (!Array.isArray(inputs) || !inputs.length || inputs.length > 60) {
+    throw new ValidationError('Можно создать от 1 до 60 отметок за раз');
+  }
+  const data = [];
+  for (const input of inputs) data.push(await validateAbsenceInput(input));
+  if (data.some((item) => item.studentId !== data[0].studentId)) {
+    throw new ValidationError('Все отметки должны относиться к одному ученику');
+  }
+  const conn = await usr.getConnection();
+  let lockAcquired = false;
+  try {
+    await conn.beginTransaction();
+    lockAcquired = await acquirePresenceLock(conn, data[0].studentId);
+    if (!lockAcquired) throw new ValidationError('Повторите сохранение через секунду', 409);
+    const created = [];
+    for (const item of data) {
+      try {
+        created.push(await insertAbsencePeriod(conn, item));
+      } catch (err) {
+        if (err instanceof ValidationError && err.message.includes('пересекающийся период')) {
+          throw new ValidationError(`На ${item.startsAt.slice(8, 10)}.${item.startsAt.slice(5, 7)} уже есть отметка; ничего не сохранено`, 409);
+        }
+        throw err;
+      }
+    }
+    await conn.commit();
+    return created;
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    if (lockAcquired) await releasePresenceLock(conn, data[0].studentId);
+    conn.release();
+  }
+}
+
+async function insertAbsencePeriod(conn, data) {
+  await assertNoOverlap({
       studentId: data.studentId,
       startsAt: data.startsAt,
       endsAt: data.endsAt,
-    }, conn);
-    const [result] = await conn.query(
+  }, conn);
+  const [result] = await conn.query(
       `INSERT INTO attendance.absence_periods
         (student_id, class_id, starts_at, ends_at, reason_code, comment, source, confirmation_status, attention_status, created_by, updated_by)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -1139,25 +1681,17 @@ export async function createAbsencePeriod(input) {
         data.actorId,
         data.actorId,
       ],
-    );
-    const created = await getAbsencePeriodByIdWith(conn, result.insertId);
-    await recordAbsenceEvent({
+  );
+  const created = await getAbsencePeriodByIdWith(conn, result.insertId);
+  await recordAbsenceEvent({
       absenceId: result.insertId,
       actorId: data.actorId,
       eventType: 'created',
       before: null,
       after: created,
-    }, conn);
-    await syncConflictsForAbsence(conn, result.insertId, data.actorId);
-    await conn.commit();
-    return created;
-  } catch (err) {
-    await conn.rollback();
-    throw err;
-  } finally {
-    if (lockAcquired) await releasePresenceLock(conn, data.studentId);
-    conn.release();
-  }
+  }, conn);
+  await syncConflictsForAbsence(conn, result.insertId, data.actorId);
+  return created;
 }
 
 export async function updateAbsencePeriod(id, input) {
@@ -1174,6 +1708,7 @@ export async function updateAbsencePeriod(id, input) {
       await conn.commit();
       return null;
     }
+    assertHistoryVersion(current, input.expectedUpdatedAt);
     const data = await validateAbsenceInput({
       studentId: input.studentId ?? current.student_id,
       classId: input.classId ?? current.class_id,
@@ -1187,7 +1722,8 @@ export async function updateAbsencePeriod(id, input) {
       resolvedAt: input.resolvedAt ?? current.resolved_at,
       resolvedBy: input.resolvedBy ?? current.resolved_by,
       actorId: input.actorId,
-    });
+    }, { historicalClassId: current.class_id });
+    const changeReason = historyChangeReason(input.changeReason, [current.starts_at, data.startsAt].sort()[0]);
     if (String(data.studentId) !== String(current.student_id)) {
       throw new ValidationError('Нельзя перенести отметку отсутствия другому ученику');
     }
@@ -1200,7 +1736,8 @@ export async function updateAbsencePeriod(id, input) {
     await conn.query(
       `UPDATE attendance.absence_periods
           SET student_id = ?, class_id = ?, starts_at = ?, ends_at = ?, reason_code = ?, comment = ?, source = ?,
-              confirmation_status = ?, attention_status = ?, resolved_at = ?, resolved_by = ?, updated_by = ?
+              confirmation_status = ?, attention_status = ?, resolved_at = ?, resolved_by = ?, updated_by = ?,
+              revision = revision + 1, updated_at = CURRENT_TIMESTAMP
         WHERE id = ? AND deleted_at IS NULL`,
       [data.studentId, data.classId, data.startsAt, data.endsAt, data.reasonCode, data.comment, data.source,
         data.confirmationStatus, data.attentionStatus, data.resolvedAt, data.resolvedBy, data.actorId, id],
@@ -1212,6 +1749,7 @@ export async function updateAbsencePeriod(id, input) {
       eventType: current.attention_status !== updated.attention_status ? 'status_changed' : 'updated',
       before: current,
       after: updated,
+      reason: changeReason,
     }, conn);
     await syncConflictsForAbsence(conn, id, data.actorId);
     await conn.commit();
@@ -1225,7 +1763,7 @@ export async function updateAbsencePeriod(id, input) {
   }
 }
 
-export async function softDeleteAbsencePeriod(id, actorId) {
+export async function softDeleteAbsencePeriod(id, actorId, { changeReason, expectedUpdatedAt } = {}) {
   const existing = await getAbsencePeriodById(id);
   if (!existing) return false;
   const conn = await usr.getConnection();
@@ -1239,14 +1777,16 @@ export async function softDeleteAbsencePeriod(id, actorId) {
       await conn.commit();
       return false;
     }
+    assertHistoryVersion(current, expectedUpdatedAt);
+    const reason = historyChangeReason(changeReason, current.starts_at);
     const [result] = await conn.query(
       `UPDATE attendance.absence_periods
-          SET deleted_at = CURRENT_TIMESTAMP, deleted_by = ?, updated_by = ?
+          SET deleted_at = CURRENT_TIMESTAMP, deleted_by = ?, updated_by = ?, revision = revision + 1, updated_at = CURRENT_TIMESTAMP
         WHERE id = ? AND deleted_at IS NULL`,
       [actorId || null, actorId || null, id],
     );
     if (result.affectedRows > 0) {
-      await recordAbsenceEvent({ absenceId: id, actorId: actorId || null, eventType: 'deleted', before: current, after: null }, conn);
+      await recordAbsenceEvent({ absenceId: id, actorId: actorId || null, eventType: 'deleted', reason, before: current, after: null }, conn);
       await resolveStaleConflictsForAbsence(conn, id, actorId);
     }
     await conn.commit();
@@ -1269,7 +1809,7 @@ export async function resolveAbsenceAttention(id, actorId) {
         SET attention_status = 'resolved',
             resolved_at = CURRENT_TIMESTAMP,
             resolved_by = ?,
-            updated_by = ?
+            updated_by = ?, revision = revision + 1
       WHERE id = ? AND deleted_at IS NULL`,
     [actorId || null, actorId || null, id],
   );
@@ -1517,6 +2057,13 @@ export async function getTodayAbsenceOverview({ date, now, classId, audience = A
   const nowSql = normalizeDateTime(now || sqlNow(), { field: 'now', required: true });
   const normalizedAudience = normalizeDataAudience(audience);
   const isAdults = normalizedAudience === AUDIENCE_ADULTS;
+  if (!isAdults && !isSchoolWeekday(selectedDate)) {
+    return {
+      audience: normalizedAudience, is_adult: false, date: selectedDate, date_label: formatDateLabel(selectedDate), now: nowSql,
+      is_weekend: true, has_absences: false, students: [], classes: [],
+      totals: { classes_with_absences: 0, absent_students_today: 0, absent_students_now: 0, without_reason: 0, needs_attention: 0 },
+    };
+  }
   const selectedClassId = String(classId || '').trim();
   const dayStart = `${selectedDate} 00:00:00`;
   const dayEnd = `${selectedDate} 23:59:59`;
@@ -1751,10 +2298,9 @@ export async function getMonthlyAttendanceAnalytics({ month, classId, risk, reas
     getMonthlyFirstPresenceArrivals(range, classFilter),
     getMonthlyPresenceEvents(range, classFilter),
     getTodayAbsenceOverview({ classId: classFilter }),
-    Number(metricVersion) === 2
-      ? listAttendanceConflicts({ audience: AUDIENCE_CHILDREN, classId: classFilter, from: range.start_at, to: range.end_at, status: 'open', limit: 500 })
-      : [],
+    listAttendanceConflicts({ audience: AUDIENCE_CHILDREN, classId: classFilter, from: range.start_at, to: range.end_at, status: 'open', limit: 500 }),
   ]);
+  const lessonFacts = await getCanonicalLessonFacts(range, students.map((item) => item.student_id));
 
   const analytics = buildMonthlyAnalytics({
     range,
@@ -1772,6 +2318,7 @@ export async function getMonthlyAttendanceAnalytics({ month, classId, risk, reas
     scheduleRows,
     publishedSchoolDays,
     activeWeekdays,
+    presenceEvents, conflicts, lessonFacts, now: sqlNow(),
   });
   analytics.lateness = buildLateAnalytics({
     range,
@@ -1848,6 +2395,7 @@ export async function getMonthlyAttendanceAnalytics({ month, classId, risk, reas
       periods,
       presenceEvents,
       conflicts,
+      lessonFacts,
       scheduleRows,
       publishedSchoolDays,
       activeWeekdays,
@@ -1876,7 +2424,7 @@ function applyScheduledAnalyticsV2(analytics, scheduled, selectedClass) {
   analytics.kpi = {
     ...analytics.kpi,
     students_with_absences: scheduled.students.filter((item) => Number(item.missed_minutes || 0) > 0).length,
-    attendance_percent: Number(actual.attendance_percent || 0),
+    attendance_percent: actual.attendance_percent == null ? null : Number(actual.attendance_percent),
     absence_days: Number(actual.absence_days || 0) + Number(actual.incomplete_days || 0),
     absence_hours: round1(Number(actual.missed_minutes || 0) / 60),
     absence_hours_label: formatHoursShort(Number(actual.missed_minutes || 0) / 60),
@@ -1891,7 +2439,7 @@ function applyScheduledAnalyticsV2(analytics, scheduled, selectedClass) {
   };
   analytics.class_summary = {
     ...analytics.class_summary,
-    attendance_percent: Number(actual.attendance_percent || 0),
+    attendance_percent: actual.attendance_percent == null ? null : Number(actual.attendance_percent),
     presence_days: Number(actual.present_days || 0),
     expected_presence_days: scheduled.students.reduce((sum, item) => sum + Number(item.school_days_total || 0), 0),
     absence_days: analytics.kpi.absence_days,
@@ -1923,7 +2471,7 @@ function applyScheduledAnalyticsV2(analytics, scheduled, selectedClass) {
       top_reason_name: segments[0]?.name || '',
       top_reason_color: segments[0]?.color || REASON_BAR_COLORS.default,
       planned_absences: 0,
-      attendance_percent: Number(row.attendance_percent || 0),
+      attendance_percent: row.attendance_percent == null ? null : Number(row.attendance_percent),
       scheduled_minutes: Number(row.scheduled_minutes || 0),
       attended_minutes: Number(row.attended_minutes || 0),
       missed_minutes: missedMinutes,
@@ -2064,9 +2612,18 @@ function applyObservedAdultAnalyticsV2(analytics, observed) {
   analytics.quality = { ...(analytics.quality || {}), ...observed.quality, has_issues: issues.length > 0, issues };
 }
 
-export async function getAdultAttendanceAnalytics({ month, departmentId, metricVersion = 1 } = {}) {
+export async function getAdultAttendanceAnalytics({ month, from, to, departmentId, metricVersion = 1 } = {}) {
   const selectedMonth = normalizeAnalyticsMonth(month);
-  const range = buildMonthRange(selectedMonth);
+  let range = buildMonthRange(selectedMonth);
+  if (from || to) {
+    try {
+      range = { ...range, ...buildAnalyticsRange(from, to) };
+      range.month_label = `${range.start_date.split('-').reverse().join('.')} — ${range.end_date.split('-').reverse().join('.')}`;
+    } catch (error) {
+      error.status = 400;
+      throw error;
+    }
+  }
   const departments = await getAdultDepartments();
   const selectedDepartment = normalizeAnalyticsDepartment(departments, departmentId);
   const departmentFilter = selectedDepartment.id === 'all' ? null : selectedDepartment.id;
@@ -2089,6 +2646,7 @@ export async function getAdultAttendanceAnalytics({ month, departmentId, metricV
     selectedClass: selectedDepartment,
     students: people,
     periods,
+    schoolWeekdaysOnly: false,
   });
   const adultStats = buildAdultPresenceStats({
     range,
@@ -2101,6 +2659,7 @@ export async function getAdultAttendanceAnalytics({ month, departmentId, metricV
   const classSummary = buildClassPresenceSummary({
     range,
     studentsTotal: people.length,
+    observedPresence: true,
     arrivals,
     todayAbsences,
     publishedSchoolDays,
@@ -2165,6 +2724,16 @@ export async function getAdultAttendanceAnalytics({ month, departmentId, metricV
     }));
   }
 
+  const [scheduleRows, mentorWeeks] = await Promise.all([
+    getPublishedScheduleRows(range, null, people.filter(person => !isWorkMentor(person)).map(person => person.student_id)),
+    people.some(isWorkMentor) ? getPublishedMentorWeeks(usr, range) : new Map(),
+  ]);
+  const staffArrivals = buildAdultArrivalAnalytics({
+    range, people, presenceEvents, publishedSchoolDays, scheduleRows, mentorWeeks, now: schoolSqlNow(),
+  });
+  const arrivalById = new Map(staffArrivals.people.map(person => [person.person_id, person]));
+  analytics.people = analytics.people.map(person => ({ ...person, ...arrivalById.get(person.person_id) }));
+  analytics.staff_arrivals = { ...staffArrivals, people: undefined };
   return analytics;
 }
 
@@ -2176,12 +2745,15 @@ export async function getStudentLearningAnalytics(studentId, { month } = {}) {
 
   const selectedMonth = normalizeAnalyticsMonth(month);
   const range = buildMonthRange(selectedMonth);
-  const [classStudents, periods, scheduleRows, publishedSchoolDays, activeWeekdays] = await Promise.all([
+  const [classStudents, periods, scheduleRows, publishedSchoolDays, activeWeekdays, presenceEvents, conflicts, lessonFacts] = await Promise.all([
     getMonthlyAnalyticsStudents(student.classId),
     getMonthlyAnalyticsPeriods(range, student.classId, student.id),
     getPublishedScheduleRows(range, student.classId),
     getPublishedScheduleDays(range),
     getActiveScheduleWeekdays(),
+    getCanonicalPresenceEvents(range, [student.id]),
+    getCanonicalConflicts(range, [student.id]),
+    getCanonicalLessonFacts(range, [student.id]),
   ]);
   const students = classStudents.filter((item) => String(item.student_id) === String(student.id));
   const learning = buildLearningAnalytics({
@@ -2192,6 +2764,7 @@ export async function getStudentLearningAnalytics(studentId, { month } = {}) {
     publishedSchoolDays,
     activeWeekdays,
     includeLessons: true,
+    presenceEvents, conflicts, lessonFacts, now: sqlNow(),
   });
   const selectedStudent = students[0] || {
     student_id: String(student.id),
@@ -2265,6 +2838,7 @@ export async function getStudentMonthlyAnalytics(studentId, { month, metricVersi
     arrivals,
     presenceEvents,
     conflicts,
+    lessonFacts,
   ] = await Promise.all([
     listAbsencePeriods({
       studentId,
@@ -2285,6 +2859,7 @@ export async function getStudentMonthlyAnalytics(studentId, { month, metricVersi
     Number(metricVersion) === 2
       ? listAttendanceConflicts({ audience: AUDIENCE_CHILDREN, studentId, from: range.start_at, to: range.end_at, status: 'open', limit: 500 })
       : [],
+    getCanonicalLessonFacts(range, [student.id]),
   ]);
   const classItem = classes.find((item) => String(item.id) === String(student.classId));
   const selectedStudents = classStudents.filter((item) => String(item.student_id) === String(student.id));
@@ -2295,6 +2870,7 @@ export async function getStudentMonthlyAnalytics(studentId, { month, metricVersi
       periods,
       presenceEvents,
       conflicts,
+      lessonFacts,
       scheduleRows,
       publishedSchoolDays,
       activeWeekdays,
@@ -2311,12 +2887,16 @@ export async function getStudentMonthlyAnalytics(studentId, { month, metricVersi
       activeWeekdays,
     }).students[0] || null;
   const absenceDayKeys = new Set();
+  let countedPeriods = 0;
   let withoutReason = 0;
   let needsAttention = 0;
   let needsClarification = 0;
 
   for (const period of periods) {
-    for (const day of expandDateRangeWithinMonth(period.starts_at, period.ends_at || period.starts_at, range)) {
+    const days = expandDateRangeWithinMonth(period.starts_at, period.ends_at || period.starts_at, range).filter(isSchoolWeekday);
+    if (!days.length) continue;
+    countedPeriods += 1;
+    for (const day of days) {
       absenceDayKeys.add(`${period.student_id}|${day}`);
     }
     if (period.is_without_reason) withoutReason += 1;
@@ -2324,7 +2904,7 @@ export async function getStudentMonthlyAnalytics(studentId, { month, metricVersi
     if (period.confirmation_status === 'needs_clarification') needsClarification += 1;
   }
 
-  return {
+  return withMissedLessons({
     month: range.month,
     month_label: range.month_label,
     period: {
@@ -2340,7 +2920,7 @@ export async function getStudentMonthlyAnalytics(studentId, { month, metricVersi
       href: `/attendance?class=${encodeURIComponent(student.classId || '')}&student=${encodeURIComponent(student.id)}&analyticsMonth=${encodeURIComponent(range.month)}#learning-analytics`,
     },
     kpi: {
-      periods: periods.length,
+      periods: countedPeriods,
       absence_days: absenceDayKeys.size,
       without_reason: withoutReason,
       needs_attention: needsAttention,
@@ -2375,6 +2955,39 @@ export async function getStudentMonthlyAnalytics(studentId, { month, metricVersi
         default_confirmation_status: item.defaultConfirmationStatus,
         requires_attention: item.requiresAttention,
       })),
+  });
+}
+
+export async function getStudentAttendanceExport(student, range) {
+  const studentIds = [student.id];
+  const [people, periods, presenceEvents, conflicts, scheduleRows, publishedSchoolDays, activeWeekdays, lessonFacts] = await Promise.all([
+    getCanonicalPeople(studentIds),
+    getCanonicalPeriods(range, studentIds),
+    getCanonicalPresenceEvents(range, studentIds),
+    getCanonicalConflicts(range, studentIds),
+    getFeedbackScheduleRows(range, studentIds, [student.classId]),
+    getPublishedScheduleDays(range),
+    getActiveScheduleWeekdays(),
+    getCanonicalLessonFacts(range, studentIds),
+  ]);
+  const person = people[0];
+  if (!person || Number(person.user_type) !== 1) throw new ValidationError('Ученик не найден', 404);
+
+  const now = sqlNow();
+  const projection = buildStudentLessonAnalytics({
+    range, student: person, periods, presenceEvents, conflicts, scheduleRows,
+    publishedSchoolDays, activeWeekdays, lessonFacts, now,
+  });
+  const datesWithLessons = new Set(projection._lessons.map((lesson) => lesson.date));
+  const today = now.slice(0, 10);
+  const unplacedAbsenceDays = range.days.filter((day) =>
+    isSchoolWeekday(day) && day <= today && !datesWithLessons.has(day) && periods.some((period) =>
+      period.starts_at < now && period.starts_at <= `${day} 23:59:59` && period.ends_at > `${day} 00:00:00`));
+  return {
+    student: { name: person.person_name, className: person.class_name },
+    lessons: projection._lessons,
+    missingScheduleDates: projection.quality.missingScheduleDates,
+    unplacedAbsenceDays,
   };
 }
 
@@ -2412,53 +3025,6 @@ export async function getAttendanceAnalyticsQuery({ period, items } = {}) {
     scheduleRows,
     publishedSchoolDays,
     activeWeekdays,
-    lessonFacts,
-    now: sqlNow(),
-  });
-}
-
-export async function resolveLessonAttendanceRequests({ requests } = {}) {
-  let normalizedRequests;
-  try {
-    normalizedRequests = normalizeLessonResolutionRequests(requests);
-  } catch (error) {
-    throw new ValidationError(error.message);
-  }
-
-  const studentIds = Array.from(new Set(normalizedRequests.flatMap((request) => request.studentIds)));
-  const people = await getCanonicalPeople(studentIds);
-  const activeStudentIds = new Set(
-    people.filter((person) => Number(person.user_type) === 1).map((person) => Number(person.person_id)),
-  );
-  if (studentIds.some((studentId) => !activeStudentIds.has(studentId))) {
-    throw new ValidationError('Запрос относится к отсутствующему или неактивному ученику SSO', 422);
-  }
-
-  const dates = normalizedRequests.map((request) => request.lessonDate).sort();
-  const range = buildAnalyticsRange(dates[0], dates.at(-1));
-  const contexts = await Promise.all(normalizedRequests.map(async (request) => {
-    const anchor = await getLessonResolutionAnchor(request.scheduleAnchorEntryId);
-    const anchorError = validateLessonResolutionAnchor(anchor, request);
-    return {
-      request,
-      anchor,
-      anchorError,
-      scheduleRows: anchorError ? [] : await getLessonResolutionScheduleRows(anchor, request.studentIds),
-    };
-  }));
-  const [periods, presenceEvents, conflicts, lessonFacts] = await Promise.all([
-    getCanonicalPeriods(range, studentIds),
-    getCanonicalPresenceEvents(range, studentIds),
-    getCanonicalConflicts(range, studentIds),
-    getCanonicalLessonFacts(range, studentIds),
-  ]);
-
-  return buildLessonResolutionContract({
-    contexts,
-    people,
-    periods,
-    presenceEvents,
-    conflicts,
     lessonFacts,
     now: sqlNow(),
   });
@@ -2586,25 +3152,61 @@ export async function getFeedbackAttendanceSnapshots({ periodStart, periodEnd, a
 export async function getSchoolDayBounds(date) {
   const selectedDate = normalizeDateOnly(date || todayDate());
   const weekday = weekdayFromDate(selectedDate);
-  const scheduleRows = await getPublishedScheduleRows({
-    start_date: selectedDate,
-    end_date: selectedDate,
-  });
-  const lessons = scheduleRows.map(normalizeScheduleLesson).filter(Boolean);
-  const startTime = lessons.length
-    ? lessons.map((lesson) => lesson.starts_at.slice(11)).sort(compareClockTimes)[0]
-    : SCHOOL_DAY_FALLBACK_START;
-  let endTime = lessons.length
-    ? lessons.map((lesson) => lesson.ends_at.slice(11)).sort(compareClockTimes).at(-1)
-    : SCHOOL_DAY_FALLBACK_END;
-  if (compareClockTimes(endTime, SCHOOL_DAY_FALLBACK_END) > 0) {
-    endTime = SCHOOL_DAY_FALLBACK_END;
+  const scheduleRows = isSchoolWeekday(selectedDate) ? await getSchoolScheduleSlots(selectedDate, selectedDate) : [];
+  let firstStart = '99:00:00';
+  let lastEnd = '';
+  for (const row of scheduleRows) {
+    const lesson = normalizeScheduleLesson(row);
+    if (!lesson) continue;
+    const start = lesson.starts_at.slice(11);
+    const end = lesson.ends_at.slice(11);
+    if (start < firstStart) firstStart = start;
+    if (end > lastEnd) lastEnd = end;
   }
-  if (compareClockTimes(startTime, endTime) >= 0) {
+  const endTime = lastEnd < SCHOOL_DAY_FALLBACK_END ? lastEnd : SCHOOL_DAY_FALLBACK_END;
+  if (firstStart >= endTime) {
     return schoolDayBoundsPayload(selectedDate, weekday, SCHOOL_DAY_FALLBACK_START, SCHOOL_DAY_FALLBACK_END, false);
   }
 
-  return schoolDayBoundsPayload(selectedDate, weekday, startTime, endTime, lessons.length > 0);
+  return schoolDayBoundsPayload(selectedDate, weekday, firstStart, endTime, true);
+}
+
+async function getPhoneSchoolDates(from, to) {
+  if (from === to && !isSchoolWeekday(from)) return [];
+  const rows = await getSchoolScheduleSlots(from, to, { onsiteOnly: true });
+  return [...new Set(rows.filter((row) => isSchoolWeekday(row.lesson_date) && normalizeScheduleLesson(row)).map((row) => row.lesson_date))].sort();
+}
+
+async function getSchoolScheduleSlots(from, to, { onsiteOnly = false } = {}) {
+  const lessonDate = 'DATE(DATE_ADD(w.week_start, INTERVAL (ts.day_of_week - 1) DAY))';
+  // Keep distinct schedule inputs byte-exact for the shared lesson normalizer.
+  const [rows] = await usr.query(
+    `SELECT DISTINCT
+        DATE_FORMAT(${lessonDate}, '%Y-%m-%d') AS lesson_date,
+        ts.slot_number,
+        TIME_FORMAT(ts.start_time, '%H:%i:%s') AS start_time,
+        TIME_FORMAT(ts.end_time, '%H:%i:%s') AS end_time,
+        CAST(COALESCE(NULLIF(e.custom_subject_name, ''), s.name, '') AS BINARY) AS subject_name,
+        CAST(COALESCE(at.slot_part, 'FULL') AS BINARY) AS slot_part
+       FROM school_local.schedule_publications p
+       JOIN school_local.schedule_week_versions v
+         ON v.id = p.published_version_id AND v.week_id = p.week_id AND v.state = 'published'
+       JOIN school_local.schedule_weeks w ON w.id = p.week_id
+       JOIN school_local.schedule_entries e ON e.week_version_id = v.id
+       JOIN school_local.schedule_time_slots ts
+         ON ts.id = e.slot_id AND ts.is_active = 1 AND ts.day_of_week BETWEEN 1 AND 5
+       LEFT JOIN school_local.info_subjects s ON s.id = e.subject_id
+       LEFT JOIN school_local.activity_types at ON at.code = e.activity_type
+      WHERE p.is_current = 1
+        AND ${lessonDate} BETWEEN ? AND ?
+        ${onsiteOnly ? 'AND COALESCE(e.is_online, 0) = 0' : ''}
+        AND (e.group_id IS NULL OR EXISTS (
+          SELECT 1 FROM school_local.schedule_group_members sgm
+           WHERE sgm.group_id = e.group_id AND sgm.student_id IS NOT NULL
+        ))`,
+    [from, to],
+  );
+  return rows;
 }
 
 async function getMonthlyAnalyticsStudents(classId) {
@@ -2652,121 +3254,6 @@ async function getCanonicalPeople(personIds) {
       WHERE u.status = 1
         AND u.id IN (${sqlPlaceholders(ids)})`,
     ids,
-  );
-  return rows;
-}
-
-async function getLessonResolutionAnchor(entryId) {
-  const [rows] = await usr.query(
-    `SELECT
-        CAST(e.id AS CHAR) AS entry_id,
-        CAST(e.week_version_id AS CHAR) AS week_version_id,
-        CAST(e.slot_id AS CHAR) AS slot_id,
-        CAST(e.class_id AS CHAR) AS class_id,
-        CAST(e.subject_id AS CHAR) AS subject_id,
-        CAST(e.teacher_id AS CHAR) AS teacher_id,
-        e.activity_type,
-        e.custom_subject_name,
-        DATE_FORMAT(DATE(DATE_ADD(w.week_start, INTERVAL (ts.day_of_week - 1) DAY)), '%Y-%m-%d') AS lesson_date
-       FROM school_local.schedule_entries e
-       JOIN school_local.schedule_week_versions v
-         ON v.id = e.week_version_id
-        AND v.state = 'published'
-       JOIN school_local.schedule_weeks w ON w.id = v.week_id
-       JOIN school_local.schedule_publications p
-         ON p.week_id = v.week_id
-        AND p.published_version_id = v.id
-        AND p.is_current = 1
-       JOIN school_local.schedule_time_slots ts
-         ON ts.id = e.slot_id
-        AND ts.is_active = 1
-      WHERE e.id = ?
-      LIMIT 1`,
-    [entryId],
-  );
-  return rows[0] || null;
-}
-
-function validateLessonResolutionAnchor(anchor, request) {
-  if (!anchor) return 'schedule_anchor_not_found';
-  if (String(anchor.lesson_date) !== request.lessonDate) return 'schedule_anchor_date_mismatch';
-  if (Number(anchor.class_id) !== request.classId) return 'schedule_anchor_class_mismatch';
-  if (Number(anchor.teacher_id) !== request.teacherId) return 'schedule_anchor_teacher_mismatch';
-  return '';
-}
-
-async function getLessonResolutionScheduleRows(anchor, studentIds) {
-  const ids = uniquePositiveIds(studentIds);
-  if (!ids.length) return [];
-  const [rows] = await usr.query(
-    `SELECT
-        CAST(e.id AS CHAR) AS entry_id,
-        CAST(v.week_id AS CHAR) AS week_id,
-        CAST(e.week_version_id AS CHAR) AS week_version_id,
-        DATE_FORMAT(w.week_start, '%Y-%m-%d') AS week_start,
-        DATE_FORMAT(DATE(DATE_ADD(w.week_start, INTERVAL (ts.day_of_week - 1) DAY)), '%Y-%m-%d') AS lesson_date,
-        ts.day_of_week,
-        CAST(ts.id AS CHAR) AS slot_id,
-        ts.slot_number,
-        TIME_FORMAT(ts.start_time, '%H:%i:%s') AS start_time,
-        TIME_FORMAT(ts.end_time, '%H:%i:%s') AS end_time,
-        CAST(e.class_id AS CHAR) AS class_id,
-        CAST(u.id AS CHAR) AS student_id,
-        CAST(u.id AS CHAR) AS resolved_student_id,
-        CAST(e.subject_id AS CHAR) AS subject_id,
-        COALESCE(NULLIF(e.custom_subject_name, ''), s.name, '') AS subject_name,
-        st.name AS subject_type,
-        CAST(e.teacher_id AS CHAR) AS teacher_id,
-        CAST(e.room_id AS CHAR) AS room_id,
-        e.activity_type,
-        COALESCE(at.slot_part, 'FULL') AS slot_part,
-        e.is_paid,
-        CAST(e.lesson_type_id AS CHAR) AS lesson_type_id
-       FROM school_local.schedule_entries e
-       JOIN school_local.schedule_week_versions v
-         ON v.id = e.week_version_id
-        AND v.state = 'published'
-       JOIN school_local.schedule_weeks w ON w.id = v.week_id
-       JOIN school_local.schedule_publications p
-         ON p.week_id = v.week_id
-        AND p.published_version_id = v.id
-        AND p.is_current = 1
-       JOIN school_local.schedule_time_slots ts
-         ON ts.id = e.slot_id
-        AND ts.is_active = 1
-       JOIN sso.users u
-         ON u.id IN (${sqlPlaceholders(ids)})
-        AND u.status = 1
-        AND u.type = 1
-       LEFT JOIN school_local.schedule_group_members sgm
-         ON sgm.group_id = e.group_id
-        AND sgm.student_id = u.id
-       LEFT JOIN school_local.info_subjects s ON s.id = e.subject_id
-       LEFT JOIN school_local.info_subjects_types st ON st.id = s.type
-       LEFT JOIN school_local.activity_types at ON at.code = e.activity_type
-      WHERE e.week_version_id = ?
-        AND e.slot_id = ?
-        AND e.class_id = ?
-        AND e.teacher_id = ?
-        AND e.subject_id <=> ?
-        AND COALESCE(e.custom_subject_name, '') = COALESCE(?, '')
-        AND e.activity_type <=> ?
-        AND (
-          e.student_id = u.id
-          OR (e.group_id IS NOT NULL AND sgm.student_id IS NOT NULL)
-          OR (e.student_id IS NULL AND e.group_id IS NULL AND u.kaf = e.class_id)
-        )
-      ORDER BY u.id, CASE WHEN e.student_id = u.id THEN 0 WHEN e.group_id IS NOT NULL THEN 1 ELSE 2 END, e.id`,
-    [
-      ...ids,
-      anchor.week_version_id,
-      anchor.slot_id,
-      anchor.class_id,
-      anchor.teacher_id,
-      anchor.subject_id,
-      anchor.custom_subject_name || '',
-      anchor.activity_type,
-    ],
   );
   return rows;
 }
@@ -2819,6 +3306,14 @@ async function getCanonicalPresenceEvents(range, personIds) {
     [range.start_date, range.end_date, ...ids],
   );
   return rows;
+}
+
+export async function getMentorWorkPresence(range, personIds) {
+  const [presenceEvents, conflicts] = await Promise.all([
+    getCanonicalPresenceEvents(range, personIds),
+    getCanonicalConflicts(range, personIds),
+  ]);
+  return { presenceEvents, conflicts };
 }
 
 async function getCanonicalConflicts(range, personIds) {
@@ -3033,6 +3528,8 @@ async function getMonthlyAnalyticsPeriods(range, classId, studentId = null) {
 
 async function getMonthlyFirstPresenceArrivals(range, classId, studentId = null, audience = AUDIENCE_CHILDREN) {
   const normalizedAudience = normalizeDataAudience(audience);
+  // Staff are selected by their current department; keep their earlier events after a transfer.
+  const personClassSql = normalizedAudience === AUDIENCE_ADULTS ? 'u.kaf' : 'e.class_id';
   const where = [
     'e.event_type = ?',
     'e.cancelled_at IS NULL',
@@ -3049,7 +3546,7 @@ async function getMonthlyFirstPresenceArrivals(range, classId, studentId = null,
     if (normalizedAudience === AUDIENCE_ADULTS && String(classId) === ADULT_CLASS_LINKED_DEPARTMENT_ID) {
       where.push('k.type = 1');
     } else {
-      where.push('e.class_id = ?');
+      where.push(`${personClassSql} = ?`);
       params.push(classId);
     }
   }
@@ -3064,7 +3561,7 @@ async function getMonthlyFirstPresenceArrivals(range, classId, studentId = null,
          SELECT
            CAST(e.id AS CHAR) AS id,
            CAST(e.student_id AS CHAR) AS student_id,
-           CAST(e.class_id AS CHAR) AS class_id,
+           CAST(${personClassSql} AS CHAR) AS class_id,
            '${PRESENCE_EVENT_TYPES.ARRIVAL}' AS event_type,
            DATE_FORMAT(e.attendance_date, '%Y-%m-%d') AS attendance_date,
            DATE_FORMAT(e.occurred_at, '%Y-%m-%d %H:%i:%s') AS arrival_at,
@@ -3077,7 +3574,7 @@ async function getMonthlyFirstPresenceArrivals(range, classId, studentId = null,
            ) AS row_num
           FROM attendance.presence_events e
           JOIN sso.users u ON u.id = e.student_id
-          JOIN sso.kaf_name k ON k.id = e.class_id
+          JOIN sso.kaf_name k ON k.id = ${personClassSql}
          WHERE ${where.join(' AND ')}
        ) first_arrivals
       WHERE row_num = 1
@@ -3151,6 +3648,8 @@ async function getMonthlyAdultAnalyticsPeriods(range, departmentId, personId = n
 
 async function getMonthlyPresenceEvents(range, classId, studentId = null, audience = AUDIENCE_CHILDREN) {
   const normalizedAudience = normalizeDataAudience(audience);
+  // Staff are selected by their current department; keep their earlier events after a transfer.
+  const personClassSql = normalizedAudience === AUDIENCE_ADULTS ? 'u.kaf' : 'e.class_id';
   const where = [
     'e.cancelled_at IS NULL',
     'e.attendance_date BETWEEN ? AND ?',
@@ -3166,7 +3665,7 @@ async function getMonthlyPresenceEvents(range, classId, studentId = null, audien
     if (normalizedAudience === AUDIENCE_ADULTS && String(classId) === ADULT_CLASS_LINKED_DEPARTMENT_ID) {
       where.push('k.type = 1');
     } else {
-      where.push('e.class_id = ?');
+      where.push(`${personClassSql} = ?`);
       params.push(classId);
     }
   }
@@ -3179,7 +3678,7 @@ async function getMonthlyPresenceEvents(range, classId, studentId = null, audien
     `SELECT
         CAST(e.id AS CHAR) AS id,
         CAST(e.student_id AS CHAR) AS student_id,
-        CAST(e.class_id AS CHAR) AS class_id,
+        CAST(${personClassSql} AS CHAR) AS class_id,
         e.event_type,
         DATE_FORMAT(e.attendance_date, '%Y-%m-%d') AS attendance_date,
         DATE_FORMAT(e.occurred_at, '%Y-%m-%d %H:%i:%s') AS occurred_at,
@@ -3188,7 +3687,7 @@ async function getMonthlyPresenceEvents(range, classId, studentId = null, audien
         k.name AS class_name
        FROM attendance.presence_events e
        JOIN sso.users u ON u.id = e.student_id
-       JOIN sso.kaf_name k ON k.id = e.class_id
+       JOIN sso.kaf_name k ON k.id = ${personClassSql}
       WHERE ${where.join(' AND ')}
       ORDER BY e.attendance_date, e.occurred_at, e.id`,
     params,
@@ -3196,13 +3695,20 @@ async function getMonthlyPresenceEvents(range, classId, studentId = null, audien
   return rows;
 }
 
-async function getPublishedScheduleRows(range, classIds = null) {
+async function getPublishedScheduleRows(range, classIds = null, teacherIds = null) {
   const lessonDateSql = 'DATE(DATE_ADD(w.week_start, INTERVAL (ts.day_of_week - 1) DAY))';
   const where = [
     `${lessonDateSql} BETWEEN ? AND ?`,
-    '(e.group_id IS NULL OR sgm.student_id IS NOT NULL)',
+    'ts.day_of_week BETWEEN 1 AND 5',
+    teacherIds === null ? '(e.group_id IS NULL OR sgm.student_id IS NOT NULL)' : 'e.teacher_id IS NOT NULL',
   ];
   const params = [range.start_date, range.end_date];
+  if (teacherIds !== null) {
+    const ids = uniquePositiveIds(teacherIds);
+    if (!ids.length) return [];
+    where.push(`e.teacher_id IN (${sqlPlaceholders(ids)})`);
+    params.push(...ids);
+  }
   if (classIds !== null) {
     const selectedClassIds = uniquePositiveIds(Array.isArray(classIds) ? classIds : [classIds]);
     if (!selectedClassIds.length) return [];
@@ -3240,6 +3746,7 @@ async function getPublishedScheduleRows(range, classIds = null) {
         e.activity_type,
         COALESCE(at.slot_part, 'FULL') AS slot_part,
         e.is_paid,
+        e.is_online,
         CAST(e.lesson_type_id AS CHAR) AS lesson_type_id
        FROM school_local.schedule_entries e
        JOIN school_local.schedule_week_versions v
@@ -3278,7 +3785,7 @@ async function getPublishedScheduleDays(range) {
         AND v.week_id = p.week_id
         AND v.state = 'published'
        JOIN school_local.schedule_weeks w ON w.id = p.week_id
-       JOIN school_local.schedule_time_slots ts ON ts.is_active = 1
+       JOIN school_local.schedule_time_slots ts ON ts.is_active = 1 AND ts.day_of_week BETWEEN 1 AND 5
       WHERE p.is_current = 1
         AND ${lessonDateSql} BETWEEN ? AND ?
       ORDER BY date`,
@@ -3291,13 +3798,13 @@ async function getActiveScheduleWeekdays() {
   const [rows] = await usr.query(
     `SELECT DISTINCT day_of_week
        FROM school_local.schedule_time_slots
-      WHERE is_active = 1
+      WHERE is_active = 1 AND day_of_week BETWEEN 1 AND 5
       ORDER BY day_of_week`,
   );
   return rows.map((row) => Number(row.day_of_week)).filter((day) => day >= 1 && day <= 7);
 }
 
-function buildMonthlyAnalytics({ range, classes, selectedClass, students, periods }) {
+function buildMonthlyAnalytics({ range, classes, selectedClass, students, periods, schoolWeekdaysOnly = true }) {
   const studentById = new Map(students.map((student) => [String(student.student_id), student]));
   const studentsByClass = new Map();
   const dailyBuckets = new Map(range.days.map((day) => [day, createDailyBucket(day)]));
@@ -3327,16 +3834,20 @@ function buildMonthlyAnalytics({ range, classes, selectedClass, students, period
   let withoutReasonPeriods = 0;
   let needsAttentionPeriods = 0;
   let needsClarificationPeriods = 0;
+  let totalPeriods = 0;
 
   for (const period of periods) {
     const periodId = String(period.id);
     const studentId = String(period.student_id);
     const classId = String(period.class_id);
-    const days = expandDateRangeWithinMonth(period.starts_at, period.ends_at || period.starts_at, range);
+    const periodDays = expandDateRangeWithinMonth(period.starts_at, period.ends_at || period.starts_at, range);
+    const days = schoolWeekdaysOnly ? periodDays.filter(isSchoolWeekday) : periodDays;
     if (!days.length) continue;
-    const periodHours = Number.isFinite(Number(period.period_hours))
-      ? Number(period.period_hours)
-      : hoursWithinRange(period.starts_at, period.ends_at, range);
+    totalPeriods += 1;
+    const storedPeriodHours = Number(period.period_hours);
+    const periodHours = days.length === periodDays.length && Number.isFinite(storedPeriodHours)
+      ? storedPeriodHours
+      : days.reduce((sum, day) => sum + hoursWithinDay(period, day), 0);
 
     const isWithoutReason = isWithoutReasonCode(period.reason_code);
     const needsAttention = period.attention_status === 'needs_attention';
@@ -3518,7 +4029,6 @@ function buildMonthlyAnalytics({ range, classes, selectedClass, students, period
     qualityIssues.push({ code: 'needs_attention', label: 'Открытое внимание', value: needsAttentionPeriods });
   }
 
-  const totalPeriods = periods.length;
   return {
     month: range.month,
     month_label: range.month_label,
@@ -3547,7 +4057,7 @@ function buildMonthlyAnalytics({ range, classes, selectedClass, students, period
       absence_hours_label: classChart.total_hours_label,
       with_reason_percent: totalPeriods ? percentOf(totalPeriods - withoutReasonPeriods, totalPeriods) : 100,
       without_reason: withoutReasonPeriods,
-      without_reason_days: countPeriodDays(periods, range, (period) => isWithoutReasonCode(period.reason_code)),
+      without_reason_days: countPeriodDays(periods, range, (period) => isWithoutReasonCode(period.reason_code), schoolWeekdaysOnly),
       needs_attention: needsAttentionPeriods,
       needs_clarification: needsClarificationPeriods,
     },
@@ -3880,6 +4390,7 @@ function buildDailyCalendar(range, dailyRows) {
     slots.push({
       ...row,
       is_empty: false,
+      is_weekend: !isSchoolWeekday(row.date),
       key: row.date,
     });
   }
@@ -4137,26 +4648,27 @@ function ensureRiskBucket(map, period, studentById) {
   return map.get(studentId);
 }
 
-function countPeriodDays(periods, range, predicate) {
+function countPeriodDays(periods, range, predicate, schoolWeekdaysOnly) {
   const days = new Set();
   for (const period of periods) {
     if (!predicate(period)) continue;
     for (const day of expandDateRangeWithinMonth(period.starts_at, period.ends_at || period.starts_at, range)) {
-      days.add(`${period.student_id}|${day}`);
+      if (!schoolWeekdaysOnly || isSchoolWeekday(day)) days.add(`${period.student_id}|${day}`);
     }
   }
   return days.size;
 }
 
-async function validateAbsenceInput(input) {
+async function validateAbsenceInput(input, { historicalClassId } = {}) {
   const studentId = toPositiveInt(input.studentId, 'studentId');
   const student = await getStudentById(studentId);
   if (!student) {
     throw new ValidationError('Ученик не найден');
   }
 
-  const classId = input.classId == null || input.classId === '' ? Number(student.classId) : toPositiveInt(input.classId, 'classId');
-  if (String(classId) !== String(student.classId)) {
+  const classId = historicalClassId != null ? Number(historicalClassId)
+    : input.classId == null || input.classId === '' ? Number(student.classId) : toPositiveInt(input.classId, 'classId');
+  if (historicalClassId == null && String(classId) !== String(student.classId)) {
     throw new ValidationError('Класс не совпадает с классом ученика');
   }
 
@@ -4276,6 +4788,7 @@ function absenceSelectSql() {
       u.name AS student_name,
       k.name AS class_name,
       k.type AS class_type,
+      u.type AS user_type,
       DATE_FORMAT(p.starts_at, '%Y-%m-%d %H:%i:%s') AS starts_at,
       DATE_FORMAT(p.ends_at, '%Y-%m-%d %H:%i:%s') AS ends_at,
       p.reason_code,
@@ -4291,6 +4804,9 @@ function absenceSelectSql() {
       p.comment,
       CAST(p.created_by AS CHAR) AS created_by,
       CAST(p.updated_by AS CHAR) AS updated_by,
+      p.revision,
+      DATE_FORMAT(p.deleted_at, '%Y-%m-%d %H:%i:%s') AS deleted_at,
+      CAST(p.deleted_by AS CHAR) AS deleted_by,
       DATE_FORMAT(p.created_at, '%Y-%m-%d %H:%i:%s') AS created_at,
       DATE_FORMAT(p.updated_at, '%Y-%m-%d %H:%i:%s') AS updated_at
     FROM attendance.absence_periods p
@@ -4310,6 +4826,7 @@ function mapAbsencePeriod(row) {
     student_name: row.student_name || '',
     class_name: row.class_name || '',
     class_type: row.class_type == null ? '' : String(row.class_type),
+    user_type: row.user_type == null ? null : Number(row.user_type),
     starts_at: startsAt,
     ends_at: endsAt,
     starts_at_input: toDateTimeLocal(startsAt),
@@ -4333,8 +4850,12 @@ function mapAbsencePeriod(row) {
     comment: row.comment || '',
     created_by: row.created_by,
     updated_by: row.updated_by,
+    revision: Number(row.revision || 0),
+    deleted_at: row.deleted_at || null,
+    deleted_by: row.deleted_by || null,
     created_at: row.created_at || '',
     updated_at: row.updated_at || '',
+    expected_updated_at: historyVersion(row),
 
     childId: row.student_id,
     classId: row.class_id,
@@ -4536,17 +5057,18 @@ function normalizeChoice(value, allowed, fallback, field) {
   return normalized;
 }
 
-async function recordAbsenceEvent({ absenceId, actorId, eventType, before, after }, executor = usr) {
+async function recordAbsenceEvent({ absenceId, actorId, eventType, before, after, reason }, executor = usr) {
   await executor.query(
     `INSERT INTO attendance.absence_period_events
-      (absence_id, actor_id, event_type, before_json, after_json)
-     VALUES (?, ?, ?, ?, ?)`,
+      (absence_id, actor_id, event_type, before_json, after_json, reason)
+     VALUES (?, ?, ?, ?, ?, ?)`,
     [
       absenceId,
       actorId || null,
       eventType,
       before ? JSON.stringify(toEventPayload(before)) : null,
       after ? JSON.stringify(toEventPayload(after)) : null,
+      reason || null,
     ],
   );
 }
@@ -4738,7 +5260,7 @@ async function resolveStaleConflictsForPresence(executor, presenceEventId, actor
             c.resolved_at = CURRENT_TIMESTAMP
       WHERE c.presence_event_id = ?
         AND c.status = 'open'
-        AND (e.cancelled_at IS NOT NULL OR p.deleted_at IS NOT NULL OR e.occurred_at < p.starts_at OR e.occurred_at >= p.ends_at)`,
+        AND (e.cancelled_at IS NOT NULL OR e.event_type <> 'arrival' OR p.deleted_at IS NOT NULL OR e.occurred_at < p.starts_at OR e.occurred_at >= p.ends_at)`,
     [ATTENDANCE_CONFLICT_RESOLUTIONS.PRESENCE_CANCELLED, ATTENDANCE_CONFLICT_RESOLUTIONS.ABSENCE_ADJUSTED, actorId || null, presenceEventId],
   );
 }
@@ -4880,6 +5402,7 @@ function presenceEventSelectSql() {
       DATE_FORMAT(e.attendance_date, '%Y-%m-%d') AS attendance_date,
       CAST(e.actor_id AS CHAR) AS actor_id,
       e.source,
+      e.revision,
       DATE_FORMAT(e.cancelled_at, '%Y-%m-%d %H:%i:%s') AS cancelled_at,
       CAST(e.cancelled_by AS CHAR) AS cancelled_by,
       e.idempotency_key,
@@ -4914,6 +5437,8 @@ function mapPresenceEvent(row) {
     attendance_date: row.attendance_date || dateOnlyFromSql(occurredAt),
     actor_id: row.actor_id,
     source: row.source || 'tablet',
+    revision: Number(row.revision || 0),
+    expected_updated_at: historyVersion(row),
     audience: Number(row.user_type) === 1
       ? AUDIENCE_CHILDREN
       : (isStaffUserType(row.user_type) ? AUDIENCE_ADULTS : ''),
@@ -4991,15 +5516,11 @@ function dateOnlyFromSql(value) {
 }
 
 function sqlNow() {
-  const now = new Date();
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+  return schoolSqlNow();
 }
 
 function todayDate() {
-  const now = new Date();
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  return schoolSqlNow().slice(0, 10);
 }
 
 function schoolDayBoundsPayload(date, weekday, startTime, endTime, fromSchedule) {
@@ -5024,28 +5545,6 @@ function weekdayFromDate(value) {
   const [year, month, day] = String(value).split('-').map(Number);
   const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
   return weekday === 0 ? 7 : weekday;
-}
-
-function normalizeClockTime(value) {
-  const match = String(value || '').match(/^(\d{2}):(\d{2})(?::(\d{2}))?$/);
-  if (!match) return '';
-  const [, hourText, minuteText, secondText = '00'] = match;
-  const hour = Number(hourText);
-  const minute = Number(minuteText);
-  const second = Number(secondText);
-  if (hour > 23 || minute > 59 || second > 59) return '';
-  return `${hourText}:${minuteText}:${secondText}`;
-}
-
-function compareClockTimes(left, right) {
-  return clockTimeSeconds(left) - clockTimeSeconds(right);
-}
-
-function clockTimeSeconds(value) {
-  const normalized = normalizeClockTime(value);
-  if (!normalized) return 0;
-  const [hour, minute, second] = normalized.split(':').map(Number);
-  return hour * 3600 + minute * 60 + second;
 }
 
 function daysAgoDateTime(days) {
@@ -5131,4 +5630,166 @@ function confirmationLabel(value) {
     case 'system_conflict': return 'Конфликт с системой';
     default: return 'Подтверждено';
   }
+}
+
+export async function resolveLessonAttendanceRequests({ requests } = {}) {
+  let normalizedRequests;
+  try {
+    normalizedRequests = normalizeLessonResolutionRequests(requests);
+  } catch (error) {
+    throw new ValidationError(error.message);
+  }
+
+  const studentIds = Array.from(new Set(normalizedRequests.flatMap((request) => request.studentIds)));
+  const people = await getCanonicalPeople(studentIds);
+  const activeStudentIds = new Set(
+    people.filter((person) => Number(person.user_type) === 1).map((person) => Number(person.person_id)),
+  );
+  if (studentIds.some((studentId) => !activeStudentIds.has(studentId))) {
+    throw new ValidationError('Запрос относится к отсутствующему или неактивному ученику SSO', 422);
+  }
+
+  const dates = normalizedRequests.map((request) => request.lessonDate).sort();
+  const range = buildAnalyticsRange(dates[0], dates.at(-1));
+  const contexts = await Promise.all(normalizedRequests.map(async (request) => {
+    const anchor = await getLessonResolutionAnchor(request.scheduleAnchorEntryId);
+    const anchorError = validateLessonResolutionAnchor(anchor, request);
+    return {
+      request,
+      anchor,
+      anchorError,
+      scheduleRows: anchorError ? [] : await getLessonResolutionScheduleRows(anchor, request.studentIds),
+    };
+  }));
+  const [periods, presenceEvents, conflicts, lessonFacts] = await Promise.all([
+    getCanonicalPeriods(range, studentIds),
+    getCanonicalPresenceEvents(range, studentIds),
+    getCanonicalConflicts(range, studentIds),
+    getCanonicalLessonFacts(range, studentIds),
+  ]);
+
+  return buildLessonResolutionContract({
+    contexts,
+    people,
+    periods,
+    presenceEvents,
+    conflicts,
+    lessonFacts,
+    now: sqlNow(),
+  });
+}
+
+async function getLessonResolutionAnchor(entryId) {
+  const [rows] = await usr.query(
+    `SELECT
+        CAST(e.id AS CHAR) AS entry_id,
+        CAST(e.week_version_id AS CHAR) AS week_version_id,
+        CAST(e.slot_id AS CHAR) AS slot_id,
+        CAST(e.class_id AS CHAR) AS class_id,
+        CAST(e.subject_id AS CHAR) AS subject_id,
+        CAST(e.teacher_id AS CHAR) AS teacher_id,
+        e.activity_type,
+        e.custom_subject_name,
+        DATE_FORMAT(DATE(DATE_ADD(w.week_start, INTERVAL (ts.day_of_week - 1) DAY)), '%Y-%m-%d') AS lesson_date
+       FROM school_local.schedule_entries e
+       JOIN school_local.schedule_week_versions v
+         ON v.id = e.week_version_id
+        AND v.state = 'published'
+       JOIN school_local.schedule_weeks w ON w.id = v.week_id
+       JOIN school_local.schedule_publications p
+         ON p.week_id = v.week_id
+        AND p.published_version_id = v.id
+        AND p.is_current = 1
+       JOIN school_local.schedule_time_slots ts
+         ON ts.id = e.slot_id
+        AND ts.is_active = 1
+      WHERE e.id = ?
+      LIMIT 1`,
+    [entryId],
+  );
+  return rows[0] || null;
+}
+
+function validateLessonResolutionAnchor(anchor, request) {
+  if (!anchor) return 'schedule_anchor_not_found';
+  if (String(anchor.lesson_date) !== request.lessonDate) return 'schedule_anchor_date_mismatch';
+  if (Number(anchor.class_id) !== request.classId) return 'schedule_anchor_class_mismatch';
+  if (Number(anchor.teacher_id) !== request.teacherId) return 'schedule_anchor_teacher_mismatch';
+  return '';
+}
+
+async function getLessonResolutionScheduleRows(anchor, studentIds) {
+  const ids = uniquePositiveIds(studentIds);
+  if (!ids.length) return [];
+  const [rows] = await usr.query(
+    `SELECT
+        CAST(e.id AS CHAR) AS entry_id,
+        CAST(v.week_id AS CHAR) AS week_id,
+        CAST(e.week_version_id AS CHAR) AS week_version_id,
+        DATE_FORMAT(w.week_start, '%Y-%m-%d') AS week_start,
+        DATE_FORMAT(DATE(DATE_ADD(w.week_start, INTERVAL (ts.day_of_week - 1) DAY)), '%Y-%m-%d') AS lesson_date,
+        ts.day_of_week,
+        CAST(ts.id AS CHAR) AS slot_id,
+        ts.slot_number,
+        TIME_FORMAT(ts.start_time, '%H:%i:%s') AS start_time,
+        TIME_FORMAT(ts.end_time, '%H:%i:%s') AS end_time,
+        CAST(e.class_id AS CHAR) AS class_id,
+        CAST(u.id AS CHAR) AS student_id,
+        CAST(u.id AS CHAR) AS resolved_student_id,
+        CAST(e.subject_id AS CHAR) AS subject_id,
+        COALESCE(NULLIF(e.custom_subject_name, ''), s.name, '') AS subject_name,
+        st.name AS subject_type,
+        CAST(e.teacher_id AS CHAR) AS teacher_id,
+        CAST(e.room_id AS CHAR) AS room_id,
+        e.activity_type,
+        COALESCE(at.slot_part, 'FULL') AS slot_part,
+        e.is_paid,
+        CAST(e.lesson_type_id AS CHAR) AS lesson_type_id
+       FROM school_local.schedule_entries e
+       JOIN school_local.schedule_week_versions v
+         ON v.id = e.week_version_id
+        AND v.state = 'published'
+       JOIN school_local.schedule_weeks w ON w.id = v.week_id
+       JOIN school_local.schedule_publications p
+         ON p.week_id = v.week_id
+        AND p.published_version_id = v.id
+        AND p.is_current = 1
+       JOIN school_local.schedule_time_slots ts
+         ON ts.id = e.slot_id
+        AND ts.is_active = 1
+       JOIN sso.users u
+         ON u.id IN (${sqlPlaceholders(ids)})
+        AND u.status = 1
+        AND u.type = 1
+       LEFT JOIN school_local.schedule_group_members sgm
+         ON sgm.group_id = e.group_id
+        AND sgm.student_id = u.id
+       LEFT JOIN school_local.info_subjects s ON s.id = e.subject_id
+       LEFT JOIN school_local.info_subjects_types st ON st.id = s.type
+       LEFT JOIN school_local.activity_types at ON at.code = e.activity_type
+      WHERE e.week_version_id = ?
+        AND e.slot_id = ?
+        AND e.class_id = ?
+        AND e.teacher_id = ?
+        AND e.subject_id <=> ?
+        AND COALESCE(e.custom_subject_name, '') = COALESCE(?, '')
+        AND e.activity_type <=> ?
+        AND (
+          e.student_id = u.id
+          OR (e.group_id IS NOT NULL AND sgm.student_id IS NOT NULL)
+          OR (e.student_id IS NULL AND e.group_id IS NULL AND u.kaf = e.class_id)
+        )
+      ORDER BY u.id, CASE WHEN e.student_id = u.id THEN 0 WHEN e.group_id IS NOT NULL THEN 1 ELSE 2 END, e.id`,
+    [
+      ...ids,
+      anchor.week_version_id,
+      anchor.slot_id,
+      anchor.class_id,
+      anchor.teacher_id,
+      anchor.subject_id,
+      anchor.custom_subject_name || '',
+      anchor.activity_type,
+    ],
+  );
+  return rows;
 }

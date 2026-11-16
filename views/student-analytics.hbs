@@ -1,225 +1,264 @@
-<section class="space-y-4">
-  <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+<style>
+  .student-attendance-page { display: grid; grid-template-columns: minmax(0, 1fr); gap: .75rem; min-width: 0; }
+  main:has(> .student-attendance-page) { padding-block: .875rem 1.5rem; }
+  .student-page-heading { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: .5rem 1rem; }
+  .student-page-heading h1 { font-size: 1.5rem; font-weight: 650; line-height: 1.2; }
+  .student-page-month { display: flex; align-items: end; gap: .5rem; }
+  .student-page-month label { min-width: 0; }
+  .student-page-month input { width: 100%; min-width: 0; }
+  .student-page-month button { flex: none; }
+  .student-page-month [data-month-step] { min-width: 2.75rem; padding-inline: .5rem; }
+  .student-page-month [data-month-step][hidden] { display: none; }
+  .student-page-tabs { display: flex; flex-wrap: wrap; gap: 0 .375rem; border-bottom: 1px solid #e2e8f0; }
+  .student-page-tabs button {
+    min-height: 2.75rem;
+    padding-inline: .5rem;
+    border-bottom: 2px solid transparent;
+    color: #475569;
+    font-size: .875rem;
+    font-weight: 600;
+  }
+  .student-page-tabs button[aria-selected="true"] { border-color: #1d4ed8; color: #1d4ed8; }
+  .student-page-panel { min-width: 0; margin-top: .625rem; padding: .75rem; overflow-wrap: anywhere; }
+  .student-page-panel[hidden] { display: none; }
+  .student-page-overview { display: grid; gap: .75rem; }
+  .student-page-counts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .625rem .75rem; }
+  .student-page-counts div { padding-inline-start: .5rem; border-inline-start: 2px solid #e2e8f0; }
+  .student-page-counts dt { color: #475569; font-size: .8125rem; }
+  .student-page-counts dd { margin-top: .125rem; font-size: 1.25rem; line-height: 1.25; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .student-page-counts dd span { color: #475569; font-size: .8125rem; font-weight: 500; }
+  .student-page-note { margin-top: .625rem; font-size: .8125rem; color: #854d0e; }
+  .student-page-overview h2, .student-page-panel h2 { font-size: .9375rem; font-weight: 650; }
+  .student-page-row { display: grid; align-items: start; gap: .125rem .75rem; padding-block: .5rem; }
+  .student-page-row + .student-page-row { border-top: 1px solid #e2e8f0; }
+  .student-page-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: .125rem .625rem; }
+  .student-page-subhead { color: #475569; font-size: .8125rem; }
+  @media (max-width: 39.99rem) {
+    .student-page-month { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; width: 100%; gap: .375rem; }
+    .student-page-month .workspace-primary { padding-inline: .625rem; }
+    .student-page-tabs { gap: 0; }
+    .student-page-tabs button { padding-inline: .375rem; font-size: .8125rem; }
+  }
+  @media (min-width: 40rem) {
+    .student-page-counts { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .student-page-row--detail { grid-template-columns: minmax(9rem, .65fr) minmax(0, 1.2fr) minmax(0, 1fr); }
+  }
+  @media (min-width: 64rem) {
+    .student-page-overview { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); }
+    .student-page-note { margin-top: .75rem; }
+  }
+</style>
+
+<section class="student-attendance-page">
+  <header class="student-page-heading">
     <div>
-      <h1 class="text-2xl font-semibold text-gray-900">Моя посещаемость</h1>
-      <div class="mt-1 text-sm text-gray-600">{{analytics.month_label}}{{#if analytics.student.class_name}} · {{analytics.student.class_name}}{{/if}}</div>
+      <h1>Моя посещаемость</h1>
+      <p class="mt-1 text-sm text-slate-600">{{analytics.month_label}}{{#if analytics.student.class_name}} · Класс {{analytics.student.class_name}}{{/if}}</p>
     </div>
-    <form method="get" action="/attendance/me" class="flex flex-col gap-2 sm:flex-row sm:items-end">
-      <label class="text-sm text-gray-700">
-        <span class="mb-1 block">Месяц</span>
-        <input name="month" value="{{analytics.month}}" type="month" class="w-full sm:w-40 rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500" />
+    <form method="get" action="/attendance/me" class="student-page-month">
+      <button type="button" data-month-step="-1" aria-label="Предыдущий месяц" class="workspace-secondary" hidden>‹</button>
+      <label class="text-sm text-slate-700">
+        <span class="sr-only">Месяц</span>
+        <input name="month" value="{{analytics.month}}" type="month" required />
       </label>
-      <button type="submit" class="rounded bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">Показать</button>
+      <button type="submit" class="workspace-primary text-sm">Показать</button>
+      <button type="button" data-month-step="1" aria-label="Следующий месяц" class="workspace-secondary" hidden>›</button>
     </form>
-  </div>
+  </header>
 
-  <div class="grid grid-cols-2 gap-3 lg:grid-cols-5">
-    <div class="rounded border border-gray-200 bg-white p-3 shadow">
-      <div class="text-xs text-gray-500">Присутствовал</div>
-      <div class="mt-1 text-2xl font-semibold text-emerald-700">{{analytics.kpi.present_days}}/{{analytics.kpi.school_days_total}}</div>
-    </div>
-    <div class="rounded border border-gray-200 bg-white p-3 shadow">
-      <div class="text-xs text-gray-500">Уважительно</div>
-      <div class="mt-1 text-2xl font-semibold text-gray-900">{{analytics.kpi.excused_absence_days}}</div>
-    </div>
-    <div class="rounded border border-gray-200 bg-white p-3 shadow">
-      <div class="text-xs text-gray-500">Без причины</div>
-      <div class="mt-1 text-2xl font-semibold {{#if analytics.kpi.unexcused_absence_days}}text-amber-700{{else}}text-gray-900{{/if}}">{{analytics.kpi.unexcused_absence_days}}</div>
-    </div>
-    <div class="rounded border border-gray-200 bg-white p-3 shadow">
-      <div class="text-xs text-gray-500">Пропущено уроков</div>
-      <div class="mt-1 text-2xl font-semibold {{#if analytics.kpi.missed_lessons}}text-indigo-700{{else}}text-gray-900{{/if}}">{{analytics.kpi.missed_lessons}}</div>
-    </div>
-    <div class="rounded border border-gray-200 bg-white p-3 shadow">
-      <div class="text-xs text-gray-500">Опоздания</div>
-      <div class="mt-1 text-2xl font-semibold {{#if analytics.kpi.late_days}}text-amber-700{{else}}text-gray-900{{/if}}">{{analytics.kpi.late_days}}</div>
-    </div>
-  </div>
-
-  <div data-student-page-tabs class="space-y-4">
-    <div class="flex flex-wrap gap-2 border-b border-gray-200">
-      <button type="button" data-student-page-tab="overview" class="rounded-t border border-b-0 px-3 py-2 text-sm font-medium">Обзор</button>
-      <button type="button" data-student-page-tab="days" class="rounded-t border border-b-0 px-3 py-2 text-sm font-medium">Дни</button>
-      <button type="button" data-student-page-tab="absences" class="rounded-t border border-b-0 px-3 py-2 text-sm font-medium">Отсутствия</button>
-      <button type="button" data-student-page-tab="lessons" class="rounded-t border border-b-0 px-3 py-2 text-sm font-medium">Уроки</button>
-      <button type="button" data-student-page-tab="late" class="rounded-t border border-b-0 px-3 py-2 text-sm font-medium">Опоздания</button>
+  <div data-student-page-tabs>
+    <div role="tablist" aria-label="Моя посещаемость" class="student-page-tabs">
+      <button type="button" id="student-tab-overview" role="tab" aria-controls="student-panel-overview" aria-selected="true" data-student-page-tab="overview">Обзор</button>
+      <button type="button" id="student-tab-days" role="tab" aria-controls="student-panel-days" aria-selected="false" tabindex="-1" data-student-page-tab="days">По дням</button>
+      <button type="button" id="student-tab-absences" role="tab" aria-controls="student-panel-absences" aria-selected="false" tabindex="-1" data-student-page-tab="absences">Отсутствия</button>
+      <button type="button" id="student-tab-lessons" role="tab" aria-controls="student-panel-lessons" aria-selected="false" tabindex="-1" data-student-page-tab="lessons">Уроки</button>
+      <button type="button" id="student-tab-late" role="tab" aria-controls="student-panel-late" aria-selected="false" tabindex="-1" data-student-page-tab="late">Опоздания</button>
     </div>
 
-    <section data-student-page-panel="overview" class="space-y-4">
-      <div class="grid gap-4 lg:grid-cols-2">
-        <div class="rounded-lg bg-white p-4 shadow">
-          <div class="flex items-center justify-between gap-2">
-            <h2 class="text-sm font-semibold text-gray-900">Предметы</h2>
-            <span class="text-xs text-gray-500">{{analytics.learning.missed_lessons_total}} уроков</span>
+    <section id="student-panel-overview" role="tabpanel" aria-labelledby="student-tab-overview" tabindex="0" data-student-page-panel="overview" class="student-page-panel workspace-surface student-page-overview">
+      <div>
+        <dl class="student-page-counts">
+          <div>
+            <dt><a href="#days" data-student-page-go="days" class="workspace-link">Дни с присутствием</a></dt>
+            <dd>{{#if analytics.attendance.school_days_total}}{{analytics.attendance.present_days}} <span>из {{analytics.attendance.school_days_total}} уч. дн.</span>{{else}}—{{/if}}</dd>
           </div>
-          <div class="mt-3 space-y-3">
+          <div>
+            <dt><a href="#absences" data-student-page-go="absences" class="workspace-link">Дни без посещений</a></dt>
+            <dd>{{#if analytics.attendance.school_days_total}}{{analytics.attendance.absence_days}}{{else}}—{{/if}}</dd>
+          </div>
+          <div>
+            <dt><a href="#lessons" data-student-page-go="lessons" class="workspace-link">Пропущено уроков</a></dt>
+            <dd>{{#if analytics.kpi.missed_lessons}}{{analytics.kpi.missed_lessons}}{{else if analytics.kpi.data_gaps}}—{{else if analytics.attendance.school_days_total}}0{{else}}—{{/if}}</dd>
+          </div>
+          <div>
+            <dt><a href="#late" data-student-page-go="late" class="workspace-link">Опоздания</a></dt>
+            <dd>{{#if analytics.kpi.late_days}}{{analytics.kpi.late_days}} <span>· {{analytics.kpi.late_minutes}} мин.</span>{{else if analytics.lateness.data_gaps_total}}—{{else if analytics.attendance.school_days_total}}0{{else}}—{{/if}}</dd>
+          </div>
+        </dl>
+        {{#if analytics.attendance.incomplete_days}}<p class="mt-2 text-sm text-slate-600">Присутствие только на части занятий: {{analytics.attendance.incomplete_days}} дн.</p>{{/if}}
+        {{#if analytics.kpi.data_gaps}}
+          <p class="student-page-note">За дни без расписания пропуски не рассчитаны.</p>
+        {{else unless analytics.attendance.school_days_total}}
+          <p class="mt-2 text-sm text-slate-600">За этот месяц пока нет прошедших учебных дней с расписанием.</p>
+        {{/if}}
+      </div>
+
+      <div>
+        <h2>Пропуски по предметам</h2>
+        {{#if analytics.kpi.missed_lessons}}
+          <ul class="mt-1">
             {{#each analytics.learning.subjects}}
-              <div>
-                <div class="flex items-center justify-between gap-2 text-sm">
-                  <span class="font-medium text-gray-900">{{subject_name}}</span>
-                  <span class="text-gray-500">{{missed_lessons}}</span>
-                </div>
-                <div class="mt-1 h-2 overflow-hidden rounded-full bg-gray-100">
-                  <div class="h-2 rounded-full bg-indigo-600" style="width: {{bar_width}}%;"></div>
-                </div>
-              </div>
-            {{else}}
-              <div class="text-sm text-gray-500">Пропущенных уроков по предметам нет.</div>
+              {{#if missed_lessons}}
+                <li class="py-1">
+                  <div class="flex items-baseline justify-between gap-2 text-sm">
+                    <span>{{subject_name}}</span>
+                    <strong class="tabular-nums">{{missed_lessons}}</strong>
+                  </div>
+                  <div class="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-100" aria-hidden="true">
+                    <div class="h-full rounded-full bg-blue-700" style="width: {{bar_width}}%;"></div>
+                  </div>
+                </li>
+              {{/if}}
             {{/each}}
-          </div>
-        </div>
-
-        <div class="rounded-lg bg-white p-4 shadow">
-          <h2 class="text-sm font-semibold text-gray-900">Сводка месяца</h2>
-          <div class="mt-3 grid grid-cols-2 gap-2 text-sm">
-            <div class="rounded border border-gray-200 p-3">
-              <div class="text-xs text-gray-500">Дней отсутствия</div>
-              <div class="mt-1 text-xl font-semibold text-gray-900">{{analytics.kpi.absence_days}}</div>
-            </div>
-            <div class="rounded border border-gray-200 p-3">
-              <div class="text-xs text-gray-500">Периодов</div>
-              <div class="mt-1 text-xl font-semibold text-gray-900">{{analytics.kpi.periods}}</div>
-            </div>
-            <div class="rounded border border-gray-200 p-3">
-              <div class="text-xs text-gray-500">Неполных дней</div>
-              <div class="mt-1 text-xl font-semibold {{#if analytics.kpi.incomplete_days}}text-sky-700{{else}}text-gray-900{{/if}}">{{analytics.kpi.incomplete_days}}</div>
-            </div>
-            <div class="rounded border border-gray-200 p-3">
-              <div class="text-xs text-gray-500">Минут опозданий</div>
-              <div class="mt-1 text-xl font-semibold {{#if analytics.kpi.late_minutes}}text-amber-700{{else}}text-gray-900{{/if}}">{{analytics.kpi.late_minutes}}</div>
-            </div>
-          </div>
-          {{#if analytics.kpi.data_gaps}}
-            <div class="mt-3 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Есть отметки без опубликованного расписания: {{analytics.kpi.data_gaps}}</div>
-          {{/if}}
-        </div>
+          </ul>
+        {{else if analytics.kpi.data_gaps}}
+          <p class="student-page-subhead mt-1">Недостаточно данных для разбивки по предметам.</p>
+        {{else if analytics.attendance.school_days_total}}
+          <p class="student-page-subhead mt-1">Пропущенных уроков нет.</p>
+        {{else}}
+          <p class="student-page-subhead mt-1">Пропуски появятся после первых учебных дней.</p>
+        {{/if}}
       </div>
     </section>
 
-    <section data-student-page-panel="days" class="hidden rounded-lg bg-white p-4 shadow">
-      <div class="grid gap-2 md:grid-cols-2">
+    <section id="student-panel-days" role="tabpanel" aria-labelledby="student-tab-days" tabindex="0" data-student-page-panel="days" hidden class="student-page-panel workspace-surface">
+      <ul>
         {{#each analytics.attendance.days}}
-          <div class="rounded border border-gray-200 p-3 text-sm">
-            <div class="flex items-start justify-between gap-2">
-              <div>
-                <div class="font-medium text-gray-900">{{date_label}}</div>
-                <div class="mt-1 flex flex-wrap gap-1 text-xs">
-                  <span class="rounded-full px-2 py-0.5 {{status_class}}">{{status_label}}</span>
-                  {{#if arrival_time}}<span class="rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">приход: {{arrival_time}}</span>{{/if}}
-                  {{#if departure_time}}<span class="rounded-full bg-sky-50 px-2 py-0.5 text-sky-700">уход: {{departure_time}}</span>{{/if}}
-                </div>
-              </div>
+          <li class="student-page-row text-sm">
+            <div class="student-page-line">
+              <time datetime="{{date}}" class="font-semibold">{{date_label}}</time>
+              <span class="rounded px-1.5 py-0.5 {{status_class}}">{{#if (eq status_code "incomplete")}}Был на части занятий{{else if (eq status_code "conflict")}}Отметки расходятся{{else}}{{status_label}}{{/if}}</span>
             </div>
-            {{#if reason_label}}<div class="mt-2 text-sm text-gray-700">{{absence_state_label}} · {{reason_label}}</div>{{/if}}
-            {{#if comment_label}}<div class="mt-1 text-xs text-gray-500">{{comment_label}}</div>{{/if}}
-          </div>
+            {{#if (or arrival_time departure_time)}}
+              <div class="student-page-line student-page-subhead">
+                {{#if arrival_time}}<span>Приход {{arrival_time}}</span>{{/if}}
+                {{#if departure_time}}<span>Уход {{departure_time}}</span>{{/if}}
+              </div>
+            {{/if}}
+            {{#if reason_label}}<p>{{reason_label}}</p>{{/if}}
+            {{#if comment_label}}<p class="student-page-subhead">{{comment_label}}</p>{{/if}}
+          </li>
         {{else}}
-          <div class="rounded border border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">Учебных дней за период нет.</div>
+          <li class="text-sm text-slate-600">За этот месяц пока нет учебных дней.</li>
         {{/each}}
-      </div>
+      </ul>
     </section>
 
-    <section data-student-page-panel="absences" class="hidden rounded-lg bg-white p-4 shadow">
-      <div class="space-y-3">
+    <section id="student-panel-absences" role="tabpanel" aria-labelledby="student-tab-absences" tabindex="0" data-student-page-panel="absences" hidden class="student-page-panel workspace-surface">
+      <h2 class="mb-1">Отметки об отсутствии</h2>
+      <ul>
         {{#each analytics.periods}}
-          <div class="rounded border border-gray-200 p-3">
-            <div class="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <div class="font-medium text-gray-900">{{period_label}}</div>
-                <div class="mt-1 flex flex-wrap gap-1 text-xs">
-                  <span class="rounded-full {{#if is_without_reason}}bg-amber-50 text-amber-800{{else}}bg-indigo-50 text-indigo-700{{/if}} px-2 py-0.5">{{reason_name}}</span>
-                </div>
-              </div>
+          <li class="student-page-row text-sm">
+            <div class="student-page-line">
+              <strong>{{reason_name}}</strong>
+              <span class="student-page-subhead">{{period_label}}</span>
             </div>
-            {{#if comment}}<div class="mt-2 text-sm text-gray-600">{{comment}}</div>{{/if}}
-          </div>
+            {{#if comment}}<p>{{comment}}</p>{{/if}}
+          </li>
         {{else}}
-          <div class="rounded border border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">Отметок за месяц нет.</div>
+          <li class="text-sm text-slate-600">Отметок об отсутствии за этот месяц нет.</li>
         {{/each}}
-      </div>
+      </ul>
     </section>
 
-    <section data-student-page-panel="lessons" class="hidden rounded-lg bg-white p-4 shadow">
-      <div class="overflow-x-auto">
-        <table class="min-w-full text-sm">
-          <thead class="text-xs text-gray-500">
-            <tr class="border-b">
-              <th class="py-2 pr-3 text-left font-medium">Дата</th>
-              <th class="py-2 pr-3 text-left font-medium">Урок</th>
-              <th class="py-2 pr-3 text-left font-medium">Время</th>
-              <th class="py-2 pr-3 text-left font-medium">Предмет</th>
-              <th class="py-2 pr-3 text-left font-medium">Педагог</th>
-              <th class="py-2 text-left font-medium">Причина</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-gray-100">
-            {{#each analytics.learning.lessons}}
-              <tr>
-                <td class="py-2 pr-3 align-top text-gray-900">{{date_label}}</td>
-                <td class="py-2 pr-3 align-top text-gray-900">{{lesson_number}}</td>
-                <td class="py-2 pr-3 align-top text-gray-700">{{time_label}}</td>
-                <td class="py-2 pr-3 align-top">
-                  <div class="font-medium text-gray-900">{{subject_name}}</div>
-                  {{#if subject_type}}<div class="text-xs text-gray-500">{{subject_type}}</div>{{/if}}
-                </td>
-                <td class="py-2 pr-3 align-top text-gray-700">{{teacher_name}}</td>
-                <td class="py-2 align-top text-gray-700">
-                  <div class="font-medium text-gray-900">{{reason_name}}</div>
-                  {{#if comment}}<div class="text-xs text-gray-500">{{comment}}</div>{{/if}}
-                </td>
-              </tr>
-            {{else}}
-              <tr>
-                <td colspan="6" class="py-4 text-sm text-gray-500">Пропущенных уроков по опубликованному расписанию нет.</td>
-              </tr>
-            {{/each}}
-          </tbody>
-        </table>
-      </div>
+    <section id="student-panel-lessons" role="tabpanel" aria-labelledby="student-tab-lessons" tabindex="0" data-student-page-panel="lessons" hidden class="student-page-panel workspace-surface">
+      <h2 class="mb-1">Пропуски занятий</h2>
+      <ul>
+        {{#each analytics.missed_lessons}}
+          <li class="student-page-row student-page-row--detail text-sm">
+            <div class="student-page-line student-page-subhead">
+              <time datetime="{{date}}" class="font-semibold text-slate-900">{{date_label}}</time>
+              {{#if time_label}}<span>{{time_label}}</span>{{/if}}
+              {{#if lesson_number}}<span>Урок {{lesson_number}}</span>{{/if}}
+            </div>
+            <div>
+              <strong>{{subject_name}}</strong>
+              {{#if teacher_name}}<p class="student-page-subhead">{{teacher_name}}</p>{{/if}}
+            </div>
+            <div>
+              {{#if (eq attendance_status "conflict")}}<p class="font-medium text-amber-800">Отметки расходятся</p>
+              {{else if is_unconfirmed}}<p class="font-medium text-amber-800">Нет отметки о посещении</p>
+              {{else if is_partial}}<p class="font-medium">Пропущена часть урока</p>{{/if}}
+              {{#if reason_name}}<p>{{reason_name}}</p>{{/if}}
+              {{#if overlap_minutes}}<p class="student-page-subhead">{{overlap_minutes}} мин.{{#unless counts_as_missed_lesson}} · не учтено в числе пропущенных уроков{{/unless}}</p>{{/if}}
+              {{#if comment}}<p class="student-page-subhead">{{comment}}</p>{{/if}}
+            </div>
+          </li>
+        {{else}}
+          <li class="text-sm text-slate-600">
+            {{#if analytics.kpi.data_gaps}}За дни без расписания пропуски не рассчитаны.
+            {{else if analytics.attendance.school_days_total}}Пропусков занятий за этот месяц нет.
+            {{else}}За этот месяц пока нет прошедших учебных дней с расписанием.{{/if}}
+          </li>
+        {{/each}}
+      </ul>
+      {{#if (and analytics.kpi.data_gaps analytics.missed_lessons.length)}}
+        <p class="student-page-note">За дни без расписания пропуски не рассчитаны.</p>
+      {{/if}}
+      {{#if analytics.planned_lessons.length}}
+        <h2 class="mt-3 border-t border-slate-200 pt-2">Запланированные пропуски</h2>
+        <ul>
+          {{#each analytics.planned_lessons}}
+            <li class="student-page-row student-page-row--detail text-sm">
+              <div class="student-page-line student-page-subhead">
+                <time datetime="{{date}}" class="font-semibold text-slate-900">{{date_label}}</time>
+                {{#if time_label}}<span>{{time_label}}</span>{{/if}}
+                {{#if lesson_number}}<span>Урок {{lesson_number}}</span>{{/if}}
+              </div>
+              <strong>{{subject_name}}</strong>
+              {{#if reason_name}}<span>{{reason_name}}</span>{{/if}}
+            </li>
+          {{/each}}
+        </ul>
+      {{/if}}
     </section>
 
-    <section data-student-page-panel="late" class="hidden rounded-lg bg-white p-4 shadow">
-      <div class="overflow-x-auto">
-        <table class="min-w-full text-sm">
-          <thead class="text-xs text-gray-500">
-            <tr class="border-b">
-              <th class="py-2 pr-3 text-left font-medium">Дата</th>
-              <th class="py-2 pr-3 text-left font-medium">Приход</th>
-              <th class="py-2 pr-3 text-left font-medium">Первый урок</th>
-              <th class="py-2 pr-3 text-right font-medium">Мин.</th>
-              <th class="py-2 text-left font-medium">Пропущено</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-gray-100">
-            {{#each analytics.lateness.events}}
-              <tr>
-                <td class="py-2 pr-3 align-top text-gray-900">{{date_label}}</td>
-                <td class="py-2 pr-3 align-top text-gray-900">{{arrival_time}}</td>
-                <td class="py-2 pr-3 align-top text-gray-700">
-                  <div>{{first_lesson_time}} · {{first_subject_name}}</div>
-                  <div class="text-xs text-gray-500">урок {{first_lesson_number}}</div>
-                </td>
-                <td class="py-2 pr-3 align-top text-right font-medium text-amber-700">{{late_minutes}}</td>
-                <td class="py-2 align-top text-gray-700">
-                  {{missed_lessons}}
-                  {{#if missed_subject_names}}<div class="text-xs text-gray-500">{{missed_subject_names}}</div>{{/if}}
-                  {{#if missed_lessons_list}}
-                    <div class="mt-1 space-y-0.5 text-xs text-gray-500">
-                      {{#each missed_lessons_list}}
-                        <div>{{time_label}} · {{subject_name}}{{#if room_name}} · {{room_name}}{{/if}}</div>
-                      {{/each}}
-                    </div>
-                  {{/if}}
-                </td>
-              </tr>
-            {{else}}
-              <tr>
-                <td colspan="5" class="py-4 text-sm text-gray-500">Опозданий по опубликованному расписанию нет.</td>
-              </tr>
-            {{/each}}
-          </tbody>
-        </table>
-      </div>
+    <section id="student-panel-late" role="tabpanel" aria-labelledby="student-tab-late" tabindex="0" data-student-page-panel="late" hidden class="student-page-panel workspace-surface">
+      <ul>
+        {{#each analytics.lateness.events}}
+          <li class="student-page-row student-page-row--detail text-sm">
+            <div class="student-page-line">
+              <time datetime="{{date}}" class="font-semibold">{{date_label}}</time>
+              <strong class="text-amber-800">{{late_minutes}} мин.</strong>
+            </div>
+            <div>
+              <p>Приход в {{arrival_time}}</p>
+              <p class="student-page-subhead">Начало занятий в {{first_lesson_time}}{{#if first_subject_name}} · {{first_subject_name}}{{/if}}</p>
+            </div>
+            {{#if missed_lessons}}
+              <div>
+                <p>Пропущено уроков: {{missed_lessons}}</p>
+                {{#if missed_lessons_list.length}}
+                  <ul class="student-page-subhead">
+                    {{#each missed_lessons_list}}
+                      <li>{{time_label}} · {{subject_name}}{{#if room_name}} · {{room_name}}{{/if}}</li>
+                    {{/each}}
+                  </ul>
+                {{else if missed_subject_names}}<p class="student-page-subhead">{{missed_subject_names}}</p>{{/if}}
+              </div>
+            {{/if}}
+          </li>
+        {{else}}
+          <li class="text-sm text-slate-600">
+            {{#if analytics.lateness.data_gaps_total}}По отметкам о приходе нет расписания, поэтому опоздания не рассчитаны.
+            {{else if analytics.attendance.school_days_total}}Опозданий по расписанию за этот месяц нет.
+            {{else}}За этот месяц пока нет прошедших учебных дней с расписанием.{{/if}}
+          </li>
+        {{/each}}
+      </ul>
+      {{#if (and analytics.lateness.data_gaps_total analytics.lateness.events.length)}}
+        <p class="student-page-note">Приходы без расписания не учтены: {{analytics.lateness.data_gaps_total}}.</p>
+      {{/if}}
     </section>
   </div>
 </section>
@@ -235,25 +274,59 @@
 
   function activate(tab, updateHash = false) {
     const next = available.has(tab) ? tab : 'overview';
-    buttons.forEach((button) => {
+    for (const button of buttons) {
       const active = button.dataset.studentPageTab === next;
-      button.classList.toggle('bg-white', active);
-      button.classList.toggle('border-gray-200', active);
-      button.classList.toggle('text-gray-900', active);
-      button.classList.toggle('shadow-sm', active);
-      button.classList.toggle('bg-gray-50', !active);
-      button.classList.toggle('border-transparent', !active);
-      button.classList.toggle('text-gray-600', !active);
-      button.classList.toggle('hover:bg-white', !active);
-    });
-    panels.forEach((panel) => panel.classList.toggle('hidden', panel.dataset.studentPagePanel !== next));
+      button.setAttribute('aria-selected', String(active));
+      button.tabIndex = active ? 0 : -1;
+    }
+    for (const panel of panels) panel.hidden = panel.dataset.studentPagePanel !== next;
     if (updateHash) window.history.replaceState(null, '', `#${next}`);
   }
 
-  buttons.forEach((button) => {
+  buttons.forEach((button, index) => {
     button.addEventListener('click', () => activate(button.dataset.studentPageTab, true));
+    button.addEventListener('keydown', (event) => {
+      const last = buttons.length - 1;
+      const targetIndex = {
+        ArrowLeft: (index + last) % buttons.length,
+        ArrowRight: (index + 1) % buttons.length,
+        Home: 0,
+        End: last,
+      }[event.key];
+      if (!Number.isInteger(targetIndex)) return;
+      event.preventDefault();
+      const target = buttons[targetIndex];
+      activate(target.dataset.studentPageTab, true);
+      target.focus();
+    });
+  });
+  root.querySelectorAll('[data-student-page-go]').forEach((link) => link.addEventListener('click', (event) => {
+    if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    activate(link.dataset.studentPageGo, true);
+    buttons.find((button) => button.dataset.studentPageTab === link.dataset.studentPageGo)?.focus();
+  }));
+
+  const monthForm = document.querySelector('.student-page-month');
+  monthForm?.addEventListener('submit', () => {
+    const tab = buttons.find((button) => button.getAttribute('aria-selected') === 'true');
+    const hash = tab && tab.dataset.studentPageTab !== 'overview' ? `#${tab.dataset.studentPageTab}` : '';
+    monthForm.action = `/attendance/me${hash}`;
+  });
+  monthForm?.querySelectorAll('[data-month-step]').forEach((button) => {
+    const input = monthForm.elements.month;
+    const displayedMonth = input.defaultValue;
+    if (!/^\d{4}-\d{2}$/.test(displayedMonth)) return;
+    button.hidden = false;
+    button.addEventListener('click', () => {
+      const date = new Date(`${displayedMonth}-01T12:00:00Z`);
+      date.setUTCMonth(date.getUTCMonth() + Number(button.dataset.monthStep));
+      input.value = date.toISOString().slice(0, 7);
+      monthForm.requestSubmit();
+    });
   });
 
+  window.addEventListener('hashchange', () => activate(window.location.hash.slice(1)));
   activate(window.location.hash.slice(1));
 })();
 </script>

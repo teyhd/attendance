@@ -29,7 +29,7 @@
   .presence-row {
     counter-increment: presence-row;
     display: grid;
-    grid-template-columns: 2.5rem minmax(0, 1fr) 2.75rem;
+    grid-template-columns: 2.5rem minmax(0, 1fr);
     min-height: 4.8rem;
     align-items: center;
     border-top: 1px solid var(--presence-border);
@@ -53,8 +53,17 @@
     align-self: start;
     padding: .15rem .5rem .75rem 0;
   }
-  .presence-action-cell { grid-column: 3; grid-row: 1 / span 2; }
+  [data-presence-root]:not([data-visible-status="late"]) [data-late-lesson] { display: none; }
+  .presence-late-controls [aria-pressed="true"] { border-color: #2563eb; background: #eff6ff; color: #1d4ed8; }
+  .presence-late-minutes { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .presence-action-cell { grid-column: 1 / -1; grid-row: 4; display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; padding: 0 .75rem .6rem; }
+  .presence-action-cell:empty { display: none; }
+  .presence-action-cell button { min-height: 2.75rem; }
+  [data-conflict-actions]:not(.hidden) { display: flex; flex-wrap: wrap; gap: .25rem; }
   .presence-arrival, .presence-departure { display: none; }
+  .presence-phone-cell { grid-column: 2; grid-row: 3; padding: 0 .5rem .5rem 0; }
+  .presence-phone-cell button { min-width: 0; text-align: left; }
+  .presence-row:has(.presence-phone-cell) .presence-status { padding-bottom: .25rem; }
   .presence-row[data-current-status="present"] .presence-status-main,
   .presence-row[data-current-status="present"] .presence-status-icon { color: var(--presence-green); }
   .presence-row[data-current-status="present"][data-is-late="true"] .presence-status-main,
@@ -68,10 +77,32 @@
   .presence-row[data-current-status="none"] .presence-status-main,
   .presence-row[data-current-status="none"] .presence-status-icon { color: #64748b; }
 
-  @media (min-width: 768px) {
+  .presence-summary-button { display: flex; min-height: 6rem; min-width: 0; align-items: center; justify-content: center; gap: .75rem; border: 1px solid #e2e8f0; border-radius: .75rem; background: white; padding: .875rem .5rem; text-align: left; transition: background .15s, border-color .15s; }
+  .presence-summary-button:hover { background: #f8fafc; border-color: #94a3b8; }
+  .presence-summary-button[aria-pressed="true"] { background: #eff6ff; border-color: #2563eb; box-shadow: inset 0 0 0 1px #2563eb; }
+  .presence-summary-button svg { width: 1.5rem; height: 1.5rem; flex-shrink: 0; }
+  .presence-summary-button [data-summary] { margin-top: .375rem; font-size: 1.75rem; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; }
+  .presence-summary-label { color: #475569; font-size: .8125rem; line-height: 1.25; }
+  .presence-header { display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem; }
+  .presence-toolbar-field { min-width: 0; }
+  .presence-toolbar-field input, .presence-toolbar-field select { min-width: 0; }
+  @media (max-width: 639px) {
+    main:has(> .presence-board) { padding-block: 1rem; }
+    .presence-board > :not([hidden]) ~ :not([hidden]) { margin-top: .75rem; }
+    .presence-summary-button { min-height: 3.25rem; padding: .375rem .25rem; text-align: center; }
+    .presence-summary-button svg { display: none; }
+    .presence-summary-button [data-summary] { margin-top: .125rem; font-size: 1.125rem; }
+    .presence-summary-label { font-size: .75rem; }
+    .presence-row { grid-template-columns: minmax(0, 1fr); min-height: 3.75rem; }
+    .presence-index { display: none; }
+    .presence-student-name { grid-column: 1; padding: .5rem .375rem .125rem .75rem; overflow-wrap: anywhere; }
+    .presence-status { grid-column: 1; padding: .125rem .375rem .5rem .75rem; }
+    .presence-phone-cell { grid-column: 1; padding-left: .75rem; }
+  }
+  @media (min-width: 1100px) {
     .presence-table-head,
     .presence-row {
-      grid-template-columns: 3.5rem minmax(13rem, 1.15fr) minmax(17rem, 1.25fr) minmax(9.5rem, .75fr) minmax(8rem, .62fr) 3.5rem;
+      grid-template-columns: 3rem minmax(11rem, 1.15fr) minmax(10rem, 1.25fr) minmax(6rem, .75fr) minmax(4.5rem, .62fr) minmax(9rem, 1.2fr);
     }
     .presence-row { min-height: 3.2rem; }
     .presence-student-name,
@@ -87,7 +118,14 @@
     .presence-status { grid-column: 3; }
     .presence-arrival { display: block; grid-column: 4; }
     .presence-departure { display: block; grid-column: 5; }
-    .presence-action-cell { grid-column: 6; }
+    .presence-action-cell { grid-column: 6; padding: .35rem .5rem; }
+    [data-can-edit-phone="true"] .presence-table-head,
+    [data-can-edit-phone="true"] .presence-row {
+      grid-template-columns: 3rem minmax(11rem, 1.2fr) minmax(9rem, 1fr) minmax(5.5rem, .65fr) minmax(4.5rem, .5fr) minmax(8rem, .9fr) minmax(9rem, 1.2fr);
+    }
+    [data-can-edit-phone="true"] .presence-action-cell { grid-column: 7; }
+    .presence-phone-cell { grid-column: 6; grid-row: 1; padding: .25rem .5rem .25rem .75rem; }
+    .presence-row:has(.presence-phone-cell) .presence-status { padding-bottom: .75rem; }
     .presence-mobile-times { display: none; }
   }
 
@@ -96,11 +134,11 @@
   }
 </style>
 
-<section data-presence-root data-date="{{board.date}}" data-audience="{{board.audience}}" data-can-manage="{{canManage}}" class="space-y-5">
-  <header class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+<section data-presence-root data-date="{{board.date}}" data-audience="{{board.audience}}" data-can-manage="{{canManage}}" data-can-edit-phone="{{board.can_edit_phone}}" class="presence-board space-y-5">
+  <header class="presence-header">
     <div class="min-w-0">
       <div class="flex flex-col items-start gap-1 sm:flex-row sm:items-baseline sm:gap-x-8">
-        <h1 class="text-3xl font-semibold tracking-[-0.025em] text-slate-950 sm:text-4xl">{{#if board.is_adult}}Сейчас на работе{{else}}Сейчас в школе{{/if}}</h1>
+        <h1 class="workspace-title">{{#if board.is_adult}}Сейчас на работе{{else}}Сейчас в школе{{/if}}</h1>
         <span class="text-base font-medium text-slate-800 sm:text-lg">{{board.date_label}}</span>
       </div>
       <div class="mt-2 flex flex-wrap items-center gap-3 text-sm text-slate-500">
@@ -115,57 +153,45 @@
         {{/if}}
       </div>
     </div>
-    <div class="flex shrink-0 items-center gap-2 self-end sm:self-auto">
-      {{#if canManage}}
-        <a href="/attendance/presence/manual{{#if board.is_adult}}?audience=adults{{/if}}" class="inline-flex h-12 items-center justify-center rounded-xl border border-blue-200 bg-blue-50 px-4 text-sm font-semibold text-blue-700 transition hover:border-blue-300 hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600">Ручной ввод</a>
-      {{/if}}
-      <button type="button" data-refresh-board class="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 disabled:cursor-wait disabled:opacity-60" aria-label="Обновить данные" title="Обновить данные">
-        <svg data-refresh-icon class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-          <path d="M20 6v5h-5M4 18v-5h5" stroke-linecap="round" stroke-linejoin="round"/>
-          <path d="M18.2 9A7 7 0 0 0 6.1 6.7L4 11m16 2-2.1 4.3A7 7 0 0 1 5.8 15" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-      </button>
-    </div>
+    <button type="button" data-refresh-board class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 disabled:cursor-wait disabled:opacity-60 sm:h-12 sm:w-12" aria-label="Обновить данные" title="Обновить данные">
+      <svg data-refresh-icon class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+        <path d="M20 6v5h-5M4 18v-5h5" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M18.2 9A7 7 0 0 0 6.1 6.7L4 11m16 2-2.1 4.3A7 7 0 0 1 5.8 15" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
   </header>
 
-  <div class="presence-summary-scroll overflow-x-auto rounded-xl border border-slate-200 bg-white" aria-label="Сводка за сегодня">
-    <div class="grid min-w-[47rem] grid-cols-5 py-5 sm:py-6">
-      <div class="flex items-center justify-center gap-3 border-r border-slate-200 px-4 text-emerald-600">
-        <svg class="h-9 w-9 shrink-0 sm:h-11 sm:w-11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" stroke-linecap="round" stroke-linejoin="round"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" stroke-linecap="round"/></svg>
-        <div><div class="text-sm font-medium text-slate-600">В школе</div><div data-summary="present" class="mt-0.5 text-3xl font-semibold leading-none sm:text-4xl">{{board.totals.present}}</div></div>
-      </div>
-      <div class="flex items-center justify-center gap-3 border-r border-slate-200 px-4 text-amber-600">
-        <svg class="h-9 w-9 shrink-0 sm:h-11 sm:w-11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        <div><div class="text-sm font-medium text-slate-600">Опоздали</div><div data-summary="late" class="mt-0.5 text-3xl font-semibold leading-none sm:text-4xl">{{board.totals.late}}</div></div>
-      </div>
-      <div class="flex items-center justify-center gap-3 border-r border-slate-200 px-4 text-slate-700">
-        <svg class="h-9 w-9 shrink-0 sm:h-11 sm:w-11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M14 8V3H4v18h10v-5M10 12h11m-4-4 4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        <div><div class="text-sm font-medium text-slate-600">Ушли</div><div data-summary="departed" class="mt-0.5 text-3xl font-semibold leading-none sm:text-4xl">{{board.totals.departed}}</div></div>
-      </div>
-      <div class="flex items-center justify-center gap-3 border-r border-slate-200 px-4 text-red-600">
-        <svg class="h-9 w-9 shrink-0 sm:h-11 sm:w-11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="9" cy="7" r="4"/><path d="M2 21v-2a6 6 0 0 1 9.5-4.9M16 16l6 6m0-6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        <div><div class="text-sm font-medium text-slate-600">Отсутствуют</div><div data-summary="absent" class="mt-0.5 text-3xl font-semibold leading-none sm:text-4xl">{{board.totals.absent}}</div></div>
-      </div>
-      <div class="flex items-center justify-center gap-3 px-4 text-slate-500">
-        <svg class="h-9 w-9 shrink-0 sm:h-11 sm:w-11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9a2.7 2.7 0 1 1 4.8 1.7c-1.2 1.1-2.4 1.5-2.4 3M12 17.2h.01" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        <div><div class="text-sm font-medium text-slate-600">Нет отметки</div><div data-summary="none" class="mt-0.5 text-3xl font-semibold leading-none sm:text-4xl">{{board.totals.none}}</div></div>
-      </div>
-    </div>
+  <div class="grid grid-cols-3 gap-1 sm:grid-cols-5 sm:gap-3" role="group" aria-label="Фильтр по сводке за сегодня">
+    <button type="button" data-status-filter="present" aria-pressed="false" class="presence-summary-button text-emerald-600">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM22 21v-2a4 4 0 0 0-3-3.87"/></svg>
+      <span><span class="presence-summary-label block">{{#if board.is_adult}}На работе{{else}}В школе{{/if}}</span><span data-summary="present" class="block">{{board.totals.present}}</span></span>
+    </button>
+    <button type="button" data-status-filter="late" aria-pressed="false" class="presence-summary-button text-amber-600">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+      <span><span class="presence-summary-label block">Опоздали</span><span data-summary="late" class="block">{{board.totals.late}}</span></span>
+    </button>
+    <button type="button" data-status-filter="departed" aria-pressed="false" class="presence-summary-button text-slate-600">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 8V3H4v18h10v-5M10 12h11m-4-4 4 4-4 4"/></svg>
+      <span><span class="presence-summary-label block">Ушли</span><span data-summary="departed" class="block">{{board.totals.departed}}</span></span>
+    </button>
+    <button type="button" data-status-filter="absent" aria-pressed="false" class="presence-summary-button text-red-600">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="7" r="4"/><path d="M2 21v-2a6 6 0 0 1 9.5-4.9M16 16l6 6m0-6-6 6"/></svg>
+      <span><span class="presence-summary-label block">Отсутствуют</span><span data-summary="absent" class="block">{{board.totals.absent}}</span></span>
+    </button>
+    <button type="button" data-status-filter="none" aria-pressed="false" class="presence-summary-button text-slate-600">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9a2.7 2.7 0 1 1 4.8 1.7c-1.2 1.1-2.4 1.5-2.4 3M12 17.2h.01"/></svg>
+      <span><span class="presence-summary-label block">Нет отметки</span><span data-summary="none" class="block">{{board.totals.none}}</span></span>
+    </button>
   </div>
 
   <div class="sticky top-2 z-30 rounded-xl border border-slate-200 bg-white/95 backdrop-blur-sm">
-    <div class="grid grid-cols-[minmax(0,1fr)_minmax(8.5rem,.48fr)] gap-2 p-3 sm:grid-cols-[16rem_20rem_minmax(0,1fr)] sm:gap-3 sm:p-4">
-      <label class="relative sm:order-2"><span class="sr-only">Найти ученика</span><svg class="pointer-events-none absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5" stroke-linecap="round"/></svg><input data-student-search type="search" autocomplete="off" placeholder="Найти ученика" class="h-12 w-full rounded-lg border border-slate-300 bg-white pl-11 pr-3 text-sm text-slate-950 placeholder:text-slate-500 focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-100 sm:text-base"></label>
-      <label class="sm:order-1"><span class="sr-only">Выбрать класс</span><select data-class-filter class="h-12 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-900 focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-100 sm:text-base"><option value="all">Все классы</option>{{#each board.classes}}<option value="{{id}}">{{name}}</option>{{/each}}</select></label>
-      <div class="presence-filter-scroll col-span-2 overflow-x-auto sm:order-3 sm:col-span-1">
-        <div class="inline-flex min-w-max overflow-hidden rounded-lg border border-slate-300" role="group" aria-label="Фильтр по статусу">
-          <button type="button" data-status-filter="all" aria-pressed="true" class="h-[2.875rem] border-r border-slate-300 bg-blue-700 px-4 text-sm font-medium text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400">Все</button>
-          <button type="button" data-status-filter="present" aria-pressed="false" class="h-[2.875rem] border-r border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50">В школе</button>
-          <button type="button" data-status-filter="late" aria-pressed="false" class="h-[2.875rem] border-r border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50">Опоздали</button>
-          <button type="button" data-status-filter="departed" aria-pressed="false" class="h-[2.875rem] border-r border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50">Ушли</button>
-          <button type="button" data-status-filter="absent" aria-pressed="false" class="h-[2.875rem] border-r border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50">Отсутствуют</button>
-          <button type="button" data-status-filter="none" aria-pressed="false" class="h-[2.875rem] bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50 {{#if board.totals.conflicts}}border-r border-slate-300{{/if}}">Нет отметки</button>
-          {{#if board.totals.conflicts}}<button type="button" data-status-filter="conflict" aria-pressed="false" class="h-[2.875rem] bg-white px-4 text-sm font-medium text-red-700 hover:bg-red-50">Требуют уточнения</button>{{/if}}
+    <div class="grid grid-cols-[minmax(0,1fr)_minmax(6.5rem,.68fr)] gap-2 p-2 sm:grid-cols-[minmax(10rem,.7fr)_minmax(12rem,1fr)] xl:grid-cols-[14rem_18rem_minmax(0,1fr)] sm:gap-3 sm:p-4">
+      <label class="presence-toolbar-field relative sm:order-2"><span class="sr-only">{{#if board.is_adult}}Найти сотрудника{{else}}Найти ученика{{/if}}</span><svg class="pointer-events-none absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5" stroke-linecap="round"/></svg><input data-student-search type="search" autocomplete="off" placeholder="{{#if board.is_adult}}Поиск сотрудника{{else}}Поиск ученика{{/if}}" class="h-11 sm:h-12 w-full rounded-lg border border-slate-300 bg-white pl-11 pr-3 text-sm text-slate-950 placeholder:text-slate-500 focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-100 sm:text-base"></label>
+      <label class="presence-toolbar-field sm:order-1"><span class="sr-only">{{#if board.is_adult}}Выбрать кафедру{{else}}Выбрать класс{{/if}}</span><select data-class-filter class="h-11 sm:h-12 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-900 focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-100 sm:text-base"><option value="all">{{#if board.is_adult}}Все кафедры{{else}}Все классы{{/if}}</option>{{#each board.classes}}<option value="{{id}}">{{name}}</option>{{/each}}</select></label>
+      <div class="presence-filter-scroll col-span-2 overflow-x-auto sm:order-3 xl:col-span-1">
+        <div class="inline-flex flex-wrap rounded-lg border border-slate-300" role="group" aria-label="Фильтр по статусу">
+          <button type="button" data-status-filter="all" aria-pressed="true" class="min-h-11 rounded-l-md bg-blue-700 px-2 sm:px-4 text-sm font-medium text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400">Все статусы</button>
+          <button type="button" data-status-filter="conflict" aria-pressed="false" {{#unless board.totals.conflicts}}hidden{{/unless}} class="min-h-11 rounded-r-md bg-white px-2 sm:px-4 text-sm font-medium text-red-700 hover:bg-red-50">Требуют уточнения</button>
         </div>
       </div>
     </div>
@@ -173,18 +199,62 @@
 
   <div data-presence-flash class="hidden" role="status" aria-live="polite"><span data-presence-flash-text class="min-w-0 flex-1"></span><button type="button" data-presence-undo class="hidden shrink-0 rounded-lg border border-current px-3 py-1.5 text-sm font-semibold">Отменить</button></div>
 
+  {{#unless board.is_adult}}
+    <div data-late-controls class="presence-late-controls hidden flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-3">
+      <button type="button" data-late-minimum aria-pressed="false" class="workspace-secondary min-h-11">15 мин и больше</button>
+      <label class="min-w-0"><span class="sr-only">Порядок опозданий</span><select data-late-order class="min-h-11 max-w-full rounded-lg border border-slate-300 bg-white px-2 text-sm">
+        <option value="desc">Сначала дольше</option>
+        <option value="asc">Сначала короче</option>
+        <option value="classes">По классам</option>
+      </select></label>
+      <span data-late-count role="status" class="text-sm text-slate-600"></span>
+    </div>
+    <section data-late-ranking class="hidden rounded-xl border border-slate-200 bg-white" aria-labelledby="presence-late-title">
+      <header class="flex flex-wrap items-baseline justify-between gap-2 px-4 py-3">
+        <h2 id="presence-late-title" data-late-title class="text-base font-semibold text-slate-950">Опоздали сегодня</h2>
+        <span class="text-xs text-slate-600">{{board.date_label}}</span>
+      </header>
+      <ol data-late-list class="divide-y divide-slate-200 border-t border-slate-200" aria-label="Ученики по длительности опоздания"></ol>
+      <template data-late-item>
+        <li class="flex items-start justify-between gap-2 px-4 py-2.5">
+          <div class="min-w-0">
+            <a data-late-pupil class="workspace-link break-words text-sm font-semibold"></a>
+            <span data-late-class class="ml-1 text-xs text-slate-600"></span>
+            <p data-late-subject class="mt-0.5 break-words text-xs text-slate-700"></p>
+          </div>
+          <span data-late-duration class="presence-late-minutes shrink-0 rounded-md bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-900"></span>
+        </li>
+      </template>
+    </section>
+  {{/unless}}
+
   {{#if board.classes.length}}
-    <div data-presence-classes class="overflow-hidden rounded-xl border border-slate-200 bg-white">
+    <div data-presence-classes class="rounded-xl border border-slate-200 bg-white">
       {{#each board.classes}}
         <section data-presence-class data-group-id="{{id}}" data-total="{{students.length}}" data-total-label="{{students_label}}" class="border-t border-slate-200 first:border-t-0">
-          <button type="button" data-class-toggle class="flex w-full items-center justify-between gap-4 bg-slate-50 px-4 py-3 text-left hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-600" aria-expanded="true"><span class="flex min-w-0 items-baseline gap-3"><span class="truncate text-xl font-semibold text-slate-950">{{name}}</span><span data-class-count class="truncate text-sm text-slate-500">{{students_label}}</span></span><svg data-class-chevron class="h-5 w-5 shrink-0 text-slate-700 transition" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 15 6-6 6 6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <button type="button" data-class-toggle class="flex w-full items-center justify-between gap-4 bg-slate-50 px-4 py-3 text-left hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-600" aria-expanded="true">
+            <span class="min-w-0">
+              <span class="flex min-w-0 items-baseline gap-3"><span class="break-words text-lg font-semibold text-slate-950">{{name}}</span><span data-class-count class="shrink-0 text-sm text-slate-500">{{students_label}}</span></span>
+              {{#if schedule}}
+                <span data-class-schedule class="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+                  <span data-schedule-status class="rounded-full px-2 py-0.5 text-xs font-semibold {{#if (eq schedule.status_code "current")}}bg-emerald-100 text-emerald-800{{else}}{{#if (eq schedule.status_code "next")}}bg-blue-100 text-blue-800{{else}}bg-slate-200 text-slate-700{{/if}}{{/if}}">{{schedule.status_label}}</span>
+                  <span data-schedule-details class="contents {{#unless schedule.has_lesson}}hidden{{/unless}}">
+                    <span data-schedule-subject class="font-medium text-slate-800">{{schedule.subject_label}}</span>
+                    <span data-schedule-time class="tabular-nums text-slate-600">{{schedule.time_label}}</span>
+                    <span data-schedule-room class="rounded-md px-2 py-0.5 font-semibold {{#if schedule.has_room}}bg-white text-slate-950 ring-1 ring-slate-300{{else}}bg-amber-100 text-amber-900{{/if}}">{{#if schedule.has_room}}Кабинет {{schedule.room_label}}{{else}}Кабинет не указан{{/if}}</span>
+                  </span>
+                </span>
+              {{/if}}
+            </span>
+            <svg data-class-chevron class="h-5 w-5 shrink-0 text-slate-700 transition" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 15 6-6 6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
           <div data-class-content>
-            <div class="presence-table-head hidden min-h-[3rem] items-center border-t border-slate-200 bg-white text-sm font-medium text-slate-600 md:grid"><span class="px-4">№</span><span class="px-3">Ученик</span><span class="px-3">Статус</span><span class="px-3">Приход</span><span class="px-3">Уход</span><span></span></div>
+            <div class="presence-table-head hidden min-h-[3rem] items-center border-t border-slate-200 bg-white text-sm font-medium text-slate-600 min-[1100px]:grid"><span class="px-4">№</span><span class="px-3">Ученик</span><span class="px-3">Статус</span><span class="px-3">Приход</span><span class="px-3">Уход</span>{{#if @root.board.can_edit_phone}}<span class="px-3">Телефон</span>{{/if}}<span></span></div>
             <div class="presence-class-body">
               {{#each students}}
                 <article data-presence-row data-student-id="{{id}}" data-class-id="{{classId}}" data-group-id="{{../id}}" data-search-name="{{name}}" data-current-status="{{state.current_status_code}}" data-is-late="{{state.is_late}}" data-conflict-id="{{state.conflict_id}}" class="presence-row">
                   <span class="presence-index row-span-2 flex h-full items-center justify-center text-sm tabular-nums text-slate-700 md:px-4"></span>
-                  <div class="presence-student-name truncate text-base font-medium text-slate-950">{{name}}</div>
+                  {{#if @root.board.is_adult}}<div class="presence-student-name text-base font-medium text-slate-950">{{name}}</div>{{else}}<a href="/attendance/analytics?class={{classId}}&student={{id}}#analytics-journal" class="presence-student-name text-base font-medium text-slate-950 hover:text-blue-700">{{name}}</a>{{/if}}
                   <div class="presence-status text-sm font-medium">
                     <div class="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
                       <span data-status-icon class="presence-status-icon inline-flex h-5 w-5 shrink-0 items-center justify-center" aria-hidden="true">
@@ -192,15 +262,33 @@
                       </span>
                       <span data-status-main class="presence-status-main">{{state.current_status_label}}</span><span data-late-label class="text-amber-600 {{#unless state.is_late}}hidden{{/unless}}">{{#if state.is_late}}· {{state.late_label}}{{/if}}</span><span data-mobile-times class="presence-mobile-times text-slate-500"></span>
                     </div>
+                    {{#unless @root.board.is_adult}}
+                      <p data-late-lesson class="mt-1 break-words text-xs font-normal text-slate-700 {{#unless state.is_late}}hidden{{/unless}}">{{#if state.is_late}}{{#if state.late_lesson.subject_name}}{{state.late_lesson.subject_name}} · {{#if state.late_lesson.teacher_name}}{{state.late_lesson.teacher_name}}{{else}}Преподаватель не указан{{/if}}{{else}}Урок не определён{{/if}}{{/if}}</p>
+                    {{/unless}}
                     <div data-status-detail class="mt-0.5 text-xs font-normal text-slate-500 {{#unless state.status_detail}}hidden{{/unless}}">{{state.status_detail}}</div>
                   </div>
                   <div data-arrival class="presence-arrival text-sm font-medium {{#if state.arrival_time}}text-emerald-700{{else}}text-slate-400{{/if}}">{{#if state.arrival_time}}Пришёл {{state.arrival_time}}{{else}}—{{/if}}</div>
                   <div data-departure class="presence-departure text-sm font-medium {{#if state.departure_time}}text-slate-600{{else}}text-slate-400{{/if}}">{{#if state.departure_time}}{{state.departure_time}}{{else}}—{{/if}}</div>
-                  <div class="presence-action-cell relative flex h-full items-center justify-center px-1">
-                    {{#if ../../canManage}}
-                      <details data-row-actions class="group relative"><summary class="flex h-11 w-11 cursor-pointer list-none items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600" aria-label="Действия с отметкой {{name}}"><svg class="h-5 w-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg></summary><div class="absolute right-0 top-full z-40 mt-1 w-52 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl"><div data-normal-actions class="{{#if (eq state.current_status_code "conflict")}}hidden{{/if}}"><button type="button" data-presence-toggle class="block w-full rounded-lg px-3 py-2 text-left text-sm font-semibold text-slate-800 hover:bg-slate-100">{{state.next_action_label}}</button></div><div data-conflict-actions class="space-y-1 {{#unless (eq state.current_status_code "conflict")}}hidden{{/unless}}"><button type="button" data-conflict-resolve="keep_presence" data-conflict-id="{{state.conflict_id}}" class="block w-full rounded-lg px-3 py-2 text-left text-sm font-semibold text-emerald-700 hover:bg-emerald-50">Подтвердить приход</button><button type="button" data-conflict-resolve="keep_absence" data-conflict-id="{{state.conflict_id}}" class="block w-full rounded-lg px-3 py-2 text-left text-sm font-semibold text-red-700 hover:bg-red-50">Оставить отсутствие</button></div><button type="button" data-presence-history class="mt-1 block w-full border-t border-slate-100 px-3 py-2 text-left text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-950">История за сегодня</button></div></details>
-                    {{/if}}
-                  </div>
+                  {{#if can_edit_phone}}
+                    <div class="presence-phone-cell">
+                      <button type="button" data-phone-edit aria-haspopup="dialog" class="inline-flex min-h-11 items-center gap-2 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:border-blue-400 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600">
+                        <svg class="h-4 w-4 shrink-0 text-blue-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="7" y="3" width="10" height="18" rx="2"/><path d="M11 17h2" stroke-linecap="round"/></svg>
+                        <span><span class="block text-blue-700 min-[1100px]:sr-only">Телефон</span><span data-phone-status>Нет отметок</span></span>
+                      </button>
+                    </div>
+                  {{/if}}
+                  {{#if can_manage_presence}}
+                    <div data-row-actions class="presence-action-cell">
+                      <div data-normal-actions class="{{#if (eq state.current_status_code "conflict")}}hidden{{/if}}">
+                        <button type="button" data-presence-toggle aria-label="{{state.next_action_label}} · {{name}}" class="workspace-secondary px-2 text-sm text-blue-700">{{state.next_action_label}}</button>
+                      </div>
+                      <div data-conflict-actions class="{{#unless (eq state.current_status_code "conflict")}}hidden{{/unless}}">
+                        <button type="button" data-conflict-resolve="keep_presence" data-conflict-id="{{state.conflict_id}}" class="workspace-secondary px-2 text-sm text-emerald-700">Подтвердить приход</button>
+                        <button type="button" data-conflict-resolve="keep_absence" data-conflict-id="{{state.conflict_id}}" class="workspace-secondary px-2 text-sm text-red-700">Оставить отсутствие</button>
+                      </div>
+                      <button type="button" data-presence-history aria-label="История за сегодня · {{name}}" aria-haspopup="dialog" class="workspace-link px-2 text-sm">История</button>
+                    </div>
+                  {{/if}}
                 </article>
               {{/each}}
             </div>
@@ -210,15 +298,16 @@
     </div>
     <div data-filter-empty class="hidden rounded-xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">Ничего не найдено</div>
   {{else}}
-    <div class="rounded-xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">{{#if board.is_adult}}Нет сотрудников{{else}}Нет учеников{{/if}}</div>
+    <div class="rounded-xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-600">{{#if board.is_adult}}Нет сотрудников.{{else if (eq currentUser.role "mentor")}}У вас пока нет закреплённых классов или учеников. <a href="/attendance" class="workspace-link">Открыть пропуски</a>{{else}}Нет учеников.{{/if}}</div>
   {{/if}}
 </section>
 
 {{#if canManage}}
-  <dialog data-presence-history-dialog class="w-[calc(100%-2rem)] max-w-lg rounded-xl border border-slate-200 bg-white p-0 text-slate-950 shadow-xl backdrop:bg-slate-950/30"><div class="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3"><h2 data-presence-history-title class="text-lg font-semibold"></h2><button type="button" data-presence-history-close class="flex h-10 w-10 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-950" aria-label="Закрыть"><svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" stroke-linecap="round"/></svg></button></div><div class="max-h-[68vh] overflow-y-auto p-4"><div data-presence-history-events class="space-y-2"></div></div></dialog>
+  <dialog data-presence-history-dialog aria-labelledby="presence-history-title" class="w-[calc(100%-2rem)] max-w-lg rounded-xl border border-slate-200 bg-white p-0 text-slate-950 shadow-xl backdrop:bg-slate-950/30"><div class="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3"><h2 id="presence-history-title" data-presence-history-title class="text-lg font-semibold"></h2><button type="button" data-presence-history-close class="flex h-10 w-10 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-950" aria-label="Закрыть"><svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" stroke-linecap="round"/></svg></button></div><div class="max-h-[68vh] overflow-y-auto p-4"><p data-history-error hidden role="alert" class="mb-2 rounded bg-red-50 p-2 text-sm text-red-800"></p><div data-presence-history-events class="space-y-2"></div>{{#unless board.is_adult}}<a data-full-history class="workspace-link mt-3 inline-flex min-h-11 items-center text-sm">Вся история ученика</a>{{/unless}}</div></dialog>
 {{/if}}
 
 <script id="presence-board-data" type="application/json">{{{json board}}}</script>
+{{#unless board.is_adult}}{{#if (or canManage board.can_edit_phone)}}<script src="/assets/presence-phone.js?v=6"></script>{{/if}}{{/unless}}
 <script>
 (() => {
   const root = document.querySelector('[data-presence-root]');
@@ -227,7 +316,9 @@
   let activeStatus = 'all';
   let lastSuccessfulRefresh = new Date();
   let lastUndoEventId = '';
-  let refreshing = false;
+  let refreshTask;
+  let phoneEditorOpen = false;
+  let phoneEditCycle = 0;
   const refreshButton = root.querySelector('[data-refresh-board]');
   const refreshIcon = root.querySelector('[data-refresh-icon]');
   const freshness = root.querySelector('[data-freshness]');
@@ -238,36 +329,109 @@
   const flashText = root.querySelector('[data-presence-flash-text]');
   const undoButton = root.querySelector('[data-presence-undo]');
   const filterEmpty = root.querySelector('[data-filter-empty]');
+  const groupedList = root.querySelector('[data-presence-classes]');
+  const lateControls = root.querySelector('[data-late-controls]');
+  const lateMinimum = root.querySelector('[data-late-minimum]');
+  const lateOrder = root.querySelector('[data-late-order]');
+  const lateCount = root.querySelector('[data-late-count]');
+  const lateRanking = root.querySelector('[data-late-ranking]');
+  const lateTitle = root.querySelector('[data-late-title]');
+  const lateList = root.querySelector('[data-late-list]');
+  const lateItem = root.querySelector('[data-late-item]');
+  const initialParams = new URLSearchParams(window.location.search);
+  let lateThreshold = initialParams.get('minLate') === '15' ? 15 : 0;
+  let previousRank = '';
+  const pupilOrder = new Intl.Collator('ru', { sensitivity: 'base', numeric: true });
   const historyDialog = document.querySelector('[data-presence-history-dialog]');
   const historyTitle = historyDialog?.querySelector('[data-presence-history-title]');
   const historyEvents = historyDialog?.querySelector('[data-presence-history-events]');
+  const historyError = historyDialog?.querySelector('[data-history-error]');
+  const fullHistory = historyDialog?.querySelector('[data-full-history]');
   const flashBase = 'flex items-center gap-3 rounded-xl border px-4 py-3 text-sm';
   const newKey = () => window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
   function parseBoard() { try { return JSON.parse(document.getElementById('presence-board-data')?.textContent || '{}'); } catch { return { classes: [], totals: {} }; } }
   function allRows() { return Array.from(root.querySelectorAll('[data-presence-row]')); }
-  function currentLocalDate() { const date = new Date(); const pad = (value) => String(value).padStart(2, '0'); return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`; }
-  function normalizeText(value) { return String(value || '').trim().toLocaleLowerCase('ru'); }
+  const schoolDate = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Moscow' });
+  function normalizeText(value) { return String(value || '').trim().toLocaleLowerCase('ru').replaceAll('ё', 'е'); }
   function rowMatchesStatus(row) { if (activeStatus === 'all') return true; if (activeStatus === 'present') return row.dataset.currentStatus === 'present'; if (activeStatus === 'late') return row.dataset.isLate === 'true'; return row.dataset.currentStatus === activeStatus; }
+
+  function lateLessonDescription(lesson) {
+    return lesson?.subject_name ? `${lesson.subject_name} · ${lesson.teacher_name || 'Преподаватель не указан'}` : 'Урок не определён';
+  }
+
+  function renderLateRanking(query, groupId) {
+    const order = lateOrder.value === 'asc' ? 1 : -1;
+    const pupils = (board.classes || [])
+      .filter((group) => groupId === 'all' || String(group.id) === groupId)
+      .flatMap((group) => (group.students || []).map((student) => ({ ...student, group: group.name })))
+      .filter(({ name, state }) => state?.is_late && (!query || normalizeText(name).includes(query))
+        && (!lateThreshold || state.late_minutes >= lateThreshold))
+      .sort((a, b) => {
+        const left = a.state.late_minutes;
+        const right = b.state.late_minutes;
+        if (left == null && right != null) return 1;
+        if (left != null && right == null) return -1;
+        return order * (left - right) || pupilOrder.compare(a.name, b.name);
+      });
+    lateTitle.textContent = lateThreshold ? 'Опоздали на 15 мин и больше' : 'Опоздали сегодня';
+    const signature = JSON.stringify(pupils.map(({ id, name, group, classId, state }) => [id, name, group, classId, state.late_minutes, state.late_lesson]));
+    if (signature !== previousRank) {
+      const focused = lateList.contains(document.activeElement) ? document.activeElement.dataset.lateId : '';
+      const content = document.createDocumentFragment();
+      for (const pupil of pupils) {
+        const item = lateItem.content.cloneNode(true);
+        const link = item.querySelector('[data-late-pupil]');
+        link.textContent = pupil.name;
+        link.dataset.lateId = pupil.id;
+        link.href = '/attendance/analytics?' + new URLSearchParams({ class: pupil.classId, student: pupil.id }) + '#analytics-journal';
+        item.querySelector('[data-late-class]').textContent = pupil.group;
+        item.querySelector('[data-late-subject]').textContent = lateLessonDescription(pupil.state.late_lesson);
+        item.querySelector('[data-late-duration]').textContent = pupil.state.late_minutes == null ? 'Без минут' : `${pupil.state.late_minutes} мин`;
+        content.append(item);
+      }
+      lateList.replaceChildren(content);
+      if (focused) Array.from(lateList.querySelectorAll('[data-late-pupil]')).find((link) => link.dataset.lateId === focused)?.focus({ preventScroll: true });
+      previousRank = signature;
+    }
+    lateRanking.classList.toggle('hidden', pupils.length === 0);
+    return pupils.length;
+  }
 
   function applyFilters() {
     const query = normalizeText(searchInput?.value);
     const groupId = classFilter?.value || 'all';
+    const lateMode = Boolean(lateControls && activeStatus === 'late');
+    const ranked = lateMode && lateOrder.value !== 'classes';
+    lateControls?.classList.toggle('hidden', !lateMode);
+    lateControls?.classList.toggle('flex', lateMode);
+    lateMinimum?.setAttribute('aria-pressed', String(lateThreshold > 0));
+    groupedList?.classList.toggle('hidden', ranked);
     let visibleTotal = 0;
-    root.querySelectorAll('[data-presence-class]').forEach((classSection) => {
-      let visibleInClass = 0;
-      classSection.querySelectorAll('[data-presence-row]').forEach((row) => {
-        const visible = (groupId === 'all' || row.dataset.groupId === groupId) && (!query || normalizeText(row.dataset.searchName).includes(query)) && rowMatchesStatus(row);
-        row.hidden = !visible;
-        if (visible) visibleInClass += 1;
+    if (ranked) {
+      visibleTotal = renderLateRanking(query, groupId);
+    } else {
+      lateRanking?.classList.add('hidden');
+      root.querySelectorAll('[data-presence-class]').forEach((classSection) => {
+        let visibleInClass = 0;
+        classSection.querySelectorAll('[data-presence-row]').forEach((row) => {
+          const visible = (groupId === 'all' || row.dataset.groupId === groupId) && (!query || normalizeText(row.dataset.searchName).includes(query)) && rowMatchesStatus(row)
+            && (!lateMode || !lateThreshold || Number(row.dataset.lateMinutes) >= lateThreshold);
+          row.hidden = !visible;
+          if (visible) visibleInClass += 1;
+        });
+        classSection.hidden = visibleInClass === 0;
+        visibleTotal += visibleInClass;
+        const count = classSection.querySelector('[data-class-count]');
+        const filteringWithinClass = Boolean(query) || activeStatus !== 'all';
+        if (count) count.textContent = filteringWithinClass ? `Показано ${visibleInClass} из ${classSection.dataset.total || 0}` : (classSection.dataset.totalLabel || '');
       });
-      classSection.hidden = visibleInClass === 0;
-      visibleTotal += visibleInClass;
-      const count = classSection.querySelector('[data-class-count]');
-      const filteringWithinClass = Boolean(query) || activeStatus !== 'all';
-      if (count) count.textContent = filteringWithinClass ? `Показано ${visibleInClass} из ${classSection.dataset.total || 0}` : (classSection.dataset.totalLabel || '');
-    });
-    if (filterEmpty) filterEmpty.classList.toggle('hidden', visibleTotal > 0);
+    }
+    if (lateCount && lateMode) lateCount.textContent = `В списке: ${visibleTotal}`;
+    if (filterEmpty) {
+      filterEmpty.classList.toggle('hidden', visibleTotal > 0);
+      filterEmpty.textContent = lateMode && lateThreshold ? 'Нет опозданий на 15 минут и больше по выбранным фильтрам' : 'Ничего не найдено';
+    }
     updateSummary(groupId);
   }
 
@@ -284,13 +448,28 @@
 
   function selectStatus(status) {
     activeStatus = status || 'all';
+    root.dataset.visibleStatus = activeStatus;
     statusButtons.forEach((button) => {
       const active = button.dataset.statusFilter === activeStatus;
       button.setAttribute('aria-pressed', String(active));
+      if (button.classList.contains('presence-summary-button')) return;
       button.classList.toggle('bg-blue-700', active); button.classList.toggle('text-white', active);
       button.classList.toggle('bg-white', !active); button.classList.toggle('text-slate-700', !active);
     });
     applyFilters();
+    saveLateView();
+  }
+
+  function saveLateView() {
+    if (!lateControls) return;
+    const url = new URL(window.location.href);
+    for (const key of ['late', 'minLate', 'lateOrder']) url.searchParams.delete(key);
+    if (activeStatus === 'late') {
+      url.searchParams.set('late', '1');
+      if (lateThreshold) url.searchParams.set('minLate', String(lateThreshold));
+      if (lateOrder.value !== 'desc') url.searchParams.set('lateOrder', lateOrder.value);
+    }
+    if (url.href !== window.location.href) window.history.replaceState(null, '', url);
   }
 
   function setFlash(text, { kind = 'ok', eventId = '' } = {}) {
@@ -306,47 +485,127 @@
     if (failed) { freshness.textContent = `Не удалось обновить · данные на ${time}`; freshness.classList.add('text-red-700'); return; }
     freshness.classList.remove('text-red-700'); freshness.textContent = seconds < 60 ? 'Обновлено только что' : `Обновлено ${Math.floor(seconds / 60)} мин назад`;
   }
-  function setRefreshing(active) { refreshing = active; if (refreshButton) refreshButton.disabled = active; refreshIcon?.classList.toggle('animate-spin', active); }
+  function setRefreshing(active) { if (refreshButton) refreshButton.disabled = active; refreshIcon?.classList.toggle('animate-spin', active); }
 
   async function getBoard() {
     const response = await fetch(`/api/attendance/presence/board?audience=${encodeURIComponent(root.dataset.audience || 'children')}`, { credentials: 'same-origin', headers: { Accept: 'application/json' } });
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.message || payload.error || 'Не удалось обновить');
+    if (!response.ok) {
+      const error = new Error(response.status === 401
+        ? 'Сеанс завершён. Обновите страницу, чтобы войти снова.'
+        : payload.message || payload.error || 'Не удалось обновить');
+      error.status = response.status;
+      throw error;
+    }
     return payload.board || payload || {};
   }
 
-  async function refreshBoard({ manual = false } = {}) {
-    if (refreshing || document.hidden) return;
-    if (root.dataset.date !== currentLocalDate()) { window.location.reload(); return; }
+  async function refreshBoard({ manual = false, afterWrite = false } = {}) {
+    if (refreshTask && afterWrite) await refreshTask;
+    if (refreshTask || phoneEditorOpen || document.hidden) return;
+    if (root.dataset.date !== schoolDate.format()) { window.location.reload(); return; }
+    const editCycle = phoneEditCycle;
     setRefreshing(true);
-    try {
-      const nextBoard = await getBoard();
-      if (nextBoard.date !== root.dataset.date || rosterChanged(nextBoard) || conflictFilterChanged(nextBoard)) { window.location.reload(); return; }
-      board = nextBoard; patchRows(nextBoard); lastSuccessfulRefresh = new Date(); updateFreshness(); applyFilters();
-    } catch (error) {
-      updateFreshness({ failed: true }); if (manual) setFlash(error.message || 'Не удалось обновить', { kind: 'error' });
-    } finally { setRefreshing(false); }
+    refreshTask = (async () => {
+      try {
+        const nextBoard = await getBoard();
+        if (phoneEditorOpen || editCycle !== phoneEditCycle) return;
+        if (nextBoard.date !== root.dataset.date || rosterChanged(nextBoard)) { window.location.reload(); return; }
+        board = nextBoard;
+        patchRows(nextBoard);
+        patchClassSchedules(nextBoard);
+        const conflicts = root.querySelector('[data-status-filter="conflict"]');
+        conflicts.hidden = !nextBoard.totals?.conflicts;
+        if (conflicts.hidden && activeStatus === 'conflict') selectStatus('all');
+        else applyFilters();
+        lastSuccessfulRefresh = new Date();
+        updateFreshness();
+      } catch (error) {
+        updateFreshness({ failed: true });
+        if (manual || error.status === 401) setFlash(error.message || 'Не удалось обновить', { kind: 'error' });
+      } finally {
+        refreshTask = null;
+        setRefreshing(false);
+      }
+    })();
+    return refreshTask;
   }
 
   function rosterChanged(nextBoard) {
-    const current = allRows().map((row) => String(row.dataset.studentId)).sort();
-    const next = (nextBoard.classes || []).flatMap((item) => (item.students || []).map((student) => String(student.id))).sort();
+    const current = allRows().map((row) => `${row.dataset.studentId}:${Boolean(row.querySelector('[data-phone-edit]'))}:${Boolean(row.querySelector('[data-row-actions]'))}`).sort();
+    const next = (nextBoard.classes || []).flatMap((item) => (item.students || []).map((student) => `${student.id}:${Boolean(student.can_edit_phone)}:${Boolean(student.can_manage_presence)}`)).sort();
     return current.length !== next.length || current.some((id, index) => id !== next[index]);
   }
-  function conflictFilterChanged(nextBoard) { return Boolean(root.querySelector('[data-status-filter="conflict"]')) !== (Number(nextBoard?.totals?.conflicts || 0) > 0); }
-  function patchRows(nextBoard) { for (const classItem of nextBoard.classes || []) for (const student of classItem.students || []) { const row = root.querySelector(`[data-presence-row][data-student-id="${cssEscape(student.id)}"]`); if (row) patchRow(row, student.state || {}); } }
+  function patchRows(nextBoard) {
+    for (const classItem of nextBoard.classes || []) for (const student of classItem.students || []) {
+      const row = root.querySelector(`[data-presence-row][data-student-id="${cssEscape(student.id)}"]`);
+      if (!row) continue;
+      patchRow(row, student.state || {});
+      patchPhoneButton(row, student);
+    }
+  }
+
+  function patchPhoneButton(row, student) {
+    const button = row.querySelector('[data-phone-edit]');
+    if (!button) return;
+    const current = student.phone_check;
+    const statuses = [];
+    if (typeof current?.submitted === 'boolean') statuses.push(current.submitted ? 'Сдал' : 'Не сдал');
+    if (current?.submitted_after_notice_at) statuses.push('Сдал после замечания');
+    if (typeof current?.picked_up === 'boolean') statuses.push(current.picked_up ? 'Забрал' : 'Не забрал');
+    const label = statuses.join(' · ') || 'Нет отметок';
+    const status = button.querySelector('[data-phone-status]');
+    status.textContent = label;
+    status.classList.toggle('text-amber-800', Boolean(current?.submitted_after_notice_at));
+    button.setAttribute('aria-label', `Телефон · ${student.name} · ${label}`);
+  }
+
+  function patchClassSchedules(nextBoard) {
+    for (const classItem of nextBoard.classes || []) {
+      const section = root.querySelector(`[data-presence-class][data-group-id="${cssEscape(classItem.id)}"]`);
+      const scheduleRoot = section?.querySelector('[data-class-schedule]');
+      const schedule = classItem.schedule;
+      if (!scheduleRoot || !schedule) continue;
+      const status = scheduleRoot.querySelector('[data-schedule-status]');
+      const details = scheduleRoot.querySelector('[data-schedule-details]');
+      const subject = scheduleRoot.querySelector('[data-schedule-subject]');
+      const time = scheduleRoot.querySelector('[data-schedule-time]');
+      const room = scheduleRoot.querySelector('[data-schedule-room]');
+      if (status) {
+        status.textContent = schedule.status_label || 'Нет расписания';
+        status.className = `rounded-full px-2 py-0.5 text-xs font-semibold ${schedule.status_code === 'current' ? 'bg-emerald-100 text-emerald-800' : schedule.status_code === 'next' ? 'bg-blue-100 text-blue-800' : 'bg-slate-200 text-slate-700'}`;
+      }
+      details?.classList.toggle('hidden', !schedule.has_lesson);
+      if (subject) subject.textContent = schedule.subject_label || '';
+      if (time) time.textContent = schedule.time_label || '';
+      if (room) {
+        room.textContent = schedule.has_room ? `Кабинет ${schedule.room_label}` : 'Кабинет не указан';
+        room.className = `rounded-md px-2 py-0.5 font-semibold ${schedule.has_room ? 'bg-white text-slate-950 ring-1 ring-slate-300' : 'bg-amber-100 text-amber-900'}`;
+      }
+    }
+  }
 
   function patchRow(row, state) {
     row.dataset.currentStatus = state.current_status_code || 'none'; row.dataset.isLate = String(Boolean(state.is_late)); row.dataset.conflictId = state.conflict_id || '';
+    row.dataset.lateMinutes = state.late_minutes ?? '';
     const main = row.querySelector('[data-status-main]'); const late = row.querySelector('[data-late-label]'); const detail = row.querySelector('[data-status-detail]'); const arrival = row.querySelector('[data-arrival]'); const departure = row.querySelector('[data-departure]'); const mobileTimes = row.querySelector('[data-mobile-times]'); const icon = row.querySelector('[data-status-icon]');
     if (main) main.textContent = state.current_status_label || 'Нет отметки';
     if (late) { late.textContent = state.is_late ? `· ${state.late_label || 'Опоздал'}` : ''; late.classList.toggle('hidden', !state.is_late); }
+    const lesson = row.querySelector('[data-late-lesson]');
+    if (lesson) {
+      lesson.textContent = state.is_late ? lateLessonDescription(state.late_lesson) : '';
+      lesson.classList.toggle('hidden', !state.is_late);
+    }
     if (detail) { detail.textContent = state.status_detail || ''; detail.classList.toggle('hidden', !state.status_detail); }
     if (arrival) { arrival.textContent = state.arrival_time ? `Пришёл ${state.arrival_time}` : '—'; arrival.classList.toggle('text-emerald-700', Boolean(state.arrival_time)); arrival.classList.toggle('text-slate-400', !state.arrival_time); }
     if (departure) { departure.textContent = state.departure_time || '—'; departure.classList.toggle('text-slate-600', Boolean(state.departure_time)); departure.classList.toggle('text-slate-400', !state.departure_time); }
     if (mobileTimes) mobileTimes.textContent = mobileTimeLabel(state);
     if (icon) icon.innerHTML = statusIcon(state.current_status_code, Boolean(state.is_late));
-    const toggle = row.querySelector('[data-presence-toggle]'); if (toggle) toggle.textContent = state.next_action_label || 'Изменить отметку';
+    const toggle = row.querySelector('[data-presence-toggle]');
+    if (toggle) {
+      toggle.textContent = state.next_action_label || 'Отметить приход';
+      toggle.setAttribute('aria-label', `${toggle.textContent} · ${row.dataset.searchName}`);
+    }
     row.querySelector('[data-normal-actions]')?.classList.toggle('hidden', state.current_status_code === 'conflict'); row.querySelector('[data-conflict-actions]')?.classList.toggle('hidden', state.current_status_code !== 'conflict');
     row.querySelectorAll('[data-conflict-resolve]').forEach((button) => { button.dataset.conflictId = state.conflict_id || ''; });
   }
@@ -363,21 +622,39 @@
 
   async function postJson(url, body = {}) {
     const response = await fetch(url, { method: 'POST', credentials: 'same-origin', headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    const payload = await response.json().catch(() => ({})); if (!response.ok) throw new Error(payload.message || payload.error || 'Не удалось сохранить'); return payload;
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(response.status === 401
+        ? 'Сеанс завершён. Обновите страницу, чтобы войти снова, затем повторите отметку.'
+        : payload.message || payload.error || 'Не удалось сохранить');
+      error.status = response.status;
+      throw error;
+    }
+    return payload;
   }
-  function closeActionMenu(target) { target?.closest('[data-row-actions]')?.removeAttribute('open'); }
   function findStudent(studentId) { for (const classItem of board.classes || []) { const student = (classItem.students || []).find((item) => String(item.id) === String(studentId)); if (student) return student; } return null; }
   function historyEventLabel(event) { if (event.source === 'mentor_manual_late') return 'Опоздал · вручную'; if (event.source === 'face') return event.event_type === 'departure' ? 'Ушёл · камера' : 'Пришёл · камера'; return event.event_type === 'departure' ? 'Ушёл · вручную' : 'Пришёл · вручную'; }
 
   function openHistory(student) {
     if (!historyDialog || !historyTitle || !historyEvents || !student) return;
-    historyTitle.textContent = student.name || 'История за сегодня'; historyEvents.replaceChildren(); const events = Array.isArray(student.presence_events) ? student.presence_events : [];
+    historyTitle.textContent = `${student.name} · История за сегодня`;
+    historyError.hidden = true;
+    if (fullHistory) fullHistory.href = '/attendance/analytics?' + new URLSearchParams({ class: student.classId, student: student.id, tab: 'history' });
+    historyEvents.replaceChildren();
+    const events = Array.isArray(student.presence_events) ? student.presence_events : [];
     if (!events.length) { const empty = document.createElement('div'); empty.className = 'rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500'; empty.textContent = 'За сегодня отметок пока нет.'; historyEvents.append(empty); }
     events.forEach((event) => {
       const row = document.createElement('div'); row.className = 'flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2.5';
       const text = document.createElement('div'); const time = document.createElement('div'); time.className = 'text-sm font-semibold text-slate-900'; time.textContent = String(event.occurred_time || event.occurred_label || '').slice(0, 5); const label = document.createElement('div'); label.className = 'mt-0.5 text-xs text-slate-500'; label.textContent = historyEventLabel(event); text.append(time, label); row.append(text);
-      if (event.can_edit) { const cancel = document.createElement('button'); cancel.type = 'button'; cancel.dataset.historyCancel = event.id || ''; cancel.className = 'rounded-lg border border-red-200 px-3 py-1.5 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-60'; cancel.textContent = 'Отменить'; row.append(cancel); }
-      else { const automatic = document.createElement('span'); automatic.className = 'text-xs font-medium text-slate-500'; automatic.textContent = 'Автоматически'; row.append(automatic); }
+      if ((event.can_cancel ?? event.can_edit) && event.source !== 'face') {
+        const cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.dataset.historyCancel = event.id || '';
+        cancel.dataset.expectedUpdatedAt = event.expected_updated_at || '';
+        cancel.className = 'rounded-lg border border-red-200 px-3 py-1.5 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-60';
+        cancel.textContent = 'Отменить';
+        row.append(cancel);
+      }
       historyEvents.append(row);
     });
     if (typeof historyDialog.showModal === 'function') historyDialog.showModal(); else historyDialog.setAttribute('open', '');
@@ -389,22 +666,117 @@
     const classToggle = event.target.closest('[data-class-toggle]');
     if (classToggle) { const content = classToggle.parentElement?.querySelector('[data-class-content]'); const expanded = classToggle.getAttribute('aria-expanded') !== 'false'; classToggle.setAttribute('aria-expanded', String(!expanded)); content?.classList.toggle('hidden', expanded); classToggle.querySelector('[data-class-chevron]')?.classList.toggle('rotate-180', expanded); return; }
     const row = event.target.closest('[data-presence-row]'); if (!row) return;
-    const historyButton = event.target.closest('[data-presence-history]'); if (historyButton) { closeActionMenu(historyButton); openHistory(findStudent(row.dataset.studentId)); return; }
+    const phoneButton = event.target.closest('[data-phone-edit]');
+    if (phoneButton) {
+      const student = findStudent(row.dataset.studentId);
+      if (!student?.can_edit_phone || phoneEditorOpen) return;
+      phoneEditorOpen = true;
+      phoneEditCycle += 1;
+      const date = root.dataset.date;
+      try {
+        phoneButton.setAttribute('aria-busy', 'true');
+        student.phone_check = await window.getPresencePhoneDay(student.id, date);
+        patchPhoneButton(row, student);
+        phoneButton.removeAttribute('aria-busy');
+        const saved = await window.editPresencePhone({
+          name: student.name, current: student.phone_check, trigger: phoneButton,
+          async save(answers, expectedRevision) {
+            const result = await window.savePresencePhoneDay(student.id, date, answers, expectedRevision);
+            student.phone_check = result.day;
+            patchPhoneButton(row, student);
+            return result;
+          },
+        });
+        if (saved) setFlash(`${student.name}: отметки о телефоне сохранены`);
+      } catch (err) {
+        setFlash(err.message || 'Не удалось открыть отметки о телефоне', { kind: 'error' });
+      } finally {
+        phoneButton.removeAttribute('aria-busy');
+        phoneEditorOpen = false;
+        await refreshBoard({ afterWrite: true });
+      }
+      return;
+    }
+    const historyButton = event.target.closest('[data-presence-history]');
+    if (historyButton) {
+      openHistory(findStudent(row.dataset.studentId));
+      return;
+    }
     const toggle = event.target.closest('[data-presence-toggle]');
     if (toggle) {
-      closeActionMenu(toggle); toggle.disabled = true;
-      try { const payload = await postJson('/api/attendance/presence/toggle', { studentId: row.dataset.studentId, classId: row.dataset.classId, audience: root.dataset.audience || 'children', idempotencyKey: newKey() }); const label = payload.event?.event_type === 'departure' ? 'ушёл' : 'пришёл'; setFlash(`${payload.event?.student_name || ''}: ${label} ${String(payload.event?.occurred_time || '').slice(0, 5)}`.trim(), { eventId: payload.event?.id || '' }); await refreshBoard(); }
-      catch (error) { setFlash(error.message || 'Не удалось сохранить', { kind: 'error' }); } finally { toggle.disabled = false; }
+      if (toggle.disabled) return;
+      toggle.disabled = true;
+      try {
+        const student = findStudent(row.dataset.studentId);
+        const audience = root.dataset.audience || 'children';
+        const expectedLastEventId = student?.state?.last_event_id || '';
+        const phone = audience === 'children' ? await window.choosePresencePhoneAnswer({
+          name: student?.name || row.dataset.searchName,
+          departure: student?.state?.next_event_type === 'departure',
+          current: student?.phone_check,
+          studentId: row.dataset.studentId,
+          date: root.dataset.date,
+        }) : {};
+        if (!phone) return;
+        const payload = await postJson('/api/attendance/presence/toggle', {
+          studentId: row.dataset.studentId, classId: row.dataset.classId, audience,
+          idempotencyKey: newKey(), ...phone, expectedDate: root.dataset.date, expectedLastEventId,
+        });
+        const label = payload.event?.event_type === 'departure' ? 'ушёл' : 'пришёл';
+        setFlash(`${payload.event?.student_name || ''}: ${label} ${String(payload.event?.occurred_time || '').slice(0, 5)}`.trim(), { eventId: payload.event?.id || '' });
+        await refreshBoard();
+      }
+      catch (error) {
+        setFlash(error.message || 'Не удалось сохранить', { kind: 'error' });
+        if (error.status === 409) await refreshBoard({ afterWrite: true });
+      } finally { toggle.disabled = false; }
       return;
     }
     const conflictButton = event.target.closest('[data-conflict-resolve]');
-    if (conflictButton) { closeActionMenu(conflictButton); conflictButton.disabled = true; try { await postJson(`/api/attendance/conflicts/${encodeURIComponent(conflictButton.dataset.conflictId || '')}/resolve`, { audience: root.dataset.audience || 'children', resolution: conflictButton.dataset.conflictResolve }); setFlash('Отметки согласованы'); await refreshBoard(); } catch (error) { setFlash(error.message || 'Не удалось разрешить конфликт', { kind: 'error' }); } finally { conflictButton.disabled = false; } }
+    if (conflictButton) {
+      if (conflictButton.disabled) return;
+      conflictButton.disabled = true;
+      try {
+        await postJson(`/api/attendance/conflicts/${encodeURIComponent(conflictButton.dataset.conflictId || '')}/resolve`, {
+          audience: root.dataset.audience || 'children', resolution: conflictButton.dataset.conflictResolve,
+        });
+        setFlash('Отметки согласованы');
+        await refreshBoard({ afterWrite: true });
+        const next = row.querySelector('[data-presence-toggle]');
+        if (next?.offsetWidth) next.focus({ preventScroll: true });
+      } catch (error) {
+        setFlash(error.message || 'Не удалось разрешить конфликт', { kind: 'error' });
+      } finally {
+        conflictButton.disabled = false;
+      }
+    }
   });
 
-  undoButton?.addEventListener('click', async () => { if (!lastUndoEventId) return; undoButton.disabled = true; try { await postJson(`/api/attendance/presence/events/${encodeURIComponent(lastUndoEventId)}/cancel`, { audience: root.dataset.audience || 'children' }); setFlash('Последняя отметка отменена'); await refreshBoard(); } catch (error) { setFlash(error.message || 'Не удалось отменить', { kind: 'error' }); } finally { undoButton.disabled = false; } });
+  undoButton?.addEventListener('click', async () => { if (!lastUndoEventId) return; undoButton.disabled = true; try { await postJson(`/api/attendance/presence/events/${encodeURIComponent(lastUndoEventId)}/cancel`, { audience: root.dataset.audience || 'children' }); setFlash('Последняя отметка отменена'); await refreshBoard({ afterWrite: true }); } catch (error) { setFlash(error.message || 'Не удалось отменить', { kind: 'error' }); } finally { undoButton.disabled = false; } });
   historyDialog?.querySelector('[data-presence-history-close]')?.addEventListener('click', () => historyDialog.close()); historyDialog?.addEventListener('click', (event) => { if (event.target === historyDialog) historyDialog.close(); });
-  historyEvents?.addEventListener('click', async (event) => { const cancel = event.target.closest('[data-history-cancel]'); if (!cancel?.dataset.historyCancel) return; cancel.disabled = true; try { await postJson(`/api/attendance/presence/events/${encodeURIComponent(cancel.dataset.historyCancel)}/cancel`, { audience: root.dataset.audience || 'children' }); historyDialog.close(); setFlash('Отметка отменена'); await refreshBoard(); } catch (error) { cancel.disabled = false; setFlash(error.message || 'Не удалось отменить', { kind: 'error' }); } });
+  historyEvents?.addEventListener('click', async (event) => {
+    const cancel = event.target.closest('[data-history-cancel]');
+    if (!cancel?.dataset.historyCancel || !window.confirm('Отменить эту ручную отметку?')) return;
+    cancel.disabled = true;
+    historyError.hidden = true;
+    try {
+      await postJson(`/api/attendance/presence/events/${encodeURIComponent(cancel.dataset.historyCancel)}/cancel`, {
+        audience: root.dataset.audience || 'children', expectedUpdatedAt: cancel.dataset.expectedUpdatedAt || undefined,
+      });
+      historyDialog.close();
+      setFlash('Ручная отметка отменена');
+      await refreshBoard({ afterWrite: true });
+    } catch (error) {
+      cancel.disabled = false;
+      historyError.textContent = error.message || 'Не удалось отменить отметку.';
+      historyError.hidden = false;
+    }
+  });
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshBoard(); }); window.addEventListener('focus', () => refreshBoard()); window.setInterval(() => { if (!document.hidden) refreshBoard(); }, 30_000); window.setInterval(() => updateFreshness(), 15_000);
-  patchRows(board); applyFilters();
+  if (lateOrder && ['asc', 'classes'].includes(initialParams.get('lateOrder'))) lateOrder.value = initialParams.get('lateOrder');
+  lateMinimum?.addEventListener('click', () => { lateThreshold = lateThreshold ? 0 : 15; applyFilters(); saveLateView(); });
+  lateOrder?.addEventListener('change', () => { applyFilters(); saveLateView(); });
+  patchRows(board); patchClassSchedules(board);
+  selectStatus(lateControls && initialParams.get('late') === '1' ? 'late' : 'all');
 })();
 </script>

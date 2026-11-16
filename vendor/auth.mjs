@@ -1,7 +1,11 @@
 import crypto from 'crypto';
 
 const stateCookieName = 'atten.auth.state';
+const scheduleCookieName = 'atten.auth.schedule';
+const mentorSchedulePath = '/attendance/mentor-schedule';
 const authSessionVersion = 2;
+const loginPath = '/api/auth/login';
+const signInLifetime = 10 * 60 * 1000;
 
 function env(name, fallback = '') {
   const value = process.env[name];
@@ -57,12 +61,15 @@ export function requirePageAuth(req, res, next) {
     return next();
   }
   if (user && !user.permissions?.use_attendance) {
-    return res.status(403).send('Нет доступа к сервису посещаемости');
+    const message = user.permissions?.view_own_attendance
+      ? 'Этот раздел доступен сотрудникам школы.'
+      : 'У этой учётной записи нет прав на посещаемость. За доступом обратитесь к администратору школы.';
+    return renderRequestError(req, res, { status: 403, message });
   }
   if (!authConfigured() && !cfg.authDisabled) {
-    return res.status(503).send('SSO не настроен');
+    return renderRequestError(req, res, { status: 503, message: 'Школьный вход сейчас недоступен. Попробуйте позднее.' });
   }
-  return res.redirect('/api/auth/login');
+  return redirectToLogin(req, res);
 }
 
 export function requireOwnAttendanceAuth(req, res, next) {
@@ -76,18 +83,18 @@ export function requireOwnAttendanceAuth(req, res, next) {
     if (wantsJson(req)) {
       return res.status(403).json({ error: 'forbidden' });
     }
-    return res.status(403).send('Нет доступа к личной посещаемости');
+    return renderRequestError(req, res, { status: 403, message: 'Личная посещаемость доступна ученикам.' });
   }
   if (!authConfigured() && !cfg.authDisabled) {
     if (wantsJson(req)) {
       return res.status(503).json({ error: 'auth_not_configured' });
     }
-    return res.status(503).send('SSO не настроен');
+    return renderRequestError(req, res, { status: 503, message: 'Школьный вход сейчас недоступен. Попробуйте позднее.' });
   }
   if (wantsJson(req)) {
     return res.status(401).json({ authenticated: false, login_url: '/api/auth/login' });
   }
-  return res.redirect('/api/auth/login');
+  return redirectToLogin(req, res);
 }
 
 export function requireApiAuth(req, res, next) {
@@ -113,17 +120,40 @@ export function requirePermission(permission) {
       if (wantsJson(req)) {
         return res.status(401).json({ authenticated: false, login_url: '/api/auth/login' });
       }
-      return res.redirect('/api/auth/login');
+      return redirectToLogin(req, res);
     }
     req.authUser = user;
     if (!user.permissions?.[permission]) {
       if (wantsJson(req)) {
         return res.status(403).json({ error: 'forbidden' });
       }
-      return res.status(403).send('Нет доступа к действию');
+      const message = permission === 'manage_presence'
+        ? 'Отмечать приход и уход могут наставники и администраторы.'
+        : 'Для действий с отметками нужны права наставника, тьютора или администратора.';
+      return renderRequestError(req, res, { status: 403, message });
     }
     return next();
   };
+}
+
+export function renderRequestError(req, res, { status, title, message, actionHref, actionLabel }) {
+  const user = req.authUser || getAuthUserFromRequest(req);
+  const canOpenLanding = user?.permissions?.view_own_attendance || user?.permissions?.use_attendance;
+  const landingLabels = {
+    '/attendance/me': 'Моя посещаемость',
+    '/attendance/presence': 'Сейчас в школе',
+    '/attendance': 'Пропуски',
+  };
+  const defaultActionHref = canOpenLanding ? user.landing : user ? '/api/auth/logout' : loginPath;
+  const defaultActionLabel = canOpenLanding ? landingLabels[user.landing]
+    : user ? 'Сменить учётную запись' : 'Войти';
+  return res.status(status).set('Cache-Control', 'no-store').render('request-error', {
+    title: title || ({ 400: 'Проверьте ссылку', 403: 'Нет доступа', 404: 'Страница не найдена', 503: 'Сервис временно недоступен' })[status] || 'Не удалось открыть страницу',
+    message,
+    currentUser: user,
+    actionHref: localReturnPath(actionHref) || defaultActionHref,
+    actionLabel: actionLabel || defaultActionLabel,
+  });
 }
 
 export function getAuthUserFromRequest(req) {
@@ -155,13 +185,16 @@ export function getAuthUserFromRequest(req) {
 
 async function authLoginHandler(req, res) {
   if (!authConfigured()) {
+    if (acceptsBrowserPage(req)) return renderSignInError(req, res, 503, 'Школьный вход сейчас недоступен. Попробуйте позднее.');
     return res.status(503).json({ error: 'auth_not_configured' });
   }
 
   const cfg = getAuthConfig();
   const state = crypto.randomBytes(16).toString('hex');
+  const returnTo = attendanceReturnPath(req.query.return_to) || legacySchedulePath(req.query.target);
   clearAuthCookies(req, res);
-  res.cookie(stateCookieName, state, cookieOptions(req, { maxAge: 10 * 60 * 1000 }));
+  const stateValue = signValue({ state, returnTo, expiresAt: Date.now() + signInLifetime }, cfg.sessionSecret);
+  res.cookie(stateCookieName, stateValue, cookieOptions(req, { maxAge: signInLifetime }));
 
   const url = new URL(`${cfg.ssoBaseURL}/authorize`);
   url.searchParams.set('client_id', cfg.clientID);
@@ -174,6 +207,7 @@ async function authLoginHandler(req, res) {
 
 async function authCallbackHandler(req, res) {
   if (!authConfigured()) {
+    if (acceptsBrowserPage(req)) return renderSignInError(req, res, 503, 'Школьный вход сейчас недоступен. Попробуйте позднее.');
     return res.status(503).json({ error: 'auth_not_configured' });
   }
 
@@ -181,7 +215,13 @@ async function authCallbackHandler(req, res) {
   const code = String(req.query.code || '').trim();
   const state = String(req.query.state || '').trim();
   const cookieState = String(req.cookies?.[stateCookieName] || '').trim();
-  if (!code || !state || !cookieState || state !== cookieState) {
+  const saved = verifySignedValue(cookieState, cfg.sessionSecret);
+  const legacyState = /^[a-f0-9]{32}$/.test(cookieState);
+  const returnTo = saved ? attendanceReturnPath(saved.returnTo)
+    : legacyState ? legacySchedulePath(req.cookies?.[scheduleCookieName]) : '';
+  const expectedState = saved?.expiresAt > Date.now() ? saved.state : legacyState ? cookieState : '';
+  if (!code || !state || state !== expectedState) {
+    if (acceptsBrowserPage(req)) return renderSignInError(req, res, 400, 'Срок действия запроса на вход истёк. Начните вход заново.', returnTo);
     return res.status(400).json({ error: 'state_mismatch' });
   }
 
@@ -196,10 +236,10 @@ async function authCallbackHandler(req, res) {
 
     clearAuthCookies(req, res);
     res.cookie(cfg.sessionCookieName, sessionValue, cookieOptions(req, { maxAge: cfg.sessionTTL }));
-    res.clearCookie(stateCookieName, cookieOptions(req));
-    res.redirect(user.landing || '/attendance');
+    return res.redirect(canOpenAttendanceReturnPath(user, returnTo) ? returnTo : user.landing);
   } catch (err) {
-    res.status(401).json({ error: 'auth_failed', detail: err?.message || 'unknown' });
+    if (acceptsBrowserPage(req)) return renderSignInError(req, res, 401, 'Школьный вход прервался. Попробуйте войти снова.', returnTo);
+    return res.status(401).json({ error: 'auth_failed', detail: err?.message || 'unknown' });
   }
 }
 
@@ -291,6 +331,37 @@ export function attendancePermissions(roleID) {
     view_adult_attendance: role === 5,
     mark_absence: canManage,
     manage_presence: [3, 5].includes(role),
+  };
+}
+
+export function canManageMentorSchedule(user) {
+  const role = Number(user?.rawRoleId);
+  if (role === 5) return true;
+  return [2, 3, 4].includes(role) && /^[1-9]\d*$/.test(String(user?.id))
+    && String(process.env.ATTENDANCE_MENTOR_SCHEDULE_MANAGER_IDS || '')
+      .split(',').some((id) => id.trim() === String(user.id));
+}
+
+export function canViewMentorSchedule(user) {
+  return Number(user?.rawRoleId) === 3 || canManageMentorSchedule(user);
+}
+
+export function canAccessAbsenceRecord(roleID, record) {
+  const role = Number(roleID);
+  return [2, 3, 4, 5].includes(role) && (role === 5 || Number(record?.user_type) === 1);
+}
+
+export function requireAbsenceAudience(loadAbsence) {
+  return async (req, res, next) => {
+    try {
+      const record = await loadAbsence(req.params.absenceId ?? req.params.id);
+      if (record && !canAccessAbsenceRecord(req.authUser?.rawRoleId, record)) {
+        return req.path.startsWith('/api/')
+          ? res.status(403).json({ error: 'forbidden' })
+          : renderRequestError(req, res, { status: 403, message: 'С отметками сотрудников работает администратор.' });
+      }
+      return next();
+    } catch (err) { return next(err); }
   };
 }
 
@@ -408,12 +479,62 @@ function clearAuthCookies(req, res) {
   const cfg = getAuthConfig();
   res.clearCookie(cfg.sessionCookieName, cookieOptions(req));
   res.clearCookie(stateCookieName, cookieOptions(req));
+  res.clearCookie(scheduleCookieName, cookieOptions(req));
 }
 
 function localReturnPath(value) {
-  const raw = String(value || '').trim();
-  if (!raw || !raw.startsWith('/') || raw.startsWith('//')) return '';
+  if (typeof value !== 'string') return '';
+  const raw = value.trim();
+  if (!raw.startsWith('/') || raw.startsWith('//') || /[\\\u0000-\u001f\u007f]/.test(raw)) return '';
   return raw;
+}
+
+function attendanceReturnPath(value) {
+  const raw = localReturnPath(value);
+  if (!raw || raw.length > 1600) return '';
+  const pathname = raw.split(/[?#]/, 1)[0].replace(/\/$/, '');
+  const routes = ['/attendance', '/attendance/me', '/attendance/presence',
+    '/attendance/presence/manual', '/attendance/analytics', mentorSchedulePath];
+  return routes.includes(pathname) || /^\/attendance\/[1-9]\d*\/new$/.test(pathname) ? raw : '';
+}
+
+function canOpenAttendanceReturnPath(user, target) {
+  if (!target) return false;
+  const url = new URL(target, 'https://attendance.local');
+  const pathname = url.pathname.replace(/\/$/, '');
+  if (pathname === '/attendance/me') return user.permissions.view_own_attendance;
+  if (!user.permissions.use_attendance) return false;
+  if (url.searchParams.get('audience') === 'adults' && !user.permissions.view_adult_attendance) return false;
+  if (pathname === mentorSchedulePath) return canViewMentorSchedule(user);
+  if (pathname === '/attendance/presence/manual') return user.permissions.manage_presence;
+  return true;
+}
+
+function legacySchedulePath(value) {
+  if (value === 'mentor-schedule') return mentorSchedulePath;
+  if (value === 'mentor-schedule-me') return `${mentorSchedulePath}?view=me`;
+  return '';
+}
+
+function loginUrl(returnTo) {
+  return returnTo ? `${loginPath}?${new URLSearchParams({ return_to: returnTo })}` : loginPath;
+}
+
+function redirectToLogin(req, res) {
+  const canReturn = req.method === 'GET' || req.method === 'HEAD';
+  const target = canReturn ? attendanceReturnPath(req.originalUrl) : '';
+  return res.redirect(canReturn ? 302 : 303, loginUrl(target));
+}
+
+function acceptsBrowserPage(req) {
+  return req.accepts(['json', 'html']) === 'html';
+}
+
+function renderSignInError(req, res, status, message, returnTo) {
+  return renderRequestError(req, res, {
+    status, title: 'Не удалось войти', message,
+    actionHref: loginUrl(returnTo), actionLabel: 'Войти снова',
+  });
 }
 
 function appBaseURL(callbackURL) {

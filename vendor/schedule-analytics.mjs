@@ -5,7 +5,7 @@ export function buildScheduleIndex(rows) {
   const index = { byStudentDay: new Map(), byClassDay: new Map() };
   for (const row of rows || []) {
     const lesson = normalizeScheduleLesson(row);
-    if (!lesson) continue;
+    if (!lesson || !isSchoolWeekday(lesson.date)) continue;
     const map = lesson.student_id ? index.byStudentDay : index.byClassDay;
     const ownerId = lesson.student_id || lesson.class_id;
     if (!ownerId) continue;
@@ -80,6 +80,40 @@ export function normalizeScheduleLesson(row) {
   };
 }
 
+export function buildClassLessonStatus(rows, { classId, date, now } = {}) {
+  const selectedClassId = String(classId || '').trim();
+  const selectedDate = dateOnly(date);
+  if (selectedDate && !isSchoolWeekday(selectedDate)) return emptyClassLessonStatus('empty', 'Выходной');
+  const nowMs = parseDateTimeMs(now);
+  const lessons = dedupeClassLessons((rows || [])
+    .map(normalizeScheduleLesson)
+    .filter((lesson) => lesson
+      && lesson.class_id === selectedClassId
+      && lesson.date === selectedDate));
+
+  if (!lessons.length) {
+    return emptyClassLessonStatus('empty', 'Нет расписания');
+  }
+
+  const current = Number.isFinite(nowMs)
+    ? lessons.filter((lesson) => lesson.starts_ms <= nowMs && nowMs < lesson.ends_ms)
+    : [];
+  if (current.length) return summarizeClassLessons(current, 'current', 'Сейчас');
+
+  const nextStart = Number.isFinite(nowMs)
+    ? Math.min(...lessons.filter((lesson) => lesson.starts_ms > nowMs).map((lesson) => lesson.starts_ms))
+    : Number.POSITIVE_INFINITY;
+  if (Number.isFinite(nextStart)) {
+    return summarizeClassLessons(
+      lessons.filter((lesson) => lesson.starts_ms === nextStart),
+      'next',
+      'Следующий урок',
+    );
+  }
+
+  return emptyClassLessonStatus('finished', 'Уроки закончились');
+}
+
 function isIgnoredAttendanceScheduleRow(row) {
   const subjectName = normalizeSubjectName(row?.subject_name);
   if (IGNORED_ATTENDANCE_SUBJECTS.has(subjectName)) return true;
@@ -89,8 +123,54 @@ function isIgnoredAttendanceScheduleRow(row) {
     && normalizeTime(row?.end_time) === '08:40:00';
 }
 
+function dedupeClassLessons(lessons) {
+  const unique = new Map();
+  for (const lesson of lessons) {
+    const key = [
+      lesson.starts_at,
+      lesson.ends_at,
+      lesson.subject_key,
+      lesson.teacher_id,
+      lesson.room_id || lesson.room_name,
+    ].join('|');
+    if (!unique.has(key)) unique.set(key, lesson);
+  }
+  return [...unique.values()].sort(compareLessons);
+}
+
+function summarizeClassLessons(lessons, statusCode, statusLabel) {
+  const subjects = distinctLabels(lessons.map((lesson) => lesson.subject_name));
+  const times = distinctLabels(lessons.map((lesson) => lesson.time_label));
+  const rooms = distinctLabels(lessons.map((lesson) => lesson.room_name));
+  return {
+    status_code: statusCode,
+    status_label: statusLabel,
+    has_lesson: true,
+    subject_label: subjects.join(' · '),
+    time_label: times.join(', '),
+    room_label: rooms.join(', '),
+    has_room: rooms.length > 0,
+  };
+}
+
+function emptyClassLessonStatus(statusCode, statusLabel) {
+  return {
+    status_code: statusCode,
+    status_label: statusLabel,
+    has_lesson: false,
+    subject_label: '',
+    time_label: '',
+    room_label: '',
+    has_room: false,
+  };
+}
+
+function distinctLabels(values) {
+  return [...new Set(values.map((value) => String(value || '').trim()).filter(Boolean))];
+}
+
 export function lessonsForStudentDay(index, item, student, day) {
-  const studentId = String(item.student_id || item.person_id || student.student_id || student.person_id || student.id || '');
+  const studentId = String(item.student_id || student.student_id || student.id || '');
   const classId = String(item.class_id || student.class_id || student.classId || '');
   const individual = index.byStudentDay.get(`${studentId}|${day}`) || [];
   const classLessons = index.byClassDay.get(`${classId}|${day}`) || [];
@@ -124,6 +204,10 @@ export function isoWeekday(dateText) {
   const [year, month, day] = String(dateText).split('-').map(Number);
   const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
   return weekday === 0 ? 7 : weekday;
+}
+
+export function isSchoolWeekday(dateText) {
+  return DEFAULT_ACTIVE_WEEKDAYS.includes(isoWeekday(dateText));
 }
 
 export function parseDateTimeMs(value) {

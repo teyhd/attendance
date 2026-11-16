@@ -19,17 +19,57 @@
     font-size: 10px;
     line-height: 1.5rem;
   }
+
+  .manual-class-picker { display: none; }
+  .manual-presence-card[hidden], [data-presence-class][hidden] { display: none; }
+  .manual-history-dialog { width: min(32rem, calc(100% - 1rem)); max-height: calc(100dvh - 1rem); }
+  .manual-history-content { max-height: 68dvh; overflow-y: auto; }
+  .manual-summary { display: flex; align-items: flex-start; justify-content: space-between; gap: .5rem; }
+  .manual-presence-card {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    min-width: 0;
+  }
+
+  .manual-presence-card [data-presence-button] { min-height: 4.5rem; overflow-wrap: anywhere; }
+  @media (max-width: 767px) {
+    main:has(> .manual-presence-board) { padding-block: 1rem; }
+    .manual-class-picker { display: grid; align-items: center; grid-template-columns: auto minmax(0, 1fr); gap: .5rem; margin-top: .5rem; }
+    .manual-class-picker select { min-width: 0; }
+    [data-presence-class-list], [data-presence-class-list].is-two-rows { display: none; }
+  }
+  .manual-presence-card [data-conflict-actions] { grid-column: 1 / -1; padding: 0 .5rem .5rem; }
+
+  .manual-presence-actions {
+    align-self: center;
+    display: grid;
+    gap: .25rem;
+    width: clamp(6.25rem, 34vw, 7.25rem);
+    padding: .5rem .5rem .5rem 0;
+  }
+
+  .manual-presence-actions:not(:has(button:not([hidden]):not(.hidden))) { display: none; }
+  .manual-presence-actions > button {
+    width: 100%;
+    min-height: 2.75rem;
+    padding: .375rem .25rem;
+    white-space: normal;
+    text-align: center;
+    font-size: .75rem;
+    line-height: 1.1;
+    overflow-wrap: anywhere;
+  }
 </style>
 
-<section id="presence-top" data-presence-root data-date="{{board.date}}" data-audience="{{board.audience}}" class="space-y-3">
+<section id="presence-top" data-presence-root data-date="{{board.date}}" data-audience="{{board.audience}}" class="manual-presence-board space-y-3">
   <div class="sticky top-2 z-20 space-y-2">
     <div class="rounded-md border border-gray-200 bg-white p-3 shadow-sm">
-      <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+      <div class="manual-summary">
         <div>
-          <h1 class="text-xl font-semibold text-gray-950">{{#if board.is_adult}}Ручной ввод сотрудников{{else}}Ручной ввод{{/if}}</h1>
-          <div class="mt-1 text-sm text-gray-600">{{board.date_label}} · {{board.totals.present}} / {{board.totals.students}}</div>
+          <h1 class="text-xl font-semibold text-gray-950">Приход и уход{{#if board.is_adult}} сотрудников{{/if}}</h1>
+          <div class="mt-1 text-sm text-gray-600">{{board.date_label}} · <span data-manual-present>{{board.totals.present}}</span> из {{board.totals.students}} {{#if board.is_adult}}на работе{{else}}в школе{{/if}}</div>
         </div>
-        <a href="#presence-top" class="inline-flex w-fit rounded border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:border-gray-900 hover:text-gray-950">Наверх</a>
+        <a href="#presence-top" class="inline-flex min-h-11 shrink-0 items-center rounded border border-gray-300 bg-white px-2 text-sm font-medium text-gray-700 hover:border-gray-900 hover:text-gray-950">Наверх</a>
       </div>
 
       {{#if audienceTabs.length}}
@@ -41,7 +81,18 @@
       {{/if}}
 
       {{#if board.classes.length}}
-        <div data-presence-class-list class="mt-3 flex gap-2 overflow-x-auto pb-1" aria-label="Классы">
+        <label class="mt-3 block text-sm font-medium">
+          <span class="sr-only">{{#if board.is_adult}}Найти сотрудника{{else}}Найти ученика{{/if}}</span>
+          <input type="search" data-manual-search autocomplete="off" placeholder="{{#if board.is_adult}}Найти сотрудника{{else}}Найти ученика{{/if}}" class="min-h-11 w-full rounded-md border border-slate-300 px-3">
+        </label>
+        <label class="manual-class-picker text-sm font-medium">
+          <span>{{#if board.is_adult}}Кафедра{{else}}Класс{{/if}}</span>
+          <select data-manual-class-picker class="w-full" aria-label="{{#if board.is_adult}}Перейти к кафедре{{else}}Перейти к классу{{/if}}">
+            <option value="">Выберите</option>
+            {{#each board.classes}}<option value="{{anchor}}">{{name}}</option>{{/each}}
+          </select>
+        </label>
+        <div data-presence-class-list class="mt-3 flex gap-2 overflow-x-auto pb-1" aria-label="{{#if board.is_adult}}Кафедры{{else}}Классы{{/if}}">
           {{#each board.classes}}
             <a href="#{{anchor}}" title="{{name}}" class="shrink-0 rounded border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-800 hover:border-gray-900">{{name}}</a>
           {{/each}}
@@ -49,8 +100,8 @@
       {{/if}}
     </div>
 
-    <div data-presence-flash class="hidden">
-      <span data-presence-flash-text class="min-w-0 flex-1 truncate"></span>
+    <div data-presence-flash class="hidden" role="status" aria-live="polite">
+      <span data-presence-flash-text class="min-w-0 flex-1 break-words"></span>
       <button type="button" data-presence-cancel class="hidden shrink-0 rounded border border-current px-3 py-1.5 text-sm font-medium">Отменить</button>
     </div>
   </div>
@@ -58,14 +109,14 @@
   {{#if board.classes.length}}
     <div class="space-y-3">
       {{#each board.classes}}
-        <section id="{{anchor}}" data-presence-class class="scroll-mt-4 rounded-md border border-gray-200 bg-white" style="scroll-margin-top: 9rem;">
+        <section id="{{anchor}}" data-presence-class class="scroll-mt-4 rounded-md border border-gray-200 bg-white" style="scroll-margin-top: 13rem;">
           <div class="flex items-center justify-between border-b border-gray-200 px-3 py-2">
             <h2 class="text-lg font-semibold text-gray-950">{{name}}</h2>
             <span class="text-sm text-gray-500">{{students_label}}</span>
           </div>
-          <div class="grid grid-cols-1 gap-2 p-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          <div class="grid grid-cols-1 gap-1.5 p-2 sm:grid-cols-2 sm:gap-2 sm:p-3 lg:grid-cols-3 xl:grid-cols-4">
             {{#each students}}
-              <div class="space-y-1.5">
+              <div class="manual-presence-card rounded-md border shadow-sm transition {{#if (or (eq state.status_code "absent") (eq state.status_code "conflict"))}}border-red-300 bg-red-50 hover:bg-red-100{{else}}{{#if (eq state.status_code "late")}}border-amber-300 bg-amber-50 hover:bg-amber-100{{else}}{{#if (eq state.status_code "present")}}border-emerald-600 bg-emerald-50 hover:bg-emerald-100{{else}}{{#if (eq state.status_code "departed")}}border-slate-300 bg-slate-50 hover:bg-slate-100{{else}}border-gray-300 bg-white hover:bg-gray-50{{/if}}{{/if}}{{/if}}{{/if}}">
                 <button
                   type="button"
                   data-presence-button
@@ -76,48 +127,61 @@
                   data-last-event-type="{{state.last_event_type}}"
                   data-status-code="{{state.status_code}}"
                   data-conflict-id="{{state.conflict_id}}"
-                  aria-label="{{name}} · {{state.status_label}}"
-                  class="min-h-[6.25rem] w-full rounded-md border px-3 py-3 text-left shadow-sm transition focus:outline-none focus:ring-2 focus:ring-gray-900 disabled:cursor-wait disabled:opacity-60 {{#if (or (eq state.status_code "absent") (eq state.status_code "conflict"))}}border-red-300 bg-red-50 hover:bg-red-100{{else}}{{#if (eq state.status_code "late")}}border-amber-300 bg-amber-50 hover:bg-amber-100{{else}}{{#if (eq state.status_code "present")}}border-emerald-600 bg-emerald-50 hover:bg-emerald-100{{else}}{{#if (eq state.status_code "departed")}}border-slate-300 bg-slate-50 hover:bg-slate-100{{else}}border-gray-300 bg-white hover:bg-gray-50{{/if}}{{/if}}{{/if}}{{/if}}"
+                  aria-label="{{name}} · {{state.status_label}}{{#unless state.conflict_id}} · {{state.next_action_label}}{{/unless}}"
+                  {{#if state.conflict_id}}aria-disabled="true"{{/if}}
+                  {{#unless ../../board.is_adult}}aria-describedby="manual-phone-{{id}}"{{/unless}}
+                  class="min-w-0 w-full rounded-md px-2 py-2 sm:px-3 text-left focus:outline-none focus:ring-2 focus:ring-inset focus:ring-gray-900 disabled:cursor-wait disabled:opacity-60"
                 >
-                  <span class="block text-base font-semibold leading-5 text-gray-950">{{name}}</span>
-                  <span data-presence-status class="mt-2 inline-flex rounded-full px-2 py-0.5 text-xs font-semibold {{#if (or (eq state.status_code "absent") (eq state.status_code "conflict"))}}bg-red-100 text-red-800{{else}}{{#if (eq state.status_code "late")}}bg-amber-100 text-amber-800{{else}}{{#if (eq state.status_code "present")}}bg-emerald-100 text-emerald-800{{else}}{{#if (eq state.status_code "departed")}}bg-slate-200 text-slate-700{{else}}bg-gray-100 text-gray-600{{/if}}{{/if}}{{/if}}{{/if}}">{{state.status_badge_label}}</span>
+                  <span data-presence-name class="block text-base font-semibold leading-5 text-gray-950">{{name}}</span>
+                  <span data-presence-status class="mt-1 inline-flex rounded-full px-2 py-0.5 text-xs font-semibold {{#if (or (eq state.status_code "absent") (eq state.status_code "conflict"))}}bg-red-100 text-red-800{{else}}{{#if (eq state.status_code "late")}}bg-amber-100 text-amber-800{{else}}{{#if (eq state.status_code "present")}}bg-emerald-100 text-emerald-800{{else}}{{#if (eq state.status_code "departed")}}bg-slate-200 text-slate-700{{else}}bg-gray-100 text-gray-600{{/if}}{{/if}}{{/if}}{{/if}}">{{state.status_badge_label}}</span>
                   <span data-presence-detail class="mt-1 block text-sm leading-4 text-gray-600">{{state.status_detail}}</span>
+                  {{#unless ../../board.is_adult}}
+                    <span id="manual-phone-{{id}}" class="mt-1 block break-words text-xs text-slate-600">
+                      <span class="font-medium">Телефон:</span>
+                      <span data-phone-answer class="font-semibold {{#if phone_check.submitted_after_notice_at}}text-amber-800{{else if (eq phone_check.submitted true)}}text-emerald-800{{else if (eq phone_check.submitted false)}}text-red-800{{/if}}">{{#if phone_check.submitted_after_notice_at}}сдал после замечания{{else if (eq phone_check.submitted true)}}сдал{{else if (eq phone_check.submitted false)}}не сдал{{else}}нет отметки{{/if}}</span><span data-phone-pickup>{{#if (eq phone_check.picked_up true)}} · забрал{{else if (eq phone_check.picked_up false)}} · не забрал{{/if}}</span>
+                    </span>
+                  {{/unless}}
+                  <span data-presence-next class="mt-1 block text-sm font-semibold text-blue-700 {{#if state.conflict_id}}hidden{{/if}}">{{state.next_action_label}}</span>
                 </button>
-                {{#if state.conflict_id}}
-                  <div class="grid grid-cols-2 gap-1.5" data-conflict-actions>
-                    <button type="button" data-conflict-resolve="keep_presence" data-conflict-id="{{state.conflict_id}}" class="rounded border border-emerald-300 bg-white px-2 py-1.5 text-xs font-medium text-emerald-800 hover:bg-emerald-50">Подтвердить приход</button>
-                    <button type="button" data-conflict-resolve="keep_absence" data-conflict-id="{{state.conflict_id}}" class="rounded border border-red-300 bg-white px-2 py-1.5 text-xs font-medium text-red-800 hover:bg-red-50">Оставить отсутствие</button>
-                  </div>
-                {{/if}}
-                {{#unless ../../board.is_adult}}
-                  {{#if presence_events.length}}
-                    <button type="button" data-presence-edit data-student-id="{{id}}" class="w-full rounded border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:border-gray-900 hover:text-gray-950">Редактировать</button>
-                  {{/if}}
-                {{/unless}}
+                <div class="manual-presence-actions">
+                  {{#unless ../../board.is_adult}}
+                    <button type="button" data-phone-after-notice class="workspace-secondary" hidden>Сдал после замечания</button>
+                    <button type="button" data-manual-phone data-student-id="{{id}}" aria-label="Телефон · {{name}}" aria-haspopup="dialog" class="workspace-secondary">Телефон</button>
+                  {{/unless}}
+                  <button type="button" data-presence-edit data-student-id="{{id}}" aria-label="История за сегодня · {{name}}" aria-haspopup="dialog" class="workspace-secondary">История</button>
+                </div>
+                <div class="grid grid-cols-2 gap-1.5 {{#unless state.conflict_id}}hidden{{/unless}}" data-conflict-actions>
+                  <button type="button" data-conflict-resolve="keep_presence" data-conflict-id="{{state.conflict_id}}" class="rounded border border-emerald-300 bg-white px-2 py-1.5 text-xs font-medium text-emerald-800 hover:bg-emerald-50">Подтвердить приход</button>
+                  <button type="button" data-conflict-resolve="keep_absence" data-conflict-id="{{state.conflict_id}}" class="rounded border border-red-300 bg-white px-2 py-1.5 text-xs font-medium text-red-800 hover:bg-red-50">Оставить отсутствие</button>
+                </div>
               </div>
             {{/each}}
           </div>
         </section>
       {{/each}}
     </div>
+    <p data-manual-search-empty hidden role="status" class="rounded-md border border-gray-200 bg-white p-4 text-sm text-gray-600">{{#if board.is_adult}}Сотрудники не найдены{{else}}Ученики не найдены{{/if}}</p>
   {{else}}
-    <div class="rounded-md border border-gray-200 bg-white p-4 text-sm text-gray-500">{{#if board.is_adult}}Нет сотрудников{{else}}Нет учеников{{/if}}</div>
+    <div class="rounded-md border border-gray-200 bg-white p-4 text-sm text-gray-600">{{#if board.is_adult}}Нет сотрудников.{{else if (eq currentUser.role "mentor")}}В закреплённых за вами классах нет учеников для ручного ввода.{{else}}Нет учеников.{{/if}} <a href="/attendance/presence{{#if board.is_adult}}?audience=adults{{/if}}" class="workspace-link">Открыть сводку присутствия</a></div>
   {{/if}}
 </section>
 
-{{#unless board.is_adult}}
-  <dialog data-presence-history-dialog class="w-[calc(100%-2rem)] max-w-lg rounded-lg border border-gray-200 bg-white p-0 shadow-xl backdrop:bg-black/30">
+{{#if board.classes.length}}
+  <dialog data-presence-history-dialog aria-labelledby="manual-presence-history-title" class="manual-history-dialog rounded-lg border border-gray-200 bg-white p-0 shadow-xl backdrop:bg-black/30">
     <div class="flex items-center justify-between gap-3 border-b border-gray-200 px-4 py-3">
-      <h2 data-presence-history-title class="text-lg font-semibold text-gray-950"></h2>
-      <button type="button" data-presence-history-close aria-label="Закрыть" class="rounded px-2 py-1 text-lg text-gray-500 hover:bg-gray-100 hover:text-gray-950">×</button>
+      <h2 id="manual-presence-history-title" data-presence-history-title class="min-w-0 break-words text-lg font-semibold text-gray-950"></h2>
+      <button type="button" data-presence-history-close aria-label="Закрыть" class="h-11 w-11 shrink-0 rounded text-xl text-gray-500 hover:bg-gray-100 hover:text-gray-950">×</button>
     </div>
-    <div class="p-4">
+    <div class="manual-history-content p-3 sm:p-4">
+      <p data-history-error hidden role="alert" class="mb-2 rounded bg-red-50 p-2 text-sm text-red-800"></p>
       <div data-presence-history-events class="space-y-2"></div>
+      {{#unless board.is_adult}}<a data-full-history class="workspace-link mt-3 inline-flex min-h-11 items-center text-sm">Вся история ученика</a>{{/unless}}
     </div>
   </dialog>
   <script id="presence-history-data" type="application/json">{{{json board.classes}}}</script>
-{{/unless}}
+{{/if}}
 
+{{#unless board.is_adult}}<script src="/assets/presence-phone.js?v=6"></script>{{/unless}}
 <script>
 (() => {
   const root = document.querySelector('[data-presence-root]');
@@ -128,9 +192,30 @@
   const flashText = root.querySelector('[data-presence-flash-text]');
   const cancelButton = root.querySelector('[data-presence-cancel]');
   const classList = root.querySelector('[data-presence-class-list]');
+  const classPicker = root.querySelector('[data-manual-class-picker]');
+  const search = root.querySelector('[data-manual-search]');
+  const searchEmpty = root.querySelector('[data-manual-search-empty]');
+  const classes = Array.from(root.querySelectorAll('[data-presence-class]'));
+  const presentTotal = root.querySelector('[data-manual-present]');
+  classPicker?.addEventListener('change', () => {
+    if (search?.value) {
+      search.value = '';
+      filterCards();
+    }
+    const target = document.getElementById(classPicker.value);
+    target?.scrollIntoView({ block: 'start' });
+  });
+  classList?.addEventListener('click', (event) => {
+    if (!event.target.closest('a') || !search?.value) return;
+    search.value = '';
+    filterCards();
+  });
+  search?.addEventListener('input', filterCards);
   const historyDialog = root.parentElement?.querySelector('[data-presence-history-dialog]');
   const historyTitle = historyDialog?.querySelector('[data-presence-history-title]');
   const historyEvents = historyDialog?.querySelector('[data-presence-history-events]');
+  const historyError = historyDialog?.querySelector('[data-history-error]');
+  const fullHistory = historyDialog?.querySelector('[data-full-history]');
   const historyData = parseJsonScript('presence-history-data');
   const flashBase = 'flex items-center gap-3 rounded-md border px-3 py-2 text-sm shadow-sm';
 
@@ -174,16 +259,29 @@
     none: ['bg-gray-100', 'text-gray-600'],
   };
   const newKey = () => window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  const currentLocalDate = () => {
-    const date = new Date();
-    const pad = (value) => String(value).padStart(2, '0');
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-  };
+  const schoolDate = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Moscow' });
   const refreshIfDateChanged = () => {
-    if (root.dataset.date && root.dataset.date !== currentLocalDate()) {
+    if (root.dataset.date && root.dataset.date !== schoolDate.format()) {
       window.location.reload();
     }
   };
+
+  function filterCards() {
+    const normalize = (value) => value.toLocaleLowerCase('ru').replaceAll('ё', 'е').trim();
+    const words = normalize(search.value).split(/\s+/).filter(Boolean);
+    let count = 0;
+    for (const section of classes) {
+      let matches = 0;
+      for (const card of section.querySelectorAll('.manual-presence-card')) {
+        const name = normalize(card.querySelector('[data-presence-name]').textContent);
+        card.hidden = !words.every((word) => name.includes(word));
+        if (!card.hidden) matches += 1;
+      }
+      section.hidden = matches === 0;
+      count += matches;
+    }
+    searchEmpty.hidden = count > 0;
+  }
 
   function parseJsonScript(id) {
     const source = document.getElementById(id);
@@ -212,7 +310,9 @@
 
   function renderHistory(student) {
     if (!historyTitle || !historyEvents || !student) return;
-    historyTitle.textContent = student.name || 'История отметок';
+    historyTitle.textContent = `${student.name} · История за сегодня`;
+    historyError.hidden = true;
+    if (fullHistory) fullHistory.href = '/attendance/analytics?' + new URLSearchParams({ class: student.classId, student: student.id, tab: 'history' });
     historyEvents.replaceChildren();
     const events = Array.isArray(student.presence_events) ? student.presence_events : [];
     if (!events.length) {
@@ -229,25 +329,21 @@
       const details = document.createElement('div');
       const time = document.createElement('div');
       time.className = 'text-sm font-medium text-gray-900';
-      time.textContent = event.occurred_label || event.occurred_at || '';
+      time.textContent = event.occurred_time || event.occurred_label || event.occurred_at || '';
       const label = document.createElement('div');
       label.className = 'mt-0.5 text-xs text-gray-600';
       label.textContent = historyEventLabel(event);
       details.append(time, label);
       row.append(details);
 
-      if (event.can_edit) {
+      if ((event.can_cancel ?? event.can_edit) && event.source !== 'face') {
         const cancel = document.createElement('button');
         cancel.type = 'button';
         cancel.dataset.presenceHistoryCancel = event.id || '';
+        cancel.dataset.expectedUpdatedAt = event.expected_updated_at || '';
         cancel.className = 'shrink-0 rounded border border-red-200 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-wait disabled:opacity-60';
         cancel.textContent = 'Отменить';
         row.append(cancel);
-      } else {
-        const readonly = document.createElement('span');
-        readonly.className = 'shrink-0 rounded bg-gray-100 px-2 py-1 text-xs font-medium text-gray-600';
-        readonly.textContent = 'Автоматически';
-        row.append(readonly);
       }
       historyEvents.append(row);
     }
@@ -284,7 +380,9 @@
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
-      throw new Error(payload.message || payload.error || 'Не удалось сохранить');
+      const error = new Error(payload.message || payload.error || 'Не удалось сохранить');
+      error.status = response.status;
+      throw error;
     }
     return payload;
   }
@@ -292,52 +390,137 @@
   function applyState(button, state) {
     const status = button.querySelector('[data-presence-status]');
     const detail = button.querySelector('[data-presence-detail]');
+    const next = button.querySelector('[data-presence-next]');
     const statusCode = state?.status_code || (state?.is_present ? 'present' : 'none');
+    const conflictId = state?.conflict_id || '';
+    const name = button.querySelector('[data-presence-name]').textContent;
     button.dataset.lastEventId = state?.last_event_id || '';
     button.dataset.lastEventType = state?.last_event_type || '';
     button.dataset.statusCode = statusCode;
-    button.dataset.conflictId = state?.conflict_id || '';
-    button.setAttribute('aria-label', `${button.querySelector('.font-semibold')?.textContent || ''} · ${state?.status_label || 'Нет отметки'}`);
+    button.dataset.conflictId = conflictId;
+    button.setAttribute('aria-disabled', String(Boolean(conflictId)));
+    next.textContent = state?.next_action_label || 'Отметить приход';
+    next.classList.toggle('hidden', Boolean(conflictId));
+    button.setAttribute('aria-label', [name, state?.status_label || 'Нет отметки', conflictId ? '' : next.textContent].filter(Boolean).join(' · '));
 
-    status.textContent = state?.status_badge_label || state?.status_word || 'Нет отметки';
+    status.textContent = state?.is_late ? state.status_label : state?.status_badge_label || state?.status_word || state?.current_status_label || 'Нет отметки';
     if (detail) detail.textContent = state?.status_detail || state?.status_time || '';
-    button.classList.remove(...cardToneClasses);
-    button.classList.add(...(cardTone[statusCode] || cardTone.none));
+    const card = button.parentElement;
+    card.classList.remove(...cardToneClasses);
+    card.classList.add(...(cardTone[statusCode] || cardTone.none));
+    card.querySelector('[data-conflict-actions]').classList.toggle('hidden', !conflictId);
+    card.querySelectorAll('[data-conflict-resolve]').forEach((control) => { control.dataset.conflictId = conflictId; });
     status.classList.remove(...statusToneClasses);
     status.classList.add(...(statusTone[statusCode] || statusTone.none));
+    presentTotal.textContent = buttons.filter((item) => ['present', 'late'].includes(item.dataset.statusCode)).length;
+  }
+
+  function updatePhoneLabel(button, phoneCheck) {
+    const label = button.querySelector('[data-phone-answer]');
+    if (!label) return;
+    const afterNotice = Boolean(phoneCheck?.submitted_after_notice_at);
+    const submitted = phoneCheck?.submitted;
+    const pickup = phoneCheck?.picked_up;
+    label.textContent = afterNotice ? 'сдал после замечания' : submitted === true ? 'сдал' : submitted === false ? 'не сдал' : 'нет отметки';
+    label.classList.toggle('text-amber-800', afterNotice);
+    label.classList.toggle('text-emerald-800', !afterNotice && submitted === true);
+    label.classList.toggle('text-red-800', !afterNotice && submitted === false);
+    button.querySelector('[data-phone-pickup]').textContent = pickup === true ? ' · забрал' : pickup === false ? ' · не забрал' : '';
+    const notice = button.parentElement.querySelector('[data-phone-after-notice]');
+    if (notice) {
+      notice.hidden = phoneCheck?.submitted !== false || Boolean(phoneCheck?.submitted_after_notice_at);
+      notice.classList.toggle('hidden', notice.hidden);
+    }
+  }
+
+  async function refreshMarkedStudent(button) {
+    const audience = button.dataset.audience || root.dataset.audience || 'children';
+    const response = await fetch(`/api/attendance/presence/board?audience=${encodeURIComponent(audience)}`, {
+      credentials: 'same-origin', headers: { Accept: 'application/json' }, cache: 'no-store',
+    });
+    if (!response.ok) throw new Error('Не удалось обновить карточку. Обновите страницу.');
+    const board = await response.json();
+    const student = (board.classes || []).flatMap((classItem) => classItem.students || [])
+      .find((item) => String(item.id) === button.dataset.studentId);
+    if (!student?.can_manage_presence || board.date !== root.dataset.date) {
+      window.location.reload();
+      return false;
+    }
+    applyState(button, student.state);
+    updatePhoneLabel(button, student.phone_check);
+    const local = findStudent(student.id);
+    if (local) {
+      local.phone_check = student.phone_check;
+      local.presence_events = student.presence_events || [];
+    }
+    return true;
   }
 
   buttons.forEach((button) => {
+    const student = findStudent(button.dataset.studentId);
+    updatePhoneLabel(button, student?.phone_check);
+    let marking = false;
+    const notice = button.parentElement.querySelector('[data-phone-after-notice]');
+    notice?.addEventListener('click', async () => {
+      if (marking || student?.phone_check?.submitted !== false || student.phone_check.submitted_after_notice_at) return;
+      marking = true;
+      notice.disabled = true;
+      try {
+        const result = await window.savePresencePhoneDay(student.id, root.dataset.date, { submitted_after_notice: true }, student.phone_check.revision);
+        student.phone_check = result.day;
+        updatePhoneLabel(button, result.day);
+        if (notice.hidden) button.focus({ preventScroll: true });
+        setFlash(result.conflict ? result.message : `${student.name}: сдал телефон после замечания`, { kind: result.conflict ? 'error' : 'ok' });
+      } catch (err) {
+        setFlash(err.message || 'Не удалось сохранить отметку о телефоне', { kind: 'error' });
+      } finally {
+        marking = false;
+        notice.disabled = false;
+      }
+    });
     button.addEventListener('click', async () => {
-      if (button.disabled) return;
+      if (button.disabled || marking) return;
       if (button.dataset.conflictId) {
         setFlash('Сначала выберите, какую из двух отметок оставить', { kind: 'error' });
         return;
       }
-      button.disabled = true;
+      marking = true;
       try {
+        const audience = button.dataset.audience || root.dataset.audience || 'children';
+        const expectedLastEventId = button.dataset.lastEventId || '';
+        const phone = audience === 'children' ? await window.choosePresencePhoneAnswer({
+          name: button.querySelector('[data-presence-name]').textContent,
+          departure: button.dataset.lastEventType === 'arrival',
+          current: student?.phone_check,
+          studentId: button.dataset.studentId,
+          date: root.dataset.date,
+        }) : {};
+        if (!phone) return;
+        button.disabled = true;
         const payload = await postJson('/api/attendance/presence/toggle', {
           studentId: button.dataset.studentId,
           classId: button.dataset.classId,
-          audience: button.dataset.audience || root.dataset.audience || 'children',
+          audience,
           idempotencyKey: newKey(),
+          ...phone,
+          expectedDate: root.dataset.date,
+          expectedLastEventId,
         });
         if (payload.event?.attendance_date && payload.event.attendance_date !== root.dataset.date) {
           window.location.reload();
           return;
         }
-        applyState(button, payload.state);
-        if (Array.isArray(payload.conflicts) && payload.conflicts.length) {
-          window.location.reload();
-          return;
-        }
         const event = payload.event || {};
-        setFlash(`${event.student_name || ''}: ${event.event_label || eventLabel(event.event_type)} ${event.occurred_label || event.occurred_time || ''}`.trim(), {
-          eventId: event.id || '',
-        });
+        const label = `${event.student_name || ''}: ${event.event_label || eventLabel(event.event_type)} ${event.occurred_label || event.occurred_time || ''}`.trim();
+        const synced = await refreshMarkedStudent(button).catch(() => false);
+        setFlash(synced ? label : `${label}. Обновите страницу, чтобы увидеть текущее состояние.`, { eventId: event.id || '' });
       } catch (err) {
         setFlash(err.message || 'Не удалось сохранить', { kind: 'error' });
+        if (err.status === 409 && await refreshMarkedStudent(button).catch(() => false)) {
+          setFlash('Данные обновлены. Проверьте отметку и нажмите ещё раз.', { kind: 'error' });
+        }
       } finally {
+        marking = false;
         button.disabled = false;
       }
     });
@@ -354,10 +537,43 @@
           audience: root.dataset.audience || 'children',
           resolution,
         });
-        window.location.reload();
+        const card = button.closest('.manual-presence-card').querySelector('[data-presence-button]');
+        const synced = await refreshMarkedStudent(card).catch(() => false);
+        setFlash(synced ? 'Отметки согласованы' : 'Отметки согласованы. Обновите страницу, чтобы увидеть текущее состояние.');
+        if (synced && !card.dataset.conflictId) card.focus({ preventScroll: true });
       } catch (err) {
-        button.disabled = false;
         setFlash(err.message || 'Не удалось разрешить конфликт', { kind: 'error' });
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+
+  root.querySelectorAll('[data-manual-phone]').forEach((trigger) => {
+    trigger.addEventListener('click', async () => {
+      const student = findStudent(trigger.dataset.studentId);
+      if (!student || trigger.disabled) return;
+      const card = trigger.closest('.manual-presence-card').querySelector('[data-presence-button]');
+      const date = root.dataset.date;
+      trigger.disabled = true;
+      try {
+        student.phone_check = await window.getPresencePhoneDay(student.id, date);
+        updatePhoneLabel(card, student.phone_check);
+        trigger.disabled = false;
+        const saved = await window.editPresencePhone({
+          name: student.name, current: student.phone_check, trigger,
+          async save(answers, expectedRevision) {
+            const result = await window.savePresencePhoneDay(student.id, date, answers, expectedRevision);
+            student.phone_check = result.day;
+            updatePhoneLabel(card, result.day);
+            return result;
+          },
+        });
+        if (saved) setFlash(`${student.name}: отметки о телефоне сохранены`);
+      } catch (error) {
+        setFlash(error.message || 'Не удалось открыть отметки о телефоне', { kind: 'error' });
+      } finally {
+        trigger.disabled = false;
       }
     });
   });
@@ -381,15 +597,20 @@
     const eventId = cancel?.dataset.presenceHistoryCancel || '';
     if (!eventId || !window.confirm('Отменить эту ручную отметку?')) return;
     cancel.disabled = true;
+    historyError.hidden = true;
     try {
-      await postJson(`/api/attendance/presence/events/${encodeURIComponent(eventId)}/cancel`, {
+      const payload = await postJson(`/api/attendance/presence/events/${encodeURIComponent(eventId)}/cancel`, {
         audience: root.dataset.audience || 'children',
+        expectedUpdatedAt: cancel.dataset.expectedUpdatedAt || undefined,
       });
       closeHistoryDialog();
-      window.location.reload();
+      const button = buttons.find((item) => String(item.dataset.studentId) === String(payload.event?.student_id));
+      const synced = button && await refreshMarkedStudent(button).catch(() => false);
+      setFlash(synced ? 'Ручная отметка отменена' : 'Ручная отметка отменена. Обновите страницу, чтобы увидеть текущее состояние.');
     } catch (err) {
       cancel.disabled = false;
-      setFlash(err.message || 'Не удалось отменить', { kind: 'error' });
+      historyError.textContent = err.message || 'Не удалось отменить отметку.';
+      historyError.hidden = false;
     }
   });
 
@@ -403,8 +624,9 @@
       });
       const event = payload.event || {};
       const button = buttons.find((item) => String(item.dataset.studentId) === String(event.student_id));
-      if (button) applyState(button, payload.state);
-      setFlash(`Отменено: ${event.student_name || ''}`.trim());
+      const synced = button && await refreshMarkedStudent(button).catch(() => false);
+      const label = `Отменено: ${event.student_name || ''}`.trim();
+      setFlash(synced ? label : `${label}. Обновите страницу, чтобы увидеть текущее состояние.`);
     } catch (err) {
       setFlash(err.message || 'Не удалось отменить', { kind: 'error' });
     } finally {

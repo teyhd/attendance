@@ -1,69 +1,170 @@
-<section class="space-y-4">
-  <div class="bg-white shadow rounded-lg p-4 space-y-4">
-    <div class="flex flex-col xl:flex-row xl:items-end gap-3">
-      <div class="flex-1">
-        <h1 class="text-xl font-semibold text-gray-900">Пропуски</h1>
+<link rel="stylesheet" href="/assets/attendance-workspace.css?v=3">
+{{#*inline "attendance-record"}}
+  <article id="attendance-{{panel}}-record-{{id}}" class="attendance-record" tabindex="-1" data-attendance-record="{{id}}">
+    <div class="attendance-record-content">
+      <div class="attendance-record-heading">
+        <strong class="attendance-break-text">{{reason_name}}</strong>
+        <span class="attendance-record-period attendance-break-text">{{period_label}}</span>
       </div>
-
-      {{#if success}}
-        <div data-flash class="rounded border border-green-200 bg-green-50 text-green-800 px-3 py-2 text-sm">
-          {{#if (eq success "created")}}Отметка сохранена.{{/if}}
-          {{#if (eq success "updated")}}Отметка обновлена.{{/if}}
-          {{#if (eq success "deleted")}}Отметка удалена.{{/if}}
-          {{#if (eq success "resolved")}}Вопрос закрыт.{{/if}}
-        </div>
-      {{/if}}
-      {{#if error}}
-        <div data-flash class="rounded border border-red-200 bg-red-50 text-red-800 px-3 py-2 text-sm">{{error}}</div>
-      {{/if}}
+      <div class="attendance-record-meta">
+        {{#unless (eq confirmation_status "confirmed")}}<span>{{confirmation_label}}</span>{{/unless}}
+        {{#if needs_attention}}
+          <strong class="text-red-700">{{attention_label}}</strong>
+        {{else if is_resolved}}
+          <span class="text-green-700">{{attention_label}}</span>
+        {{/if}}
+      </div>
+      {{#if comment}}<p class="attendance-record-comment attendance-break-text">{{comment}}</p>{{/if}}
     </div>
-
-    {{#if attendanceSummaryFilters.length}}
-      <div class="grid grid-cols-2 lg:grid-cols-3 gap-2">
-        {{#each attendanceSummaryFilters}}
-          <a href="{{href}}" class="block rounded border p-3 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2 {{card_class}}">
-            <div class="text-xs text-gray-500">{{label}}</div>
-            <div class="text-2xl font-semibold {{value_class}}">{{value}}</div>
-            {{#if detail}}
-              <div class="mt-1 text-xs {{detail_class}}">{{detail}}</div>
-            {{/if}}
-          </a>
-        {{/each}}
+    {{#if canManage}}
+      <div class="attendance-record-actions">
+        <details name="attendance-{{panel}}-{{id}}" {{#if editDraft.commentOnly}}open{{/if}}>
+          <summary class="attendance-record-action">Комментарий</summary>
+          <form method="post" action="/attendance/{{id}}/update" class="attendance-record-form space-y-2">
+            <input type="hidden" name="expectedUpdatedAt" value="{{#if editDraft.commentOnly}}{{editDraft.expected}}{{else}}{{expected_updated_at}}{{/if}}" />
+            <input type="hidden" name="editMode" value="comment" />
+            <input type="hidden" name="childId" value="{{student_id}}" />
+            <input type="hidden" name="classId" value="{{class_id}}" />
+            <input type="hidden" name="date" value="{{selectedDate}}" />
+            <input type="hidden" name="filter" value="{{activeFilter}}" />
+            <input type="hidden" name="returnTab" value="{{panel}}" />
+            <label class="block text-sm text-slate-700"><span id="attendance-comment-{{panel}}-{{id}}" class="mb-1 block">Комментарий</span><textarea name="comment" aria-labelledby="attendance-comment-{{panel}}-{{id}}" rows="2" maxlength="1000" required class="w-full">{{#if editDraft.commentOnly}}{{editDraft.comment}}{{else}}{{comment}}{{/if}}</textarea></label>
+            {{#if is_historical}}<label class="block text-sm text-slate-700"><span class="mb-1 block">Причина изменения</span><textarea name="changeReason" rows="2" maxlength="1000" required class="w-full">{{#if editDraft.commentOnly}}{{editDraft.changeReason}}{{/if}}</textarea></label>{{/if}}
+            <button type="submit" class="workspace-primary text-sm">Сохранить комментарий</button>
+          </form>
+        </details>
+        <details name="attendance-{{panel}}-{{id}}" {{#if editDraft.fullEdit}}open{{/if}}>
+          <summary class="attendance-record-action">Изменить</summary>
+          <form method="post" action="/attendance/{{id}}/update" class="attendance-record-form space-y-3">
+            <input type="hidden" name="expectedUpdatedAt" value="{{#if editDraft.fullEdit}}{{editDraft.expected}}{{else}}{{expected_updated_at}}{{/if}}" />
+            <input type="hidden" name="childId" value="{{student_id}}" />
+            <input type="hidden" name="classId" value="{{class_id}}" />
+            <input type="hidden" name="date" value="{{selectedDate}}" />
+            <input type="hidden" name="filter" value="{{activeFilter}}" />
+            <input type="hidden" name="returnTab" value="{{panel}}" />
+            <div class="grid sm:grid-cols-2 gap-2">
+              <label class="text-sm text-gray-700">
+                <span class="block mb-1">Начало</span>
+                <input name="from" type="datetime-local" value="{{#if editDraft.fullEdit}}{{editDraft.from}}{{else}}{{starts_at_input}}{{/if}}" required class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500" />
+              </label>
+              <label class="text-sm text-gray-700">
+                <span class="block mb-1">Окончание</span>
+                <input name="to" type="datetime-local" value="{{#if editDraft.fullEdit}}{{editDraft.to}}{{else}}{{ends_at_input}}{{/if}}" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500" />
+              </label>
+            </div>
+            <div class="grid sm:grid-cols-3 gap-2">
+              <label class="text-sm text-gray-700">
+                <span class="block mb-1">Причина</span>
+                <select name="reason" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
+                  {{#if (eq reason_code "excused")}}
+                    <option value="{{reason_code}}" selected>{{reason_name}}</option>
+                  {{/if}}
+                  {{#each reasons}}
+                    <option value="{{code}}" {{#if (eq ../reason_code code)}}selected{{/if}}>{{name}}</option>
+                  {{/each}}
+                </select>
+              </label>
+              <label class="text-sm text-gray-700">
+                <span class="block mb-1">Подтверждение</span>
+                <select name="confirmationStatus" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
+                  <option value="confirmed" {{#if (eq confirmation_status "confirmed")}}selected{{/if}}>Подтверждено</option>
+                  <option value="reported" {{#if (eq confirmation_status "reported")}}selected{{/if}}>Со слов</option>
+                  <option value="needs_clarification" {{#if (eq confirmation_status "needs_clarification")}}selected{{/if}}>Уточнить</option>
+                  <option value="system_conflict" {{#if (eq confirmation_status "system_conflict")}}selected{{/if}}>Конфликт</option>
+                </select>
+              </label>
+              <label class="text-sm text-gray-700">
+                <span class="block mb-1">Внимание</span>
+                <select name="attentionStatus" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
+                  <option value="normal" {{#if (eq attention_status "normal")}}selected{{/if}}>Обычная</option>
+                  <option value="needs_attention" {{#if (eq attention_status "needs_attention")}}selected{{/if}}>Требует внимания</option>
+                  <option value="resolved" {{#if (eq attention_status "resolved")}}selected{{/if}}>Закрыто</option>
+                </select>
+              </label>
+            </div>
+            <label class="text-sm text-gray-700">
+              <span id="attendance-edit-comment-{{panel}}-{{id}}" class="block mb-1">Комментарий</span>
+              <textarea name="comment" aria-labelledby="attendance-edit-comment-{{panel}}-{{id}}" rows="2" maxlength="1000" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">{{#if editDraft.fullEdit}}{{editDraft.comment}}{{else}}{{comment}}{{/if}}</textarea>
+            </label>
+            <label class="block text-sm text-gray-700"><span class="mb-1 block">Причина исправления</span><textarea name="changeReason" rows="2" maxlength="1000" required class="w-full" placeholder="Почему нужно изменить отметку">{{#if editDraft.fullEdit}}{{editDraft.changeReason}}{{/if}}</textarea></label>
+            <button type="submit" class="workspace-primary text-sm">Сохранить изменения</button>
+          </form>
+        </details>
+        <details name="attendance-{{panel}}-{{id}}">
+          <summary class="attendance-record-action attendance-record-cancel">Отменить</summary>
+          <form method="post" action="/attendance/{{id}}/delete" class="attendance-record-form space-y-2">
+            <input type="hidden" name="childId" value="{{student_id}}" />
+            <input type="hidden" name="classId" value="{{class_id}}" />
+            <input type="hidden" name="date" value="{{selectedDate}}" />
+            <input type="hidden" name="filter" value="{{activeFilter}}" />
+            <input type="hidden" name="returnTab" value="{{panel}}" />
+            <input type="hidden" name="expectedUpdatedAt" value="{{expected_updated_at}}" />
+            <label class="block text-sm"><span class="mb-1 block">Причина отмены</span><textarea name="changeReason" required rows="2" maxlength="1000" class="w-full"></textarea></label>
+            <button type="submit" class="workspace-danger">Подтвердить отмену</button>
+          </form>
+        </details>
+        {{#if needs_attention}}
+          <form method="post" action="/attendance/{{id}}/resolve">
+            <input type="hidden" name="childId" value="{{student_id}}" />
+            <input type="hidden" name="classId" value="{{class_id}}" />
+            <input type="hidden" name="date" value="{{selectedDate}}" />
+            <input type="hidden" name="filter" value="{{activeFilter}}" />
+            <input type="hidden" name="returnTab" value="{{panel}}" />
+            <button type="submit" class="attendance-record-action attendance-record-resolve">Закрыть вопрос</button>
+          </form>
+        {{/if}}
       </div>
     {{/if}}
+  </article>
+{{/inline}}
+<section class="attendance-workspace">
+  <div class="attendance-toolbar">
+    <h1 class="workspace-title">Пропуски</h1>
+    {{#if attendanceSummaryFilters.length}}
+      <nav class="attendance-filters" aria-label="Сводка пропусков">
+        {{#each attendanceSummaryFilters}}
+          <a href="{{href}}" {{#if active}}aria-current="true"{{/if}} class="attendance-filter">
+            <span>{{#if (eq id 'all')}}Ученики{{else}}{{label}}{{/if}}</span>
+            <strong class="{{value_class}}">{{value}}</strong>
+            {{#if (eq detail_class 'text-red-700')}}<small class="{{detail_class}}">{{detail}}</small>{{/if}}
+          </a>
+        {{/each}}
+      </nav>
+    {{/if}}
+  </div>
 
-    {{#if attendanceFilterTable.visible}}
-      <div id="attendance-filter-table" class="rounded border border-gray-200 bg-white p-3">
-        <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-          <h2 class="text-sm font-semibold text-gray-900">{{attendanceFilterTable.title}}</h2>
-          <span class="text-xs text-gray-500">{{attendanceFilterTable.count}}</span>
-        </div>
+  {{#if attendanceFilterTable.visible}}
+    <details id="attendance-filter-table" class="attendance-results workspace-surface" open>
+      <summary id="attendance-filter-title">{{attendanceFilterTable.title}} <span>Отметки · {{attendanceFilterTable.count}}</span></summary>
         {{#if attendanceFilterTable.rows.length}}
-          <div class="mt-3 overflow-x-auto">
-            <table class="min-w-full text-sm">
-              <thead class="text-xs text-gray-500">
-                <tr class="border-b">
-                  <th class="py-2 pr-3 text-left font-medium">Ученик</th>
-                  <th class="py-2 pr-3 text-left font-medium">Период</th>
-                  <th class="py-2 pr-3 text-left font-medium">Причина</th>
-                  <th class="py-2 pr-3 text-left font-medium">Статус</th>
-                  <th class="py-2 text-left font-medium">Комментарий</th>
+          <div class="attendance-results-table" tabindex="0" role="region" aria-label="Список отметок">
+            <table data-attendance-filter-rows role="table" aria-labelledby="attendance-filter-title" class="text-sm">
+              <thead role="rowgroup" class="text-xs text-gray-500">
+                <tr role="row" class="border-b">
+                  <th role="columnheader" scope="col" class="attendance-break-text py-1.5 pr-3 text-left font-medium">Ученик</th>
+                  <th role="columnheader" scope="col" class="attendance-break-text py-1.5 pr-3 text-left font-medium">Период</th>
+                  <th role="columnheader" scope="col" class="attendance-break-text py-1.5 pr-3 text-left font-medium">Причина</th>
+                  <th role="columnheader" scope="col" class="attendance-break-text py-1.5 pr-3 text-left font-medium">Статус</th>
+                  <th role="columnheader" scope="col" class="attendance-break-text py-1.5 text-left font-medium">Комментарий</th>
                 </tr>
               </thead>
-              <tbody class="divide-y divide-gray-100">
+              <tbody role="rowgroup" class="divide-y divide-gray-100">
                 {{#each attendanceFilterTable.rows}}
-                  <tr class="hover:bg-indigo-50">
-                    <td class="py-2 pr-3 align-top font-medium text-gray-900">
-                      <a href="{{href}}" class="hover:text-indigo-700">{{student_name}}</a>
+                  <tr role="row" class="hover:bg-indigo-50">
+                    <td role="cell" class="attendance-break-text py-2 pr-3 align-top font-medium text-gray-900">
+                      <a href="{{href}}#attendance-history-record-{{id}}" class="hover:text-indigo-700">{{student_name}}</a>
                     </td>
-                    <td class="py-2 pr-3 align-top text-gray-700">{{period_label}}</td>
-                    <td class="py-2 pr-3 align-top">
+                    <td role="cell" class="attendance-break-text py-2 pr-3 align-top text-gray-700">{{period_label}}</td>
+                    <td role="cell" class="attendance-break-text py-2 pr-3 align-top">
+                      <span class="attendance-filter-label" aria-hidden="true">Причина</span>
                       <span class="rounded-full px-2 py-0.5 text-xs {{reason_class}}">{{reason_name}}</span>
                     </td>
-                    <td class="py-2 pr-3 align-top">
+                    <td role="cell" class="attendance-break-text py-2 pr-3 align-top">
+                      <span class="attendance-filter-label" aria-hidden="true">Статус</span>
                       <span class="rounded-full px-2 py-0.5 text-xs {{attention_class}}">{{attention_label}}</span>
                     </td>
-                    <td class="py-2 align-top text-gray-600">
+                    <td role="cell" class="attendance-break-text py-2 align-top text-gray-600 {{#unless comment}}attendance-no-comment{{/unless}}">
+                      <span class="attendance-filter-label" aria-hidden="true">Комментарий</span>
                       {{#if comment}}{{comment}}{{else}}<span class="text-gray-400">—</span>{{/if}}
                     </td>
                   </tr>
@@ -72,336 +173,216 @@
             </table>
           </div>
         {{else}}
-          <div class="mt-3 rounded border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-500">{{attendanceFilterTable.empty_label}}</div>
+          <div class="border-t border-slate-200 px-3 py-2 text-sm text-gray-500">{{attendanceFilterTable.empty_label}}</div>
         {{/if}}
-      </div>
-    {{/if}}
+    </details>
+  {{/if}}
 
-    {{#if attendanceActions.length}}
-      <div class="flex flex-wrap gap-2">
-        {{#each attendanceActions}}
-          <button type="button" data-attendance-action="{{target}}" class="rounded border border-indigo-200 bg-white px-3 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-50">{{label}}</button>
-        {{/each}}
-      </div>
-    {{/if}}
-  </div>
-
-  <div class="grid lg:grid-cols-[320px_1fr] gap-4">
-    <aside class="bg-white shadow rounded-lg p-4">
-      <div class="flex items-center justify-between mb-3">
-        <h2 class="text-base font-semibold">Ученики</h2>
-        <span class="text-sm text-gray-500">{{children.length}}</span>
-      </div>
-      <form id="attendance-class-form" method="get" action="/attendance" class="mb-3">
-        <input type="hidden" name="date" value="{{selectedDate}}" />
-        <label class="block text-sm text-gray-700">
-          <span class="mb-1 block text-xs font-semibold uppercase text-gray-500">Класс</span>
-          <select id="class-select" data-testid="class-select" name="class" class="h-11 w-full rounded border border-gray-300 bg-white px-3 text-base font-medium text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500">
+  <div class="attendance-columns">
+    <aside data-attendance-roster class="attendance-roster workspace-surface">
+      <form id="attendance-class-form" method="get" action="/attendance" class="min-w-0">
+        <input type="hidden" name="student" value="{{selectedStudentId}}" />
+        <input type="hidden" name="filter" value="{{activeFilter}}" />
+        <input type="hidden" name="tab" value="{{selectedTab}}" />
+        <div class="flex min-w-0 items-center gap-2 text-sm font-medium">
+          <label for="class-select">Класс</label>
+          <select id="class-select" data-testid="class-select" name="class">
             {{#each classes}}
               <option value="{{id}}" {{#if (eq ../selectedClass id)}}selected{{/if}}>{{name}}</option>
             {{/each}}
           </select>
-        </label>
+        </div>
+        <div class="attendance-roster-date">
+          <label for="attendance-date">Дата</label>
+          <input id="attendance-date" type="date" name="date" value="{{selectedDate}}" required>
+          <noscript><button type="submit">Показать</button></noscript>
+        </div>
       </form>
       {{#if children.length}}
-        <div class="space-y-1.5">
+        <label class="workspace-mobile-picker min-w-0">
+          <span class="sr-only">Ученик</span>
+          <select data-mobile-student-select>
+            {{#each children}}<option value="{{href}}" {{#if isActive}}selected{{/if}}>{{name}}</option>{{/each}}
+          </select>
+        </label>
+        <label class="attendance-roster-search">
+          <span class="sr-only">Найти ученика</span>
+          <input type="search" data-attendance-student-search placeholder="Найти ученика" autocomplete="off">
+        </label>
+        <div class="attendance-roster-title">
+          <h2>Ученики</h2>
+          <span data-attendance-student-count aria-live="polite">{{children.length}}</span>
+        </div>
+        <div class="attendance-roster-list workspace-desktop-students">
           {{#each children}}
-            <a href="{{{href}}}" class="block border rounded px-3 py-2 hover:border-indigo-400 hover:bg-indigo-50 transition {{#if isActive}}border-indigo-500 bg-indigo-50{{/if}}">
-              <div class="flex items-start justify-between gap-2">
-                <div class="min-w-0">
-                  <div class="font-medium text-gray-900 truncate">{{name}}</div>
-                  <div class="mt-1 flex flex-wrap gap-1">
-                    {{#if hasCurrentAbsence}}
-                      <span class="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">сейчас</span>
-                    {{/if}}
-                    {{#if hasFutureAbsence}}
-                      <span class="text-xs px-2 py-0.5 rounded-full bg-sky-100 text-sky-800">будущая</span>
-                    {{/if}}
-                    {{#if needsAttention}}
-                      <span class="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-800">внимание</span>
-                    {{/if}}
-                    {{#if hasMissingReason}}
-                      <span class="text-xs px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-800">без причины</span>
-                    {{/if}}
-                    {{#if isFrequent}}
-                      <span class="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">часто</span>
-                    {{/if}}
-                  </div>
-                </div>
-                {{#if dayAbsence}}
-                  <span class="shrink-0 text-xs px-2 py-1 rounded-full bg-gray-100 text-gray-700">{{dayAbsence.reason_name}}</span>
-                {{/if}}
-              </div>
+            <a href="{{href}}#attendance-student" data-attendance-student-row data-student-name="{{name}}" {{#if isActive}}aria-current="true"{{/if}} class="attendance-student-row">
+              <span class="font-medium">{{name}}</span>
+              <span class="attendance-roster-status">
+                {{#if hasCurrentAbsence}}<span class="font-medium text-amber-800">Отсутствует</span>{{/if}}
+                {{#if hasFutureAbsence}}<span class="font-medium text-sky-800">Запланировано</span>{{/if}}
+                {{#if hasMissingReason}}<span class="font-medium text-amber-800">Без причины</span>{{else if dayAbsence}}<span>{{dayAbsence.reason_name}}</span>{{/if}}
+                {{#if needsAttention}}<span class="font-medium text-red-700">Требует внимания</span>{{/if}}
+                {{#if isFrequent}}<span>Частые пропуски</span>{{/if}}
+              </span>
             </a>
           {{/each}}
         </div>
-      {{else}}
-        <div class="text-sm text-gray-500">Нет учеников по текущему фильтру.</div>
+        <p data-attendance-student-empty class="attendance-roster-empty text-sm text-slate-600" role="status" hidden>Ученики не найдены</p>
       {{/if}}
     </aside>
 
-    <div class="bg-white shadow rounded-lg p-4 space-y-4">
-      {{#if selectedChild}}
-        <div class="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-3">
-          <div class="min-w-0">
-            <p class="text-sm text-gray-500">Класс {{#with (findById classes selectedChild.classId)}}{{name}}{{/with}}</p>
-            <h2 class="text-xl font-semibold text-gray-900 truncate">{{selectedChild.name}}</h2>
-            {{#if studentContext.last_comment}}
-              <p class="mt-1 text-sm text-gray-600">{{studentContext.last_comment}}</p>
-            {{/if}}
-            <a href="/attendance/analytics?class={{selectedClass}}" class="mt-2 inline-flex text-sm font-medium text-indigo-700 hover:text-indigo-900">Аналитика класса</a>
-          </div>
-          {{#if studentContext}}
-            <div class="shrink-0 rounded border border-gray-200 px-3 py-2 text-center">
-              <div class="text-sm font-semibold leading-tight text-gray-900">{{studentContext.present_days_label}}</div>
-            </div>
-          {{/if}}
+    <div id="attendance-student" tabindex="-1" class="attendance-student workspace-surface">
+      {{#if error}}
+        <div id="attendance-feedback" tabindex="-1" role="alert" class="attendance-break-text rounded border border-red-200 bg-red-50 text-red-800 mb-2 px-3 py-2 text-sm">{{error}}</div>
+      {{else if success}}
+        <div id="attendance-feedback" tabindex="-1" role="status" class="rounded border border-green-200 bg-green-50 text-green-800 mb-2 px-3 py-2 text-sm">
+          {{#if (eq success "created")}}Отметка сохранена.{{/if}}
+          {{#if batchCreatedCount}}Отметки созданы: {{batchCreatedCount}}.{{/if}}
+          {{#if (eq success "updated")}}Отметка обновлена.{{/if}}
+          {{#if (eq success "deleted")}}Отметка отменена.{{/if}}
+          {{#if (eq success "resolved")}}Вопрос закрыт.{{/if}}
         </div>
+      {{/if}}
+      {{#if selectedChild}}
+        <div class="attendance-student-heading">
+          <div class="min-w-0">
+            <h2 class="attendance-break-text">{{selectedChild.name}}</h2>
+            <div class="attendance-student-meta">
+              <span>Класс {{#with (findById classes selectedChild.classId)}}{{name}}{{/with}}</span>
+              {{#if studentContext}}<span>Присутствие · <strong>{{studentContext.present_days}}</strong> из {{studentContext.present_days_window}} дней</span>{{/if}}
+            </div>
+          </div>
+          <div class="attendance-student-links">
+            <a href="{{studentAnalyticsHref}}">Аналитика ученика</a>
+            <a href="{{studentAnalyticsHref}}&export=1">Скачать отчёт</a>
+          </div>
+        </div>
+        {{#if studentContext.last_comment}}
+          <p class="attendance-last-comment attendance-break-text mt-1 line-clamp-2 text-sm text-slate-600">{{studentContext.last_comment}}</p>
+        {{/if}}
 
-        <div data-attendance-tabs data-default-tab="{{#if canManage}}mark{{else}}active{{/if}}" class="space-y-4">
-          <div class="flex flex-wrap gap-2 border-b border-gray-200">
+        <div data-attendance-tabs data-default-tab="{{#if canManage}}mark{{else}}active{{/if}}" data-selected-tab="{{selectedTab}}" data-selected-record="{{selectedRecordId}}" {{#if draft}}data-attendance-draft{{/if}}>
+          <div class="workspace-tabs" role="tablist" aria-label="Отметки ученика">
             {{#if canManage}}
-              <button type="button" data-attendance-tab="mark" class="rounded-t border border-b-0 px-3 py-2 text-sm font-medium">Отметка</button>
+              <button type="button" id="attendance-tab-mark" role="tab" aria-controls="attendance-panel-mark" data-attendance-tab="mark">Новая отметка</button>
             {{/if}}
-            <button type="button" data-attendance-tab="active" class="rounded-t border border-b-0 px-3 py-2 text-sm font-medium">
+            <button type="button" id="attendance-tab-active" role="tab" aria-controls="attendance-panel-active" data-attendance-tab="active">
               Активные <span class="ml-1 text-xs text-gray-500">{{currentAbsences.length}}</span>
             </button>
-            <button type="button" data-attendance-tab="history" class="rounded-t border border-b-0 px-3 py-2 text-sm font-medium">
+            <button type="button" id="attendance-tab-history" role="tab" aria-controls="attendance-panel-history" data-attendance-tab="history">
               История <span class="ml-1 text-xs text-gray-500">{{childAbsences.length}}</span>
             </button>
           </div>
 
           {{#if canManage}}
-            <section data-attendance-panel="mark" class="overflow-hidden rounded-lg border border-indigo-100 bg-white">
-              <div class="flex flex-col gap-3 border-b border-indigo-100 bg-indigo-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-                <div class="min-w-0">
-                  <h3 class="font-semibold text-gray-900">Новая отметка</h3>
-                  <div class="mt-0.5 truncate text-sm text-gray-600">{{selectedChild.name}}</div>
-                </div>
-                <div class="grid grid-cols-2 gap-1 rounded-lg border border-gray-200 bg-white p-1 shadow-sm">
-                  <button type="button" data-fill="day-end" title="До {{schoolDay.end_label}}" class="rounded-md px-3 py-2 text-sm font-medium text-gray-700 hover:bg-indigo-50 hover:text-indigo-700">До конца дня</button>
-                  <button type="button" data-fill="lesson" class="rounded-md px-3 py-2 text-sm font-medium text-gray-700 hover:bg-indigo-50 hover:text-indigo-700">Один урок</button>
-                </div>
-              </div>
-
-              <form id="new-absence-form" method="post" action="/attendance" class="space-y-4 p-4" data-school-day-start="{{schoolDay.start_input}}" data-school-day-end="{{schoolDay.end_input}}">
+            <section id="attendance-panel-mark" role="tabpanel" aria-labelledby="attendance-tab-mark" data-attendance-panel="mark">
+              <form id="new-absence-form" method="post" action="/attendance" class="attendance-mark-form" data-school-day-start="{{schoolDay.start_input}}" data-school-day-end="{{schoolDay.end_input}}">
                 <input type="hidden" name="childId" value="{{selectedChild.id}}" />
                 <input type="hidden" name="classId" value="{{selectedChild.classId}}" />
                 <input type="hidden" name="date" value="{{selectedDate}}" />
+                <input type="hidden" name="filter" value="{{activeFilter}}" />
                 <input type="hidden" name="source" value="mentor" />
 
-                <div class="grid gap-3 md:grid-cols-2">
+                <div class="attendance-period">
                   <label class="block">
-                    <span class="mb-1 block text-xs font-semibold uppercase text-gray-500">Начало</span>
-                    <input id="absence-from" name="from" type="datetime-local" value="{{defaultFrom}}" required class="h-11 w-full rounded border border-gray-300 bg-white px-3 text-base text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500" />
+                    <span class="attendance-field-label">Начало</span>
+                    <input id="absence-from" name="from" type="datetime-local" value="{{#if draft}}{{draft.from}}{{else}}{{defaultFrom}}{{/if}}" required />
                   </label>
                   <label class="block">
-                    <span class="mb-1 block text-xs font-semibold uppercase text-gray-500">Окончание</span>
-                    <input id="absence-to" name="to" type="datetime-local" class="h-11 w-full rounded border border-gray-300 bg-white px-3 text-base text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500" />
+                    <span class="attendance-field-label">Окончание <span class="attendance-field-hint">(можно оставить открытым)</span></span>
+                    <input id="absence-to" name="to" type="datetime-local" value="{{draft.to}}" aria-describedby="absence-period-error" />
                   </label>
+                  <div class="attendance-presets" role="group" aria-label="Быстрый выбор окончания">
+                    <button type="button" data-fill="day-end" aria-pressed="false" title="До {{schoolDay.end_label}}">До конца дня</button>
+                    <button type="button" data-fill="lesson" aria-pressed="false">На 45 минут</button>
+                  </div>
                 </div>
+                <p id="absence-period-error" role="status" class="text-sm text-red-800" hidden></p>
 
-                <div class="grid gap-3 md:grid-cols-[240px_1fr]">
+                <div class="attendance-mark-details">
                   <label class="block">
-                    <span class="mb-1 block text-xs font-semibold uppercase text-gray-500">Причина</span>
-                    <select id="reason" name="reason" class="h-11 w-full rounded border border-gray-300 bg-white px-3 text-base font-medium text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500">
+                    <span class="attendance-field-label">Причина</span>
+                    <select id="reason" name="reason">
                       {{#each reasons}}
-                        <option value="{{code}}">{{name}}</option>
+                        <option value="{{code}}" {{#if (eq ../draft.reason code)}}selected{{/if}}>{{name}}</option>
                       {{/each}}
                     </select>
                   </label>
                   <label class="block">
-                    <span class="mb-1 block text-xs font-semibold uppercase text-gray-500">Комментарий</span>
-                    <textarea id="comment" name="comment" rows="2" maxlength="1000" class="min-h-[4.5rem] w-full rounded border border-gray-300 bg-white px-3 py-2 text-base text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500"></textarea>
+                    <span class="attendance-field-label">Комментарий</span>
+                    <textarea id="comment" name="comment" aria-describedby="absence-reason-note" rows="2" maxlength="1000">{{draft.comment}}</textarea>
                   </label>
                 </div>
 
-                <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div data-reason-note class="hidden rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"></div>
-                  <button type="submit" class="h-11 w-full rounded bg-indigo-600 px-6 text-base font-semibold text-white shadow-sm hover:bg-indigo-700 focus:ring-2 focus:ring-indigo-500 sm:w-auto">Сохранить</button>
+                <div id="absence-reason-note" data-reason-note role="status" class="hidden rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"></div>
+
+                <div class="attendance-form-actions">
+                  <label class="attendance-repeat">
+                    <input id="repeat-weekly" type="checkbox" name="repeatWeekly" value="1" aria-controls="repeat-options" {{#if draft.repeatWeekly}}checked{{/if}} />
+                    Повторять по дням недели
+                  </label>
+                  <div id="repeat-options" class="attendance-repeat-options space-y-2 {{#unless draft.repeatWeekly}}hidden{{/unless}}" data-selected-days="{{#each draft.repeatWeekdays}}{{this}} {{/each}}">
+                    <fieldset>
+                      <legend class="mb-2 text-sm font-medium text-slate-700">В какие дни</legend>
+                      <div class="grid grid-cols-4 gap-2 sm:grid-cols-7">
+                        <label class="repeat-day"><input type="checkbox" name="repeatWeekdays" value="1" />Пн</label>
+                        <label class="repeat-day"><input type="checkbox" name="repeatWeekdays" value="2" />Вт</label>
+                        <label class="repeat-day"><input type="checkbox" name="repeatWeekdays" value="3" />Ср</label>
+                        <label class="repeat-day"><input type="checkbox" name="repeatWeekdays" value="4" />Чт</label>
+                        <label class="repeat-day"><input type="checkbox" name="repeatWeekdays" value="5" />Пт</label>
+                        <label class="repeat-day"><input type="checkbox" name="repeatWeekdays" value="6" />Сб</label>
+                        <label class="repeat-day"><input type="checkbox" name="repeatWeekdays" value="7" />Вс</label>
+                      </div>
+                    </fieldset>
+                    <label class="block max-w-xs text-sm font-medium text-slate-700">
+                      <span class="mb-1 block">Повторять по</span>
+                      <input id="repeat-until" name="repeatUntil" type="date" value="{{draft.repeatUntil}}" class="h-11 w-full rounded border border-slate-300 bg-white px-3 text-base" />
+                    </label>
+                    <p id="repeat-preview" role="status" aria-live="polite" class="text-sm text-indigo-700"></p>
+                  </div>
+                  <button id="absence-submit" type="submit" class="workspace-primary">Сохранить отметку</button>
                 </div>
               </form>
             </section>
           {{/if}}
 
-          <section data-attendance-panel="active" class="space-y-3 {{#if canManage}}hidden{{/if}}">
-            <div class="rounded border p-3">
-              <div class="flex items-center justify-between mb-2">
-                <h3 class="font-semibold text-gray-900">Активные</h3>
-                <span class="text-sm text-gray-500">{{currentAbsences.length}}</span>
-              </div>
-
-              {{#if currentAbsences.length}}
-                {{#if activeNowAbsences.length}}
-                  <div>
-                    <div class="mb-1 text-xs font-semibold uppercase text-gray-500">Активно</div>
-                    <div class="divide-y divide-gray-100">
-                      {{#each activeNowAbsences}}
-                        <div class="py-2 flex flex-col xl:flex-row xl:items-start xl:justify-between gap-2">
-                          <div>
-                            <div class="text-sm font-medium text-gray-900">{{period_label}}</div>
-                            <div class="mt-1 flex flex-wrap gap-1 text-xs">
-                              <span class="px-2 py-0.5 rounded-full bg-gray-100 text-gray-700">{{reason_name}}</span>
-                              <span class="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">{{confirmation_label}}</span>
-                              <span class="px-2 py-0.5 rounded-full {{#if needs_attention}}bg-red-100 text-red-800{{else}}bg-green-50 text-green-700{{/if}}">{{attention_label}}</span>
-                            </div>
-                            {{#if comment}}
-                              <div class="text-xs text-gray-500 mt-1">{{comment}}</div>
-                            {{/if}}
-                          </div>
-                          {{#if (and ../canManage needs_attention)}}
-                            <form method="post" action="/attendance/{{id}}/resolve">
-                              <input type="hidden" name="childId" value="{{student_id}}" />
-                              <input type="hidden" name="classId" value="{{class_id}}" />
-                              <input type="hidden" name="date" value="{{../selectedDate}}" />
-                              <button type="submit" class="px-3 py-1.5 text-sm bg-green-600 text-white rounded hover:bg-green-700">Закрыть вопрос</button>
-                            </form>
-                          {{/if}}
-                        </div>
-                      {{/each}}
-                    </div>
-                  </div>
-                {{/if}}
-
-                {{#if futureAbsences.length}}
-                  <div class="{{#if activeNowAbsences.length}}mt-3 border-t border-gray-100 pt-3{{/if}}">
-                    <div class="mb-1 text-xs font-semibold uppercase text-gray-500">Запланировано</div>
-                    <div class="divide-y divide-gray-100">
-                      {{#each futureAbsences}}
-                        <div class="py-2 flex flex-col xl:flex-row xl:items-start xl:justify-between gap-2">
-                          <div>
-                            <div class="text-sm font-medium text-gray-900">{{period_label}}</div>
-                            <div class="mt-1 flex flex-wrap gap-1 text-xs">
-                              <span class="px-2 py-0.5 rounded-full bg-gray-100 text-gray-700">{{reason_name}}</span>
-                              <span class="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">{{confirmation_label}}</span>
-                              <span class="px-2 py-0.5 rounded-full {{#if needs_attention}}bg-red-100 text-red-800{{else}}bg-green-50 text-green-700{{/if}}">{{attention_label}}</span>
-                            </div>
-                            {{#if comment}}
-                              <div class="text-xs text-gray-500 mt-1">{{comment}}</div>
-                            {{/if}}
-                          </div>
-                          {{#if (and ../canManage needs_attention)}}
-                            <form method="post" action="/attendance/{{id}}/resolve">
-                              <input type="hidden" name="childId" value="{{student_id}}" />
-                              <input type="hidden" name="classId" value="{{class_id}}" />
-                              <input type="hidden" name="date" value="{{../selectedDate}}" />
-                              <button type="submit" class="px-3 py-1.5 text-sm bg-green-600 text-white rounded hover:bg-green-700">Закрыть вопрос</button>
-                            </form>
-                          {{/if}}
-                        </div>
-                      {{/each}}
-                    </div>
-                  </div>
-                {{/if}}
-              {{else}}
-                <p class="text-sm text-gray-500">Активных и будущих отметок нет.</p>
-              {{/if}}
-            </div>
-          </section>
-
-          <section data-attendance-panel="history" class="hidden">
-            <div class="rounded border p-3">
-              <div class="flex items-center justify-between mb-2">
-                <h3 class="font-semibold text-gray-900">История</h3>
-                <span class="text-sm text-gray-500">{{childAbsences.length}}</span>
-              </div>
-              {{#if childAbsences.length}}
-                <div class="divide-y divide-gray-100">
-                  {{#each childAbsences}}
-                    <div class="py-3">
-                      <div class="grid xl:grid-cols-[1fr_220px] gap-3">
-                        <div class="min-w-0">
-                          <div class="text-sm font-medium text-gray-900">{{period_label}}</div>
-                          <div class="mt-1 flex flex-wrap gap-1 text-xs">
-                            <span class="px-2 py-0.5 rounded-full bg-gray-100 text-gray-700">{{reason_name}}</span>
-                            <span class="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">{{confirmation_label}}</span>
-                            <span class="px-2 py-0.5 rounded-full {{#if needs_attention}}bg-red-100 text-red-800{{else}}bg-green-50 text-green-700{{/if}}">{{attention_label}}</span>
-                          </div>
-                          {{#if comment}}
-                            <div class="text-sm text-gray-600 mt-1">{{comment}}</div>
-                          {{/if}}
-                        </div>
-                        {{#if ../canManage}}
-                          <div class="flex flex-wrap xl:justify-end gap-2">
-                            <details class="relative">
-                              <summary class="cursor-pointer select-none px-3 py-1.5 text-sm bg-gray-100 rounded hover:bg-gray-200">Изменить</summary>
-                              <div class="mt-2 xl:absolute xl:right-0 xl:z-10 w-full xl:w-[560px] bg-white border rounded shadow p-3">
-                                <form method="post" action="/attendance/{{id}}/update" class="space-y-3">
-                                  <input type="hidden" name="childId" value="{{student_id}}" />
-                                  <input type="hidden" name="classId" value="{{class_id}}" />
-                                  <input type="hidden" name="date" value="{{../selectedDate}}" />
-                                  <div class="grid sm:grid-cols-2 gap-2">
-                                    <label class="text-sm text-gray-700">
-                                      <span class="block mb-1">Начало</span>
-                                      <input name="from" type="datetime-local" value="{{starts_at_input}}" required class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500" />
-                                    </label>
-                                    <label class="text-sm text-gray-700">
-                                      <span class="block mb-1">Окончание</span>
-                                      <input name="to" type="datetime-local" value="{{ends_at_input}}" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500" />
-                                    </label>
-                                  </div>
-                                  <div class="grid sm:grid-cols-3 gap-2">
-                                    <label class="text-sm text-gray-700">
-                                      <span class="block mb-1">Причина</span>
-                                      <select name="reason" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
-                                        {{#if (eq reason_code "excused")}}
-                                          <option value="{{reason_code}}" selected>{{reason_name}}</option>
-                                        {{/if}}
-                                        {{#each ../reasons}}
-                                          <option value="{{code}}" {{#if (eq ../reason_code code)}}selected{{/if}}>{{name}}</option>
-                                        {{/each}}
-                                      </select>
-                                    </label>
-                                    <label class="text-sm text-gray-700">
-                                      <span class="block mb-1">Подтверждение</span>
-                                      <select name="confirmationStatus" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
-                                        <option value="confirmed" {{#if (eq confirmation_status "confirmed")}}selected{{/if}}>Подтверждено</option>
-                                        <option value="reported" {{#if (eq confirmation_status "reported")}}selected{{/if}}>Со слов</option>
-                                        <option value="needs_clarification" {{#if (eq confirmation_status "needs_clarification")}}selected{{/if}}>Уточнить</option>
-                                        <option value="system_conflict" {{#if (eq confirmation_status "system_conflict")}}selected{{/if}}>Конфликт</option>
-                                      </select>
-                                    </label>
-                                    <label class="text-sm text-gray-700">
-                                      <span class="block mb-1">Внимание</span>
-                                      <select name="attentionStatus" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
-                                        <option value="normal" {{#if (eq attention_status "normal")}}selected{{/if}}>Обычная</option>
-                                        <option value="needs_attention" {{#if (eq attention_status "needs_attention")}}selected{{/if}}>Требует внимания</option>
-                                        <option value="resolved" {{#if (eq attention_status "resolved")}}selected{{/if}}>Закрыто</option>
-                                      </select>
-                                    </label>
-                                  </div>
-                                  <label class="text-sm text-gray-700">
-                                    <span class="block mb-1">Комментарий</span>
-                                    <textarea name="comment" rows="2" maxlength="1000" class="w-full rounded border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">{{comment}}</textarea>
-                                  </label>
-                                  <button type="submit" class="px-3 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700">Обновить</button>
-                                </form>
-                              </div>
-                            </details>
-                            {{#if needs_attention}}
-                              <form method="post" action="/attendance/{{id}}/resolve">
-                                <input type="hidden" name="childId" value="{{student_id}}" />
-                                <input type="hidden" name="classId" value="{{class_id}}" />
-                                <input type="hidden" name="date" value="{{../selectedDate}}" />
-                                <button type="submit" class="px-3 py-1.5 text-sm bg-green-50 text-green-700 rounded hover:bg-green-100">Закрыть</button>
-                              </form>
-                            {{/if}}
-                            <form method="post" action="/attendance/{{id}}/delete" onsubmit="return confirm('Удалить отметку об отсутствии?');">
-                              <input type="hidden" name="childId" value="{{student_id}}" />
-                              <input type="hidden" name="classId" value="{{class_id}}" />
-                              <input type="hidden" name="date" value="{{../selectedDate}}" />
-                              <button type="submit" class="px-3 py-1.5 text-sm bg-red-50 text-red-700 rounded hover:bg-red-100">Удалить</button>
-                            </form>
-                          </div>
-                        {{/if}}
-                      </div>
-                    </div>
+          <section id="attendance-panel-active" role="tabpanel" aria-labelledby="attendance-tab-active" tabindex="0" data-attendance-panel="active" class="{{#if canManage}}hidden{{/if}}">
+            {{#if currentAbsences.length}}
+              {{#if activeNowAbsences.length}}
+                <h3 class="attendance-record-group">Сейчас</h3>
+                <div class="attendance-record-list">
+                  {{#each activeNowAbsences}}
+                    {{> attendance-record this canManage=../canManage selectedDate=../selectedDate activeFilter=../activeFilter reasons=../reasons panel="active"}}
                   {{/each}}
                 </div>
-              {{else}}
-                <p class="text-sm text-gray-500">Отметок пока нет.</p>
               {{/if}}
+              {{#if futureAbsences.length}}
+                <h3 class="attendance-record-group">Запланировано</h3>
+                <div class="attendance-record-list">
+                  {{#each futureAbsences}}
+                    {{> attendance-record this canManage=../canManage selectedDate=../selectedDate activeFilter=../activeFilter reasons=../reasons panel="active"}}
+                  {{/each}}
+                </div>
+              {{/if}}
+            {{else}}
+              <p class="text-sm text-gray-500">Активных и будущих отметок нет.</p>
+            {{/if}}
+          </section>
+
+          <section id="attendance-panel-history" role="tabpanel" aria-labelledby="attendance-tab-history" tabindex="0" data-attendance-panel="history" class="hidden">
+            <div class="attendance-history-heading">
+              <h3>Последние периоды отсутствия</h3>
+              <a href="{{studentAnalyticsHref}}&tab=history" class="workspace-link text-sm">Все события</a>
             </div>
+            {{#if childAbsences.length}}
+              <div class="attendance-record-list">
+                {{#each childAbsences}}
+                  {{> attendance-record this canManage=../canManage selectedDate=../selectedDate activeFilter=../activeFilter reasons=../reasons panel="history"}}
+                {{/each}}
+              </div>
+            {{else}}
+              <p class="text-sm text-gray-500">Отметок пока нет.</p>
+            {{/if}}
           </section>
         </div>
       {{else}}
@@ -414,17 +395,66 @@
 <script>
 (() => {
   const classSelect = document.getElementById('class-select');
-  classSelect?.addEventListener('change', () => classSelect.closest('form')?.requestSubmit());
-
-  document.querySelectorAll('[data-flash]').forEach((node) => {
-    window.setTimeout(() => {
-      node.classList.add('opacity-0');
-      window.setTimeout(() => node.remove(), 250);
-    }, 3500);
+  const roster = document.querySelector('[data-attendance-roster]');
+  const search = roster?.querySelector('[data-attendance-student-search]');
+  const picker = roster?.querySelector('[data-mobile-student-select]');
+  const rows = Array.from(roster?.querySelectorAll('[data-attendance-student-row]') || []);
+  const forms = Array.from(document.querySelectorAll('.attendance-workspace form[method="post"]'));
+  const readDraft = (form) => JSON.stringify(Array.from(new FormData(form)));
+  const initialDrafts = new Map(forms.map((form) => [form, readDraft(form)]));
+  const protectDrafts = (event) => {
+    if (forms.some((form) => readDraft(form) !== initialDrafts.get(form))) {
+      event.preventDefault();
+      event.returnValue = true;
+    }
+  };
+  forms.forEach((form) => {
+    form.addEventListener('input', () => window.addEventListener('beforeunload', protectDrafts));
+    form.addEventListener('click', (event) => {
+      if (event.target.closest('[data-fill]')) window.addEventListener('beforeunload', protectDrafts);
+    });
+    form.addEventListener('submit', (event) => {
+      if (!event.defaultPrevented) window.removeEventListener('beforeunload', protectDrafts);
+    });
   });
+  const normalizeName = (value) => value.toLocaleLowerCase('ru').replace(/ё/g, 'е').trim();
+  const openStudent = (value) => {
+    if (!value) return;
+    const url = new URL(value, window.location.href);
+    url.hash = 'attendance-student';
+    window.location.assign(url);
+  };
+  picker?.addEventListener('change', () => openStudent(picker.value));
+  search?.addEventListener('input', () => {
+    const words = normalizeName(search.value).split(/\s+/).filter(Boolean);
+    roster.classList.toggle('is-searching', words.length > 0);
+    let matchCount = 0;
+    for (const row of rows) {
+      const name = normalizeName(row.dataset.studentName);
+      row.hidden = !words.every((word) => name.includes(word));
+      if (!row.hidden) matchCount += 1;
+    }
+    roster.querySelector('[data-attendance-student-count]').textContent = words.length ? `${matchCount} из ${rows.length}` : String(rows.length);
+    roster.querySelector('[data-attendance-student-empty]').hidden = matchCount > 0;
+  });
+  search?.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || event.isComposing || !search.value.trim()) return;
+    const first = rows.find((row) => !row.hidden);
+    if (first) {
+      event.preventDefault();
+      openStudent(first.href);
+    }
+  });
+  const dateSelect = document.getElementById('attendance-date');
+  classSelect?.addEventListener('change', () => {
+    classSelect.form.elements.namedItem('student').disabled = true;
+    classSelect.form.requestSubmit();
+  });
+  dateSelect?.addEventListener('change', () => { if (dateSelect.value) dateSelect.form.requestSubmit(); });
+
+  document.getElementById('attendance-feedback')?.focus();
 
   const tabsRoot = document.querySelector('[data-attendance-tabs]');
-  let activateAttendanceTab = null;
   if (tabsRoot) {
     const storageKey = 'attendance.activeTab';
     const buttons = Array.from(tabsRoot.querySelectorAll('[data-attendance-tab]'));
@@ -433,49 +463,44 @@
     const defaultTab = tabsRoot.dataset.defaultTab || buttons[0]?.dataset.attendanceTab || '';
     const hashTab = window.location.hash.startsWith('#attendance-') ? window.location.hash.replace('#attendance-', '') : '';
     const storedTab = sessionStorage.getItem(storageKey) || '';
-
-    const activeClasses = ['bg-white', 'border-gray-200', 'text-gray-900', 'shadow-sm'];
-    const inactiveClasses = ['bg-gray-50', 'border-transparent', 'text-gray-600', 'hover:bg-white'];
+    const selectedTab = tabsRoot.dataset.selectedTab;
 
     const activate = (tab, updateLocation = false) => {
       const nextTab = available.has(tab) ? tab : defaultTab;
       buttons.forEach((button) => {
         const active = button.dataset.attendanceTab === nextTab;
-        button.classList.toggle('bg-white', active);
-        button.classList.toggle('border-gray-200', active);
-        button.classList.toggle('text-gray-900', active);
-        button.classList.toggle('shadow-sm', active);
-        button.classList.toggle('bg-gray-50', !active);
-        button.classList.toggle('border-transparent', !active);
-        button.classList.toggle('text-gray-600', !active);
-        button.classList.toggle('hover:bg-white', !active);
+        button.setAttribute('aria-selected', String(active));
+        button.tabIndex = active ? 0 : -1;
       });
       panels.forEach((panel) => panel.classList.toggle('hidden', panel.dataset.attendancePanel !== nextTab));
       sessionStorage.setItem(storageKey, nextTab);
-      if (updateLocation) window.history.replaceState(null, '', `#attendance-${nextTab}`);
+      document.getElementById('attendance-class-form').elements.namedItem('tab').value = nextTab;
+      if (updateLocation) {
+        const url = new URL(window.location.href);
+        url.searchParams.set('tab', nextTab);
+        url.searchParams.delete('record');
+        url.hash = 'attendance-student';
+        window.history.replaceState(null, '', url);
+      }
     };
-    activateAttendanceTab = activate;
 
     buttons.forEach((button) => {
+      button.addEventListener('keydown', (event) => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        const index = buttons.indexOf(button);
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
+        activate(buttons[next].dataset.attendanceTab, true); buttons[next].focus();
+      });
       button.addEventListener('click', () => activate(button.dataset.attendanceTab, true));
     });
 
-    activate(available.has(hashTab) ? hashTab : (available.has(storedTab) ? storedTab : defaultTab));
+    const requestedTab = [hashTab, selectedTab, storedTab].find((tab) => available.has(tab));
+    activate(tabsRoot.hasAttribute('data-attendance-draft') ? 'mark' : requestedTab);
+    if (tabsRoot.dataset.selectedRecord && selectedTab === 'history') {
+      document.getElementById(`attendance-history-record-${tabsRoot.dataset.selectedRecord}`)?.focus();
+    }
   }
-
-  const focusNewAbsenceField = (target) => {
-    activateAttendanceTab?.('mark', true);
-    window.setTimeout(() => {
-      const selector = target === 'planned' ? '#absence-from' : '#reason';
-      const field = document.querySelector(selector);
-      field?.focus();
-      field?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    }, 0);
-  };
-
-  document.querySelectorAll('[data-attendance-action]').forEach((button) => {
-    button.addEventListener('click', () => focusNewAbsenceField(button.dataset.attendanceAction));
-  });
 
   const applyReasonState = (form, syncStatuses = false) => {
     const reasonSelect = form.querySelector('select[name="reason"]');
@@ -528,17 +553,113 @@
   const schoolDayStart = form?.dataset.schoolDayStart || '';
   const schoolDayEnd = form?.dataset.schoolDayEnd || '';
   const quickButtons = Array.from(document.querySelectorAll('[data-fill]'));
+  const repeatToggle = document.getElementById('repeat-weekly');
+  const repeatOptions = document.getElementById('repeat-options');
+  const repeatUntil = document.getElementById('repeat-until');
+  const repeatPreview = document.getElementById('repeat-preview');
+  const absenceSubmit = document.getElementById('absence-submit');
+  const periodError = document.getElementById('absence-period-error');
+  const repeatDays = Array.from(form?.querySelectorAll('input[name="repeatWeekdays"]') || []);
+  const draftDays = new Set((repeatOptions.dataset.selectedDays || '').trim().split(' '));
+  repeatDays.forEach((day) => { day.checked = draftDays.has(day.value); });
+  let repeatDaysTouched = repeatToggle.checked;
+
+  const syncPeriod = () => {
+    let message = '';
+    if (fromInput.value && toInput.value) {
+      if (toInput.value <= fromInput.value) {
+        message = 'Укажите окончание отсутствия позже начала.';
+      } else if (repeatToggle.checked && toInput.value.slice(0, 10) !== fromInput.value.slice(0, 10)) {
+        message = 'Для повторов начало и окончание должны быть в один день.';
+      }
+    }
+    toInput.setCustomValidity(message);
+    if (message) toInput.setAttribute('aria-invalid', 'true');
+    else toInput.removeAttribute('aria-invalid');
+    periodError.textContent = message;
+    periodError.hidden = !message;
+  };
+
+  const isoDay = (date) => date.toISOString().slice(0, 10);
+  const utcDay = (value) => new Date(`${value}T00:00:00Z`);
+  const markWord = (count) => count % 10 === 1 && count % 100 !== 11 ? 'отметка' : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? 'отметки' : 'отметок';
+  const selectStartWeekday = () => {
+    const first = utcDay(fromInput.value.slice(0, 10));
+    if (Number.isNaN(first.getTime())) return;
+    const weekday = String(first.getUTCDay() || 7);
+    repeatDays.forEach((day) => { day.checked = day.value === weekday; });
+  };
+  const syncRepeat = () => {
+    const active = repeatToggle.checked;
+    repeatOptions.classList.toggle('hidden', !active);
+    repeatUntil.required = active;
+    repeatUntil.disabled = !active;
+    if (!active) {
+      absenceSubmit.textContent = 'Сохранить отметку';
+      return;
+    }
+    repeatPreview.dataset.count = '0';
+    absenceSubmit.textContent = 'Создать отметки';
+    const startDate = fromInput.value.slice(0, 10);
+    const first = utcDay(startDate);
+    if (Number.isNaN(first.getTime())) {
+      repeatUntil.removeAttribute('min');
+      repeatUntil.removeAttribute('max');
+      repeatPreview.textContent = 'Сначала укажите дату начала.';
+      return;
+    }
+    const limit = new Date(first.getTime() + 90 * 86400000);
+    repeatUntil.min = startDate;
+    repeatUntil.max = isoDay(limit);
+    const last = utcDay(repeatUntil.value);
+    const selected = new Set(repeatDays.filter((day) => day.checked).map((day) => day.value));
+    if (!selected.size) { repeatPreview.textContent = 'Выберите хотя бы один день недели.'; return; }
+    if (Number.isNaN(last.getTime()) || last < first || last > limit) {
+      repeatPreview.textContent = 'Выберите дату окончания повторов в пределах 90 дней.';
+      return;
+    }
+    let count = 0;
+    for (let day = first; day <= last; day = new Date(day.getTime() + 86400000)) {
+      if (selected.has(String(day.getUTCDay() || 7))) count += 1;
+    }
+    repeatPreview.dataset.count = String(count);
+    repeatPreview.textContent = count > 60 ? 'Выберите меньший период: не более 60 отметок за раз.' : count ? `Будет создано ${count} ${markWord(count)}` : 'В этом периоде нет выбранных дней недели.';
+    if (count > 0 && count <= 60) {
+      absenceSubmit.textContent = `Создать ${count} ${markWord(count) === 'отметка' ? 'отметку' : markWord(count)}`;
+    }
+  };
+
+  repeatToggle.addEventListener('change', () => {
+    if (repeatToggle.checked) {
+      const first = utcDay(fromInput.value.slice(0, 10));
+      if (!Number.isNaN(first.getTime())) {
+        if (!repeatDaysTouched) selectStartWeekday();
+        if (!repeatUntil.value) repeatUntil.value = isoDay(new Date(first.getTime() + 28 * 86400000));
+      }
+    }
+    syncPeriod();
+    syncRepeat();
+  });
+  repeatUntil.addEventListener('input', syncRepeat);
+  repeatDays.forEach((day) => day.addEventListener('change', () => { repeatDaysTouched = true; syncRepeat(); }));
+  const onPeriodChange = () => {
+    if (repeatToggle.checked && !repeatDaysTouched) selectStartWeekday();
+    syncPeriod();
+    syncRepeat();
+  };
+  form?.addEventListener('submit', (event) => {
+    if (!repeatToggle.checked) return;
+    const count = Number(repeatPreview.dataset.count || 0);
+    if (count < 1 || count > 60) {
+      event.preventDefault();
+      if (repeatDays.some((day) => day.checked)) repeatUntil.focus();
+      else repeatDays[0]?.focus();
+    }
+  });
 
   const setActivePreset = (preset) => {
     quickButtons.forEach((button) => {
-      const active = button.dataset.fill === preset;
-      button.classList.toggle('bg-indigo-600', active);
-      button.classList.toggle('text-white', active);
-      button.classList.toggle('shadow-sm', active);
-      button.classList.toggle('text-gray-700', !active);
-      button.classList.toggle('hover:bg-indigo-50', !active);
-      button.classList.toggle('hover:text-indigo-700', !active);
-      button.classList.toggle('hover:bg-indigo-700', active);
+      button.setAttribute('aria-pressed', String(button.dataset.fill === preset));
     });
   };
 
@@ -570,6 +691,7 @@
     fromInput.value = currentStart >= dayEnd ? dayStart : currentStart;
     toInput.value = dayEnd;
     setActivePreset('day-end');
+    onPeriodChange();
   };
 
   const setOneLesson = () => {
@@ -578,11 +700,16 @@
     fromInput.value = format(base);
     toInput.value = format(end);
     setActivePreset('lesson');
+    onPeriodChange();
   };
 
   document.querySelector('[data-fill="day-end"]')?.addEventListener('click', setDayEnd);
   document.querySelector('[data-fill="lesson"]')?.addEventListener('click', setOneLesson);
-  fromInput.addEventListener('input', () => setActivePreset(''));
-  toInput.addEventListener('input', () => setActivePreset(''));
+  [fromInput, toInput].forEach((field) => field.addEventListener('input', () => {
+    setActivePreset('');
+    onPeriodChange();
+  }));
+  syncPeriod();
+  syncRepeat();
 })();
 </script>
