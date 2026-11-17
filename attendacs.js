@@ -6,9 +6,11 @@ import * as db from './vendor/db.mjs';
 import { isWithoutReasonCode } from './vendor/absence-reasons.mjs';
 import { canManageMentorSchedule, canViewMentorSchedule, registerMentorScheduleRoutes } from './vendor/mentor-schedule.mjs';
 import { schoolSqlNow } from './vendor/mentor-work.mjs';
+import { issuePresenceClock, readPresenceCapture } from './vendor/presence-clock.mjs';
 import { expandWeeklyAbsences } from './vendor/attendance-recurrence.mjs';
 import { canManagePresenceClass, presenceViewClassScope, presenceHistoryCapabilities, historyVersion } from './vendor/presence.mjs';
 import {
+  getAuthConfig,
   getAuthUserFromRequest,
   renderRequestError,
   requireApiAuth,
@@ -498,6 +500,7 @@ async function getManualBoard(date, audience) {
 }
 
 app.get('/api/attendance/presence/manual-state', requireApiAuth, requirePermission('manage_presence'), asyncHandler(async (req, res) => {
+  const requestStarted = performance.now();
   const audience = String(req.query.audience || '');
   if (![AUDIENCE_CHILDREN, AUDIENCE_ADULTS].includes(audience)) return res.status(400).json({ error: 'invalid_audience' });
   if (!canUseAudience(req.authUser, audience)) return res.status(403).json({ error: 'forbidden' });
@@ -520,6 +523,8 @@ app.get('/api/attendance/presence/manual-state', requireApiAuth, requirePermissi
   const etag = `"${createHash('sha256').update(body).digest('hex')}"`;
   res.set('Cache-Control', 'private, no-cache');
   res.set('ETag', etag);
+  res.set('X-Attendance-Clock', issuePresenceClock(req.authUser.id, audience, getAuthConfig().sessionSecret));
+  res.set('X-Attendance-Processing-Ms', String(Math.round(performance.now() - requestStarted)));
   const validators = String(req.get('If-None-Match') || '').split(',').map(value => value.trim());
   if (validators.includes(etag) || validators.includes(`W/${etag}`) || validators.includes('*')) return res.status(304).end();
   return res.type('json').send(body);
@@ -531,6 +536,7 @@ app.get('/attendance/presence/manual', requirePageAuth, requirePermission('manag
   const classIds = await getPresenceClassScope(req.authUser, audience);
   const board = await db.getPresenceBoard({ date: selectedDate, audience, classIds, includePhoneChecks: true });
 
+  res.set('Cache-Control', 'private, no-store');
   res.render('presence-manual', {
     title: 'Приход и уход',
     currentUser: req.authUser,
@@ -538,7 +544,7 @@ app.get('/attendance/presence/manual', requirePageAuth, requirePermission('manag
     audience,
     adultView: audience === AUDIENCE_ADULTS,
     audienceTabs: buildAudienceTabs('/attendance/presence/manual', audience, req.query, req.authUser),
-    manualServerTime: Date.now(),
+    manualClockToken: issuePresenceClock(req.authUser.id, audience, getAuthConfig().sessionSecret),
     board,
   });
 }));
@@ -1324,6 +1330,9 @@ function presenceInputFromBody(body, user) {
     expectedLastEventRevision: body.expectedLastEventRevision,
     expectedEventType: body.expectedEventType,
     expectedActorId: body.expectedActorId,
+    capturedAt: body.capture === undefined
+      ? undefined
+      : readPresenceCapture(body.capture, user.id, normalizeApiAudience(body.audience), getAuthConfig().sessionSecret),
   };
 }
 

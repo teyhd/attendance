@@ -1,4 +1,5 @@
 import { acquireToggleLocks, releaseToggleLocks } from './presence-lock.mjs';
+import { verifiedPresenceTime } from './presence-clock.mjs';
 import mysql from 'mysql2';
 import { buildAdultArrivalAnalytics } from './adult-arrival-analytics.mjs';
 import { getPublishedMentorWeeks, isWorkMentor, schoolSqlNow } from './mentor-work.mjs';
@@ -700,13 +701,14 @@ export async function getPresenceBoard({ date, audience = AUDIENCE_CHILDREN, cla
 export async function togglePresenceEvent({
   studentId, classId, actorId, idempotencyKey, audience = AUDIENCE_CHILDREN,
   phoneSubmitted, phoneAction, phoneRevision, expectedDate, expectedLastEventId,
-  expectedEventType, expectedLastEventRevision, expectedActorId,
+  expectedEventType, expectedLastEventRevision, expectedActorId, capturedAt,
 } = {}) {
   const normalizedAudience = normalizeDataAudience(audience);
   const isChild = normalizedAudience === AUDIENCE_CHILDREN;
-  const explicit = expectedEventType !== undefined || expectedLastEventRevision !== undefined || expectedActorId !== undefined;
+  const hasCapture = capturedAt !== undefined;
+  const explicit = hasCapture || expectedEventType !== undefined || expectedLastEventRevision !== undefined || expectedActorId !== undefined;
   if (explicit && (!['arrival', 'departure'].includes(expectedEventType)
-    || typeof expectedDate !== 'string' || expectedLastEventId === undefined || expectedLastEventId === null
+    || typeof expectedDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(expectedDate) || expectedLastEventId === undefined || expectedLastEventId === null
     || !Number.isSafeInteger(expectedLastEventRevision) || expectedLastEventRevision < 0
     || !idempotencyKey || expectedActorId == null || String(expectedActorId) !== String(actorId))) {
     throw new ValidationError('Обновите страницу и повторите отметку.', 409);
@@ -716,16 +718,18 @@ export async function togglePresenceEvent({
     validatePhoneHandover(phoneSubmitted, phoneRevision, phoneAction);
   }
   const student = await assertPresencePerson(studentId, classId, normalizedAudience);
-  let nowSql = sqlNow();
-  const attendanceDate = dateOnlyFromSql(nowSql);
-  if (expectedDate !== undefined && expectedDate !== attendanceDate) {
-    throw new ValidationError('Дата изменилась. Обновите страницу и повторите отметку.', 409);
-  }
+  const attendanceDate = explicit ? expectedDate : dateOnlyFromSql(sqlNow());
   const normalizedIdempotencyKey = normalizeIdempotencyKey(idempotencyKey);
   if (explicit && !normalizedIdempotencyKey) throw new ValidationError('Обновите страницу и повторите отметку.', 409);
   const conn = await usr.getConnection();
   let acquiredLocks = [];
   let lockUncertain = false;
+  const isMatchingReplay = (event) => String(event.student_id) === String(student.id) && (
+    !explicit || (String(event.class_id) === String(student.classId)
+      && String(event.actor_id ?? 0) === String(actorId)
+      && ((event.attendance_date === attendanceDate && event.event_type === expectedEventType)
+        || (hasCapture && event.source === 'tablet' && event.revision > 0)))
+  );
 
   try {
     await conn.beginTransaction();
@@ -735,13 +739,11 @@ export async function togglePresenceEvent({
       throw new ValidationError('Повторите нажатие через секунду', explicit ? 503 : 409);
     }
 
-    nowSql = sqlNow();
-    if (dateOnlyFromSql(nowSql) !== attendanceDate) throw new ValidationError('Дата изменилась. Обновите страницу и повторите отметку.', 409);
-
+    // A committed operation can still be acknowledged after its upload window.
     if (normalizedIdempotencyKey) {
       const existing = await getPresenceEventByIdempotencyKey(conn, normalizedIdempotencyKey);
       if (existing) {
-        if (String(existing.student_id) !== String(student.id) || (explicit && (String(existing.class_id) !== String(student.classId) || existing.attendance_date !== attendanceDate || existing.event_type !== expectedEventType || String(existing.actor_id ?? 0) !== String(actorId)))) throw new ValidationError('Ключ отметки уже использован', 409);
+        if (!isMatchingReplay(existing)) throw new ValidationError('Ключ отметки уже использован', 409);
         const conflicts = explicit ? [] : await createConflictsForPresenceEvent(conn, existing);
         const phoneCheck = isChild ? await getPhoneHandoverDay(conn, student.id, attendanceDate) : null;
         await conn.commit();
@@ -755,12 +757,26 @@ export async function togglePresenceEvent({
       }
     }
 
+    const receivedAt = Date.now();
+    const receivedSql = schoolSqlNow(new Date(receivedAt));
+    const occurredAt = hasCapture ? verifiedPresenceTime(capturedAt, attendanceDate, receivedAt) : receivedSql;
+    if (hasCapture && !occurredAt) {
+      throw new ValidationError('Не удалось подтвердить время нажатия. Проверьте журнал посещаемости.', 422);
+    }
+    if (!hasCapture && (dateOnlyFromSql(receivedSql) !== attendanceDate
+      || (expectedDate !== undefined && expectedDate !== attendanceDate))) {
+      throw new ValidationError('Дата изменилась. Обновите страницу и повторите отметку.', 409);
+    }
+
     const latestEvent = await getLatestPresenceEventForUpdate(conn, student.id, attendanceDate);
+    if (hasCapture && latestEvent && occurredAt < latestEvent.occurred_at) {
+      throw new ValidationError('Время нажатия раньше последней отметки. Проверьте журнал посещаемости.', 409);
+    }
     if (expectedLastEventId !== undefined && String(latestEvent?.id || '') !== String(expectedLastEventId)) {
       throw new ValidationError('Приход или уход уже изменился. Обновите страницу и повторите отметку.', 409);
     }
     if (explicit && Number(latestEvent?.revision || 0) !== expectedLastEventRevision) throw new ValidationError('Приход или уход уже изменился. Обновите страницу и повторите отметку.', 409);
-    const decision = resolvePresenceToggle({ latestEvent, now: nowSql });
+    const decision = resolvePresenceToggle({ latestEvent, now: occurredAt });
     if (explicit && decision.eventType !== expectedEventType) throw new ValidationError('Приход или уход уже изменился. Обновите страницу и повторите отметку.', 409);
     if (!decision.shouldInsert) {
       const conflicts = await createConflictsForPresenceEvent(conn, latestEvent);
@@ -800,7 +816,7 @@ export async function togglePresenceEvent({
         student.id,
         student.classId,
         decision.eventType,
-        nowSql,
+        occurredAt,
         attendanceDate,
         actorId || null,
         normalizedIdempotencyKey,
@@ -834,7 +850,7 @@ export async function togglePresenceEvent({
     await conn.rollback();
     if (isDuplicateKeyError(err) && normalizedIdempotencyKey) {
       const event = await getPresenceEventByIdempotencyKey(usr, normalizedIdempotencyKey);
-      if (event && String(event.student_id) === String(student.id) && (!explicit || (String(event.class_id) === String(student.classId) && event.attendance_date === attendanceDate && event.event_type === expectedEventType && String(event.actor_id ?? 0) === String(actorId)))) {
+      if (event && isMatchingReplay(event)) {
         const conflicts = explicit ? [] : await createConflictsForPresenceEvent(usr, event);
         return {
           event,

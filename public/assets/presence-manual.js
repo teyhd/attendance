@@ -99,6 +99,8 @@
   const newKey = () => window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const { date, actorId, audience } = root.dataset;
   const schoolDate = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Moscow' });
+  const captureLabel = new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Moscow', dateStyle: 'short', timeStyle: 'medium' });
+  const maxClockElapsed = 12 * 60 * 60 * 1000;
   const storagePrefix = `attendance:manual:v1:${actorId}:${audience}:`;
   const commands = new Map();
   const storedKeys = new Set();
@@ -114,9 +116,13 @@
   let sending = false;
   let generation = 0;
   let pollFailures = 0;
-  let serverClock = Number(root.dataset.serverTime) > 0
-    ? { time: Number(root.dataset.serverTime), receivedAt: 0 }
+  const navigation = performance.getEntriesByType('navigation')[0];
+  const navigationDelay = navigation ? navigation.responseStart - navigation.requestStart : Infinity;
+  let serverClock = navigation?.requestStart > 0 && navigationDelay >= 0 && navigationDelay <= 2000
+    ? clockAnchor(root.dataset.clockToken, navigation.responseStart)
     : null;
+  let clockHint = '';
+  let captureDialogs = 0;
   let boardReady = false;
   let blocked = '';
   const expiredKeys = new Set();
@@ -124,6 +130,26 @@
 
   const retryDelay = (attempts) => Math.min(60_000, 1500 * 2 ** Math.min(attempts, 6)) * (0.75 + Math.random() * 0.5);
   const nextPollDelay = () => pollFailures ? retryDelay(pollFailures) : 6000 + Math.random() * 3000;
+
+  function clockAnchor(token, monotonicAt) {
+    if (!/^\d{13}\.[\w-]{43}$/.test(token || '')) return null;
+    return { token, time: Number(token.slice(0, 13)), monotonicAt };
+  }
+
+  function captureTime() {
+    if (!serverClock) return null;
+    const elapsedMs = Math.round(performance.now() - serverClock.monotonicAt);
+    if (elapsedMs < 0 || elapsedMs > maxClockElapsed) return null;
+    if (schoolDate.format(serverClock.time + elapsedMs) !== date) return null;
+    return { token: serverClock.token, elapsedMs };
+  }
+
+  function commandTime(command) {
+    const capture = command.capture;
+    const anchor = clockAnchor(capture?.token, 0);
+    if (!anchor || !Number.isSafeInteger(capture.elapsedMs) || capture.elapsedMs < 0 || capture.elapsedMs > maxClockElapsed) return '';
+    return captureLabel.format(anchor.time + capture.elapsedMs);
+  }
 
   function filterCards() {
     const normalize = (value) => value.toLocaleLowerCase('ru').replaceAll('ё', 'е').trim();
@@ -317,11 +343,12 @@
     const messages = [];
     if (blocked) messages.push(blocked);
     else if (!navigator.onLine || pollFailures) messages.push('Нет связи с сервером.');
+    if (clockHint && !blocked) messages.push(clockHint);
     if (commands.size) messages.push(`Ожидают отправки: ${commands.size}.`);
     const exhausted = [...failures.values()].some((failure) => failure.attempts >= maxAttempts);
     if (exhausted && !blocked) messages.push('Автоматические попытки закончились.');
     else if (failures.size && !blocked && navigator.onLine && !pollFailures) messages.push('Не удалось отправить отметку. Попробуем снова.');
-    if (expiredKeys.size) messages.push(`Не удалось подтвердить отметки за прошлые дни: ${expiredKeys.size}. Они больше не отправляются.`);
+    if (expiredKeys.size) messages.push(`Отметки требуют проверки: ${expiredKeys.size}. Они больше не отправляются.`);
     if (inaccessible) messages.push(`Отметки для людей вне доступного списка не отправлены: ${inaccessible}.`);
     const message = messages.join(' ');
     if (syncText.textContent !== message) syncText.textContent = message;
@@ -353,10 +380,13 @@
         const command = JSON.parse(localStorage.getItem(key) || 'null');
         if (!command || command.expectedActorId !== actorId || command.audience !== audience
           || key !== storagePrefix + command.idempotencyKey) continue;
-        if (command.expectedDate !== date) {
-          if (command.expectedDate < date) expiredKeys.add(key);
+        if (command.review || (command.expectedDate < date && !command.capture)) {
+          expiredKeys.add(key);
+          const time = commandTime(command);
+          if (time) rejected.set(command.studentId, 'Проверьте отметку за ' + time);
           continue;
         }
+        if (command.expectedDate > date) continue;
         visibleKeys.add(command.idempotencyKey);
         storedKeys.add(command.idempotencyKey);
         commands.set(command.idempotencyKey, command);
@@ -371,6 +401,19 @@
       }
     } catch {
       setFlash('Локальная очередь недоступна. Отметки можно отправлять, пока эта страница открыта.', { kind: 'error' });
+    }
+  }
+
+  function retainForReview(command) {
+    const key = command.idempotencyKey;
+    commands.delete(key);
+    failures.delete(key);
+    storedKeys.delete(key);
+    try {
+      localStorage.setItem(storagePrefix + key, JSON.stringify({ ...command, review: true }));
+      expiredKeys.add(storagePrefix + key);
+    } catch {
+      // The original queue item, if saved, remains available for review.
     }
   }
 
@@ -408,8 +451,9 @@
 
   function canSendToday() {
     if (blocked) return false;
-    if (serverClock && schoolDate.format(serverClock.time + performance.now() - serverClock.receivedAt) > date) {
-      setBlocked('Начался новый день. Отметки в очереди за прошлый день больше не отправляются.');
+    if (serverClock && schoolDate.format(serverClock.time + performance.now() - serverClock.monotonicAt) > date) {
+      clockHint = 'Начался новый день. Подключитесь к сети для обновления страницы.';
+      updateQueueStatus();
       return false;
     }
     return true;
@@ -441,6 +485,7 @@
 
   async function pullState() {
     const started = generation;
+    const requestStarted = performance.now();
     try {
       const headers = { Accept: 'application/json' };
       if (etag) headers['If-None-Match'] = etag;
@@ -451,9 +496,10 @@
         setBlocked('Доступ изменился. Войдите снова или обновите страницу.', true);
         return false;
       }
-      const responseTime = Date.parse(response.headers.get('Date'));
-      if (Number.isFinite(responseTime)) serverClock = { time: responseTime, receivedAt: performance.now() };
-      if (started !== generation || blocked) return false;
+      const receivedAt = performance.now();
+      const serverWork = Number(response.headers.get('X-Attendance-Processing-Ms'));
+      const networkTime = Math.max(0, receivedAt - requestStarted - serverWork);
+      if (started !== generation || blocked || document.hidden) return false;
       if (response.status !== 304) {
         if (!response.ok) throw new Error('Ошибка синхронизации');
         const payload = await response.json();
@@ -463,7 +509,12 @@
           return false;
         }
         if (payload.date !== date) {
-          setBlocked('Начался новый день. Отметки в очереди за прошлый день больше не отправляются.');
+          if (captureDialogs) {
+            clockHint = 'Начался новый день. Завершите текущую отметку, чтобы обновить страницу.';
+            boardReady = false;
+          } else {
+            window.location.reload();
+          }
           return false;
         }
         if (payload.audience !== audience || !Array.isArray(payload.students)) throw new Error('Ошибка синхронизации');
@@ -475,6 +526,13 @@
         for (const student of payload.students) updateSnapshot(buttonsById.get(String(student.id)), student);
         updateTotal();
         etag = response.headers.get('ETag') || '';
+      }
+      if (networkTime <= 2000) {
+        const sampledClock = clockAnchor(response.headers.get('X-Attendance-Clock'), receivedAt - networkTime / 2);
+        if (sampledClock) {
+          serverClock = sampledClock;
+          clockHint = '';
+        }
       }
       boardReady = true;
       pollFailures = 0;
@@ -511,9 +569,9 @@
     if (sending) return;
     clearTimeout(sendTimer);
     sendTimer = null;
-    if (document.hidden || !navigator.onLine || !boardReady || !canSendToday()) return;
+    if (document.hidden || !navigator.onLine || !boardReady || blocked) return;
     const queue = [...commands.values()].filter(({ idempotencyKey }) => (failures.get(idempotencyKey)?.attempts || 0) < maxAttempts);
-    const now = Date.now();
+    const now = performance.now();
     const command = queue.find(({ idempotencyKey }) => (failures.get(idempotencyKey)?.retryAt || 0) <= now);
     if (!command) {
       if (queue.length) sendTimer = setTimeout(drainOutbox, Math.max(0, Math.min(...queue.map(({ idempotencyKey }) => failures.get(idempotencyKey).retryAt)) - now));
@@ -525,7 +583,8 @@
     const student = findStudent(studentId);
     if (!button || button.dataset.classId !== command.classId) {
       inaccessible += 1;
-      forgetCommand(idempotencyKey);
+      if (command.capture) retainForReview(command);
+      else forgetCommand(idempotencyKey);
       setFlash('Отметка не отправлена: изменился список доступных людей.', { kind: 'error' });
       updateQueueStatus();
       void drainOutbox();
@@ -554,15 +613,22 @@
   }
 
   async function sendCommand(command, button, student) {
-    if (!canSendToday() || document.hidden) return;
+    if (blocked || document.hidden) return;
     const { idempotencyKey, studentId } = command;
     const name = student.name;
     try {
       const payload = await postJson('/api/attendance/presence/toggle', command);
       const event = payload.event;
-      if (!event?.id || event.attendance_date !== date) throw new Error('Не удалось подтвердить сохранение');
-      awaitingRefresh.add(studentId);
+      if (!event?.id || (!payload.duplicate && event.attendance_date !== command.expectedDate)) {
+        throw new Error('Не удалось подтвердить сохранение');
+      }
       forgetCommand(idempotencyKey);
+      if (command.expectedDate !== date) {
+        const when = commandTime(command) || command.expectedDate;
+        setFlash(name + ': подтверждена отметка за ' + when);
+        return;
+      }
+      awaitingRefresh.add(studentId);
       const baselineMatches = button.dataset.lastEventId === command.expectedLastEventId
         && Number(button.dataset.lastEventRevision || 0) === command.expectedLastEventRevision;
       if (!blocked && !payload.duplicate && baselineMatches && payload.state?.last_event_id) {
@@ -583,15 +649,15 @@
         setBlocked('Нет доступа для отправки отметок. Проверьте права и обновите страницу.', true);
       } else if (error.status >= 400 && error.status < 500 && ![408, 425, 429].includes(error.status)) {
         awaitingRefresh.add(studentId);
-        forgetCommand(idempotencyKey);
-        rejected.set(studentId, error.status === 409 ? 'Не сохранено. Проверьте отметку.' : 'Отметка не сохранена');
-        setFlash(error.status === 409
-          ? `${name}: отметка не сохранена. Данные менялись, проверьте состояние перед повторной отметкой.`
-          : `${name}: отметка не сохранена. ${error.message}`, { kind: 'error' });
+        if (command.capture) retainForReview(command);
+        else forgetCommand(idempotencyKey);
+        const when = commandTime(command);
+        rejected.set(studentId, when ? 'Проверьте отметку за ' + when : 'Отметка не сохранена');
+        setFlash(name + ': отметка не сохранена. ' + error.message, { kind: 'error' });
         void refreshAfterMutation();
       } else if (commands.has(idempotencyKey)) {
         const attempts = (failures.get(idempotencyKey)?.attempts || 0) + 1;
-        failures.set(idempotencyKey, { attempts, retryAt: Date.now() + retryDelay(attempts) });
+        failures.set(idempotencyKey, { attempts, retryAt: performance.now() + retryDelay(attempts) });
       }
     }
   }
@@ -626,8 +692,17 @@
         setFlash('Сначала выберите, какую из двух отметок оставить', { kind: 'error' });
         return;
       }
+      const capture = captureTime();
+      if (!capture) {
+        clockHint = 'Не удалось сверить время. Подключитесь к сети, чтобы сделать отметку.';
+        updateQueueStatus();
+        void poll();
+        return;
+      }
       marking = true;
+      captureDialogs += 1;
       const command = {
+        capture,
         studentId: button.dataset.studentId,
         classId: button.dataset.classId,
         audience,
@@ -647,10 +722,11 @@
           date,
           useCurrent: true,
         }) : {};
-        if (phone && !button.disabled && canSendToday()) queueCommand({ ...command, ...phone });
+        if (phone && !button.disabled && !blocked) queueCommand({ ...command, ...phone });
       } catch (err) {
         setFlash(err.message || 'Не удалось подготовить отметку', { kind: 'error' });
       } finally {
+        captureDialogs -= 1;
         marking = false;
       }
     });
@@ -772,7 +848,7 @@
     if (document.hidden) {
       clearTimeout(pollTimer);
       clearTimeout(sendTimer);
-    } else if (canSendToday()) {
+    } else {
       void poll();
     }
     updateQueueStatus();
@@ -782,9 +858,10 @@
     try {
       for (const key of expiredKeys) localStorage.removeItem(key);
       expiredKeys.clear();
+      rejected.clear();
       updateQueueStatus();
     } catch {
-      setFlash('Не удалось убрать просроченные отметки.', { kind: 'error' });
+      setFlash('Не удалось убрать отметки из списка проверки.', { kind: 'error' });
     }
   });
   reloadButton.addEventListener('click', () => window.location.reload());
@@ -792,7 +869,23 @@
     failures.clear();
     catchUp();
   });
-  document.addEventListener('visibilitychange', catchUp);
+  function invalidateClock() {
+    serverClock = null;
+    generation += 1;
+    etag = '';
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) invalidateClock();
+    catchUp();
+  });
+  document.addEventListener('freeze', invalidateClock);
+  window.addEventListener('pageshow', (event) => {
+    if (event.persisted) {
+      invalidateClock();
+      catchUp();
+    }
+  });
   window.addEventListener('focus', catchUp);
   window.addEventListener('online', catchUp);
   window.addEventListener('offline', updateQueueStatus);

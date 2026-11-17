@@ -2,15 +2,6 @@
   let dialog;
   let editor;
 
-  window.describePresencePhone = function (current) {
-    if (!current) return '';
-    const statuses = [];
-    if (typeof current.submitted === 'boolean') statuses.push(current.submitted ? 'Сдал телефон' : 'Не сдал телефон');
-    if (current.submitted_after_notice_at) statuses.push('Сдал после замечания');
-    if (typeof current.picked_up === 'boolean') statuses.push(current.picked_up ? 'Забрал телефон' : 'Не забрал телефон');
-    return statuses.join(' · ');
-  };
-
   window.presencePhoneDayUrl = (studentId, date) => `/api/attendance/students/${encodeURIComponent(studentId)}/phone-handover/${encodeURIComponent(date)}`;
 
   window.getPresencePhoneDay = async function (studentId, date) {
@@ -48,12 +39,11 @@
       dialog = document.createElement('dialog');
       dialog.className = 'w-[calc(100%-2rem)] max-w-sm rounded-lg border border-slate-200 bg-white p-0 shadow-xl backdrop:bg-black/30';
       dialog.setAttribute('aria-labelledby', 'presence-phone-title');
-      dialog.setAttribute('aria-describedby', 'presence-phone-student presence-phone-current');
+      dialog.setAttribute('aria-describedby', 'presence-phone-student');
       dialog.innerHTML = `
         <form method="dialog" class="space-y-4 p-4 sm:p-5">
           <p id="presence-phone-student" class="text-sm font-medium text-slate-600"></p>
           <h2 id="presence-phone-title" class="text-xl font-semibold text-slate-950"></h2>
-          <p id="presence-phone-current" class="text-sm text-slate-600"></p>
           <div class="grid grid-cols-2 gap-2">
             <button value="yes" class="min-h-11 rounded-lg border border-emerald-300 bg-emerald-100 px-3 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-200">Да</button>
             <button value="no" class="min-h-11 rounded-lg border border-red-300 bg-red-100 px-3 py-2 text-sm font-semibold text-red-800 hover:bg-red-200">Нет</button>
@@ -69,9 +59,6 @@
     yes.textContent = departure ? 'Забрал' : 'Да';
     yes.classList.toggle('col-span-2', departure);
     dialog.querySelector('[value="no"]').classList.toggle('hidden', departure);
-    const previous = dialog.querySelector('#presence-phone-current');
-    previous.textContent = departure ? window.describePresencePhone(current) : '';
-    previous.hidden = !previous.textContent;
     dialog.returnValue = 'cancel';
     return new Promise((resolve) => {
       dialog.addEventListener('close', () => {
