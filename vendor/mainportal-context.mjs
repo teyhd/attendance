@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { verifyInternalServiceRequest } from './internal-service-auth.mjs';
-import { getPublishedMentorWeeks, publishedMentorDay, schoolSqlNow } from './mentor-work.mjs';
+import { getPublishedMentorWeeks, publishedMentorDay, schoolSqlNow, shiftDate } from './mentor-work.mjs';
 
 const positiveId = value => Number.isSafeInteger(Number(value)) && Number(value) > 0;
 const ids = values => [...new Set(values.filter(positiveId).map(Number))];
@@ -16,7 +16,26 @@ export function parsePortalRequest(body, now = new Date()) {
   if (body.detail != null && !['conflicts', 'attention'].includes(body.detail)) fail(400, 'invalid_detail');
   const offset = Number(body.offset ?? 0);
   if (!Number.isSafeInteger(offset) || offset < 0 || offset > 100000) fail(400, 'invalid_offset');
-  return { actorId: Number(body.actorId), date, context: body.context, studentIds: ids(body.studentIds), detail: body.detail, offset };
+  if (body.expanded != null && typeof body.expanded !== 'boolean') fail(400, 'invalid_expanded');
+  return { actorId: Number(body.actorId), date, context: body.context, studentIds: ids(body.studentIds), detail: body.detail, offset, expanded: body.expanded === true, scheduleScope: body.scheduleScope };
+}
+
+export function verifyScheduleScope(token, { actorId, date, now = new Date(), secret = process.env.MAINPORTAL_SCOPE_SECRET } = {}) {
+  if (!secret || typeof token !== 'string' || token.length > 24000) fail(403, 'invalid_schedule_scope');
+  const parts = token.split('.');
+  if (parts.length !== 2 || parts.some(part => !/^[A-Za-z0-9_-]+$/.test(part))) fail(403, 'invalid_schedule_scope');
+  const expected = crypto.createHmac('sha256', secret).update(parts[0]).digest();
+  const actual = Buffer.from(parts[1], 'base64url');
+  if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) fail(403, 'invalid_schedule_scope');
+  let value;
+  try { value = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8')); } catch { fail(403, 'invalid_schedule_scope'); }
+  if (value?.version !== 1 || value.actorId !== actorId || value.date !== date
+    || !Number.isSafeInteger(value.issuedAt) || !Number.isSafeInteger(value.expiresAt)
+    || value.issuedAt > now.getTime() + 5000 || value.expiresAt <= now.getTime()
+    || value.expiresAt <= value.issuedAt || value.expiresAt - value.issuedAt > 90000
+    || !Array.isArray(value.studentIds) || value.studentIds.length > 1500
+    || value.studentIds.some(id => !Number.isSafeInteger(id) || id <= 0)) fail(403, 'invalid_schedule_scope');
+  return ids(value.studentIds);
 }
 
 export function permittedPortalStudents(roles, requested, assigned, actorId) {
@@ -51,8 +70,16 @@ export function buildPortalStudents(people, events, absences, conflicts) {
   return [...byId.values()];
 }
 
-export async function loadPortalContext(executor, input, { serviceId = 13, now = new Date() } = {}) {
-  const { actorId, date, context, studentIds, detail, offset } = parsePortalRequest(input, now);
+export async function loadPortalContext(executor, input, { serviceId = 13, now = new Date(), scopeSecret = process.env.MAINPORTAL_SCOPE_SECRET } = {}) {
+  const { actorId, date, context, studentIds, detail, offset, expanded, scheduleScope } = parsePortalRequest(input, now);
+  // A missing source may degrade to independently verified local assignments.
+  // A supplied invalid grant never degrades into the legacy requested-ID path.
+  let granted = [];
+  if (expanded) {
+    if (scheduleScope != null && scheduleScope !== '') granted = verifyScheduleScope(scheduleScope, { actorId, date, now, secret: scopeSecret });
+    else if (studentIds.length) fail(403, 'schedule_scope_required');
+    if (studentIds.some(id => !granted.includes(id))) fail(403, 'student_outside_schedule_scope');
+  }
   const [rights] = await executor.query(`SELECT DISTINCT r.role_id, u.type
     FROM sso.rights r JOIN sso.users u ON u.id = r.usr_id AND u.status = 1
     WHERE r.usr_id = ? AND r.srv_id = ?`, [actorId, serviceId]);
@@ -70,6 +97,11 @@ export async function loadPortalContext(executor, input, { serviceId = 13, now =
   [actorId, actorId]) : [[]];
   result.assignedIds = assigned.map(row => String(row.id));
   let selected = permittedPortalStudents(roles, studentIds, assigned.map(row => row.id), actorId);
+  if (expanded) {
+    selected = roles.some(role => [2, 3, 4, 5].includes(role))
+      ? ids([...studentIds, ...assigned.map(row => row.id)])
+      : roles.includes(1) ? [actorId] : [];
+  }
 
   if (context === 'school') {
     const [totals] = await executor.query(`SELECT 'conflicts' AS kind, COUNT(*) AS records, COUNT(DISTINCT c.student_id) AS children
@@ -113,12 +145,32 @@ export async function loadPortalContext(executor, input, { serviceId = 13, now =
         AND e.attendance_date = ? AND c.student_id IN (${ph}) GROUP BY c.student_id`, [date, ...selected]),
     ]);
     result.students = buildPortalStudents(people, events, absences, conflicts);
+    if (expanded && context === 'personal' && roles.some(role => [2, 3, 4, 5].includes(role))) {
+      const [returns] = await executor.query(`SELECT student_id, DATE_FORMAT(starts_at, '%Y-%m-%d %H:%i:%s') AS starts_at,
+        DATE_FORMAT(ends_at, '%Y-%m-%d %H:%i:%s') AS ends_at FROM attendance.absence_periods
+        WHERE deleted_at IS NULL AND confirmation_status = 'confirmed' AND ends_at > ? AND ends_at <= ?
+        AND student_id IN (${ph}) ORDER BY ends_at DESC, student_id`,
+      [schoolSqlNow(new Date(now.getTime() - 7 * 86400000)), schoolSqlNow(now), ...selected]);
+      result.recentReturns = returns.map(row => ({ studentId: String(row.student_id), start: iso(row.starts_at), end: iso(row.ends_at) }));
+    }
   }
   if (context === 'personal' && roles.some(role => [3, 5].includes(role)) && Number(rights[0]?.type) === 3) {
-    const weeks = await getPublishedMentorWeeks(executor, { start_date: date, end_date: date });
-    const day = publishedMentorDay(weeks, String(actorId), date);
-    result.shift = { status: !day.published ? 'unpublished' : day.shift ? 'scheduled' : 'unassigned',
-      start: day.shift ? iso(`${date} ${day.shift[0]}:00`) : null, end: day.shift ? iso(`${date} ${day.shift[1]}:00`) : null };
+    try {
+      const weeks = await getPublishedMentorWeeks(executor, { start_date: date, end_date: expanded ? shiftDate(date, 1) : date });
+      const days = [date, ...(expanded ? [shiftDate(date, 1)] : [])].map(dayDate => {
+        const day = publishedMentorDay(weeks, String(actorId), dayDate);
+        return { date: dayDate, status: !day.published ? 'unpublished' : day.shift ? 'scheduled' : 'unassigned',
+          start: day.shift ? iso(`${dayDate} ${day.shift[0]}:00`) : null, end: day.shift ? iso(`${dayDate} ${day.shift[1]}:00`) : null,
+          href: `/attendance/mentor-schedule?view=me&week=${dayDate}` };
+      });
+      const { date: _date, href: _href, ...shift } = days[0];
+      result.shift = shift;
+      if (expanded) result.workday = days;
+    } catch (error) {
+      if (!expanded) throw error;
+      result.workday = [date, shiftDate(date, 1)].map(dayDate => ({ date: dayDate, status: 'unavailable', href: `/attendance/mentor-schedule?view=me&week=${dayDate}` }));
+      result.unavailableFeatures = ['workday'];
+    }
   }
   return result;
 }

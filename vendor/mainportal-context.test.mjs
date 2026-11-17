@@ -1,9 +1,60 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import crypto from 'node:crypto';
-import { buildPortalStudents, loadPortalContext, parsePortalRequest, permittedPortalStudents, registerMainportalContext } from './mainportal-context.mjs';
+import { buildPortalStudents, loadPortalContext, parsePortalRequest, permittedPortalStudents, registerMainportalContext, verifyScheduleScope } from './mainportal-context.mjs';
 const now=new Date('2026-11-17T09:05:00+03:00');
 const request={actorId:42,date:'2026-11-17',context:'personal',studentIds:[11]};
+const scopeSecret = 'scope-test-only';
+function grant(overrides = {}) {
+ const payload = { version: 1, actorId: 42, date: request.date, studentIds: [11], issuedAt: now.getTime(), expiresAt: now.getTime() + 90000, ...overrides };
+ const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+ return `${body}.${crypto.createHmac('sha256', scopeSecret).update(body).digest('base64url')}`;
+}
+test('schedule grants bind actor, date, lifetime and signature', () => {
+ const options = { actorId: 42, date: request.date, now, secret: scopeSecret };
+ assert.deepEqual(verifyScheduleScope(grant(), options), [11]);
+ for (const token of [grant({actorId:43}), grant({date:'2026-11-18'}), grant({expiresAt:now.getTime()}), grant({expiresAt:now.getTime()+90001}), grant({studentIds:['11']}), `${grant()}x`, 'broken']) {
+  assert.throws(() => verifyScheduleScope(token, options), error => error.status === 403);
+ }
+ assert.throws(() => verifyScheduleScope(grant(), {...options, secret:''}), error => error.status === 403);
+});
+test('expanded scope rejects arbitrary IDs before database access and preserves local fallback', async () => {
+ let calls = 0;
+ const executor = { query:async () => { calls++; return [[{role_id:2,type:2}]]; } };
+ for (const input of [{...request,expanded:true}, {...request,expanded:true,studentIds:[12],scheduleScope:grant()}]) {
+  await assert.rejects(loadPortalContext(executor,input,{now,scopeSecret}), error=>error.status===403);
+ }
+ assert.equal(calls,0);
+ const result = await loadPortalContext(executor,{...request,expanded:true,studentIds:[]},{now,scopeSecret});
+ assert.deepEqual(result.students,[]);
+ assert.equal(calls,1);
+});
+test('expanded grants add verified teaching pupils to mentor scope, never parent access', async () => {
+ const queries=[];
+ const executor={query:async (sql,params)=>{queries.push({sql,params});
+  if(sql.includes('SELECT DISTINCT r.role_id'))return [[{role_id:3,type:2}]];
+  if(sql.includes('info_class_tutor'))return [[{id:12}]];
+  if(sql.includes('SELECT u.id, u.name'))return [[{id:11,name:'First'},{id:12,name:'Second'}]];
+  return [[]];
+ }};
+ const data=await loadPortalContext(executor,{...request,expanded:true,scheduleScope:grant()},{now,scopeSecret});
+ assert.deepEqual(data.students.map(person=>person.id),['11','12']);
+ assert.deepEqual(queries.find(item=>item.sql.includes('SELECT u.id, u.name')).params,[11,12]);
+ assert.deepEqual(data.recentReturns,[]);
+ await assert.rejects(loadPortalContext({query:async()=>[[{role_id:6,type:6}]]},{...request,expanded:true,scheduleScope:grant()},{now,scopeSecret}),error=>error.status===403);
+});
+test('dated workday crosses week boundary without draft or child scope',async()=>{
+ const sunday=new Date('2026-11-22T10:00:00+03:00');
+ const executor={query:async sql=>{
+  if(sql.includes('SELECT DISTINCT r.role_id'))return [[{role_id:3,type:3}]];
+  if(sql.includes('mentor_work_weeks'))return [[{week_start:'2026-11-16',published_json:JSON.stringify({'42':[]})},{week_start:'2026-11-23',published_json:JSON.stringify({'42':[['08:00','16:00']]})}]];
+  return [[]];
+ }};
+ const data=await loadPortalContext(executor,{...request,date:'2026-11-22',studentIds:[],expanded:true},{now:sunday});
+ assert.equal(data.workday[0].date,'2026-11-22');assert.equal(data.workday[0].status,'unassigned');
+ assert.equal(data.workday[1].date,'2026-11-23');assert.equal(data.workday[1].start,'2026-11-23T08:00:00+03:00');
+ assert.equal(data.shift.status,'unassigned');
+});
 test('parent and guest cannot acquire attendance through submitted IDs',()=>{
  assert.deepEqual(permittedPortalStudents([6],[11],[],42),[]);
  assert.deepEqual(permittedPortalStudents([],[11],[],42),[]);
