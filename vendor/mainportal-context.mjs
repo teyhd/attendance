@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { loadWeeklyAttendance } from './mainportal-weekly.mjs';
 import { verifyInternalServiceRequest } from './internal-service-auth.mjs';
 import { getPublishedMentorWeeks, publishedMentorDay, schoolSqlNow, shiftDate } from './mentor-work.mjs';
 
@@ -20,7 +21,7 @@ export function parsePortalRequest(body, now = new Date()) {
   return { actorId: Number(body.actorId), date, context: body.context, studentIds: ids(body.studentIds), detail: body.detail, offset, expanded: body.expanded === true, scheduleScope: body.scheduleScope };
 }
 
-export function verifyScheduleScope(token, { actorId, date, now = new Date(), secret = process.env.MAINPORTAL_SCOPE_SECRET } = {}) {
+export function verifyScheduleScope(token, { actorId, date, now = new Date(), secret = process.env.MAINPORTAL_SCOPE_SECRET, includeAssignments = false } = {}) {
   if (!secret || typeof token !== 'string' || token.length > 24000) fail(403, 'invalid_schedule_scope');
   const parts = token.split('.');
   if (parts.length !== 2 || parts.some(part => !/^[A-Za-z0-9_-]+$/.test(part))) fail(403, 'invalid_schedule_scope');
@@ -35,7 +36,9 @@ export function verifyScheduleScope(token, { actorId, date, now = new Date(), se
     || value.expiresAt <= value.issuedAt || value.expiresAt - value.issuedAt > 90000
     || !Array.isArray(value.studentIds) || value.studentIds.length > 1500
     || value.studentIds.some(id => !Number.isSafeInteger(id) || id <= 0)) fail(403, 'invalid_schedule_scope');
-  return ids(value.studentIds);
+  const assigned=value.assignedStudentIds ?? [];
+  if (!Array.isArray(assigned) || assigned.length>1500 || assigned.some(id=>!Number.isSafeInteger(id)||id<=0||!value.studentIds.includes(id))) fail(403,'invalid_schedule_scope');
+  return includeAssignments ? {studentIds:ids(value.studentIds),assignedStudentIds:ids(assigned)} : ids(value.studentIds);
 }
 
 export function permittedPortalStudents(roles, requested, assigned, actorId) {
@@ -75,8 +78,12 @@ export async function loadPortalContext(executor, input, { serviceId = 13, now =
   // A missing source may degrade to independently verified local assignments.
   // A supplied invalid grant never degrades into the legacy requested-ID path.
   let granted = [];
+  let scheduleAssigned = [];
   if (expanded) {
-    if (scheduleScope != null && scheduleScope !== '') granted = verifyScheduleScope(scheduleScope, { actorId, date, now, secret: scopeSecret });
+    if (scheduleScope != null && scheduleScope !== '') {
+      const scope=verifyScheduleScope(scheduleScope, { actorId, date, now, secret: scopeSecret, includeAssignments:true });
+      granted=scope.studentIds; scheduleAssigned=scope.assignedStudentIds;
+    }
     else if (studentIds.length) fail(403, 'schedule_scope_required');
     if (studentIds.some(id => !granted.includes(id))) fail(403, 'student_outside_schedule_scope');
   }
@@ -169,7 +176,20 @@ export async function loadPortalContext(executor, input, { serviceId = 13, now =
     } catch (error) {
       if (!expanded) throw error;
       result.workday = [date, shiftDate(date, 1)].map(dayDate => ({ date: dayDate, status: 'unavailable', href: `/attendance/mentor-schedule?view=me&week=${dayDate}` }));
-      result.unavailableFeatures = ['workday'];
+      result.unavailableFeatures = [...(result.unavailableFeatures ?? []),'workday'];
+    }
+  }
+  if (expanded && context==='personal' && roles.some(role=>[3,4].includes(role))) {
+    const weeklyIds=ids([...assigned.map(row=>row.id),...scheduleAssigned]);
+    if (weeklyIds.length) {
+      try {
+        const weekly=await loadWeeklyAttendance(executor,weeklyIds,date);
+        result.items=weekly.items; result.weeklyCoverage=weekly.coverage;
+        if (!weekly.coverage.complete) result.unavailableFeatures=[...(result.unavailableFeatures??[]),'weekly_coverage'];
+      } catch {
+        result.weeklyCoverage={complete:false,status:'unavailable'};
+        result.unavailableFeatures=[...(result.unavailableFeatures??[]),'weekly_attendance'];
+      }
     }
   }
   return result;
