@@ -3,10 +3,12 @@ import assert from 'node:assert/strict';
 import {
   buildAnalyticsRange,
   buildAttendanceAnalyticsContract,
+  buildStudentLessonAnalytics,
   normalizeAnalyticsItems,
 } from './attendance-analytics-contract.mjs';
 import { buildScheduledAttendanceAnalytics } from './attendance-timeline.mjs';
 import { buildLearningAnalytics } from './learning-analytics.mjs';
+import { buildStudentExportReport, renderStudentAttendanceCsv } from './student-attendance-export.mjs';
 
 const range = buildAnalyticsRange('2026-09-01', '2026-09-02');
 const scheduleRows = [
@@ -28,6 +30,43 @@ function oneDayInput(overrides = {}) {
 function presence(at, type, id) {
   return { id, student_id: '7', event_type: type, attendance_date: at.slice(0, 10), occurred_at: at };
 }
+
+test('lunch is excluded from actual and planned lesson analytics and the export report', () => {
+  const actualSubject = { ...scheduleRows[0], subject_name: 'Обеднение словаря' };
+  const lunch = (lesson, entry_id, subject_name) => ({
+    ...lesson, entry_id, subject_name, subject_id: '25', slot_id: '6', slot_number: 6,
+    start_time: '12:00:00', end_time: '13:00:00',
+  });
+  const input = oneDayInput({
+    range,
+    scheduleRows: [
+      actualSubject, lunch(actualSubject, '103', 'Обед/прогулка'),
+      scheduleRows[1], lunch(scheduleRows[1], '104', 'Прогулка / ОБЕД'),
+    ],
+    publishedSchoolDays: ['2026-09-01', '2026-09-02'],
+    activeWeekdays: [2, 3],
+    periods: [
+      { id: '1', student_id: '7', starts_at: '2026-09-01 09:00:00', ends_at: '2026-09-01 13:00:00' },
+      { id: '2', student_id: '7', starts_at: '2026-09-02 09:00:00', ends_at: '2026-09-02 13:00:00' },
+    ],
+  });
+  const summary = buildAttendanceAnalyticsContract(input).items[0].summary;
+  const learning = buildLearningAnalytics({ ...input, includeLessons: true });
+  assert.equal(summary.scheduledMinutes, 60);
+  assert.equal(learning.missed_lessons_total, 1);
+  assert.deepEqual(learning.lessons.map(lesson => lesson.subject_name), ['Обеднение словаря']);
+  assert.deepEqual(learning.planned_lessons.map(lesson => lesson.subject_name), ['Математика']);
+
+  const projection = buildStudentLessonAnalytics({ ...input, student: input.people[0] });
+  const report = buildStudentExportReport({
+    student: { name: 'Ученик', className: '10' },
+    lessons: projection._lessons,
+    missingScheduleDates: [],
+    unplacedAbsenceDays: [],
+  }, range, 'all');
+  assert.deepEqual(report.rows.map(row => row.subject), ['Обеднение словаря']);
+  assert.doesNotMatch(renderStudentAttendanceCsv(report), /Обед\/прогулка|Прогулка \/ ОБЕД/iu);
+});
 
 test('UI, lesson details and service metrics use the same disjoint presence and absence intervals', () => {
   const input = oneDayInput({

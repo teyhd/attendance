@@ -1,4 +1,4 @@
-<link rel="stylesheet" href="/assets/attendance-analytics.css">
+<link rel="stylesheet" href="/assets/attendance-analytics.css?v=lesson-groups">
 <style>
   .staff-person { border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; }
   .staff-person summary { cursor: pointer; padding: 14px; display: flex; align-items: center; justify-content: space-between; gap: 16px; background: #f8fafc; }
@@ -818,7 +818,7 @@
         <h2 id="student-modal-title" class="mt-1 text-lg font-semibold text-gray-900" data-student-modal-title>Аналитика</h2>
         <div class="mt-1 text-sm text-gray-500" data-student-modal-subtitle></div>
       </div>
-      <div class="flex flex-wrap gap-2">
+      <div class="analytics-dialog-actions">
         <button type="button" data-student-export-toggle aria-expanded="false" aria-controls="student-export-form" class="workspace-secondary text-sm" hidden>Скачать отчёт</button>
         <button type="button" class="workspace-secondary text-sm" data-student-modal-close autofocus>Закрыть</button>
       </div>
@@ -855,7 +855,7 @@
       <p data-student-export-status role="status" class="text-sm text-slate-700" hidden></p>
       <p data-student-export-error role="alert" class="text-sm text-red-800" hidden></p>
     </form>
-    <div class="border-b border-gray-200 px-4">
+    <div class="analytics-dialog-tabs-frame">
       <div role="tablist" aria-label="Разделы карточки ученика" class="analytics-dialog-tabs" data-student-modal-tabs></div>
     </div>
     <div id="student-analytics-panel" role="tabpanel" tabindex="0" class="student-dialog-body focus:outline-none" data-student-modal-body>
@@ -1481,10 +1481,20 @@
   const exportError = exportForm.querySelector('[data-student-export-error]');
   let exportRequest = null;
   const canManagePage = dialog.dataset.canManage === '1';
+  const lessonGroupOptions = [['day', 'По дням'], ['subject', 'По предметам'], ['none', 'Без группировки']];
+  const lessonFilterOptions = [['all', 'Все записи'], ['missed', 'Засчитанные'], ['review', 'К уточнению'], ['planned', 'В планах']];
+  const lessonGroupStorageKey = 'attendance.lesson-group.v1';
+  const lessonDateFormat = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', timeZone: 'UTC' });
+  const lessonNumberFormat = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 });
+  const lessonPlural = new Intl.PluralRules('ru-RU');
+  let savedLessonGroup;
+  try { savedLessonGroup = localStorage.getItem(lessonGroupStorageKey); } catch {}
   const state = {
     payload: null,
     tab: 'overview',
     dayMode: 'all',
+    lessonGroup: lessonGroupOptions.some(([id]) => id === savedLessonGroup) ? savedLessonGroup : 'day',
+    lessonFilter: 'all',
     history: null,
     historyError: '',
     phoneDays: null,
@@ -1685,6 +1695,7 @@
     state.payload = null;
     state.tab = normalizeTab(options.tab);
     state.dayMode = normalizeDays(options.mode);
+    state.lessonFilter = 'all';
     state.history = null;
     state.historyError = '';
     state.phoneDays = null;
@@ -1910,18 +1921,100 @@
   }
 
   function renderLessons(payload) {
-    const actual = payload.missed_lessons || payload.learning?.lessons || [];
-    const planned = payload.planned_lessons || payload.learning?.planned_lessons || [];
-    const gaps = number(payload.learning?.data_gaps_total);
-    const row = (lesson, isPlanned) => {
-      const label = isPlanned ? 'Запланировано' : lesson.attendance_status === 'conflict' ? 'Требует уточнения' : lesson.is_unconfirmed ? 'Неподтверждённый пропуск' : lesson.is_partial ? 'Частичное отсутствие' : 'Отсутствие';
-      const minutes = number(lesson.absence_minutes ?? lesson.overlap_minutes);
-      return `<article class="workspace-lesson-row text-sm"><div><div class="font-medium text-slate-900">${escapeHtml(lesson.date_label || lesson.date)}</div><div class="mt-1 text-slate-500">${escapeHtml(lesson.time_label)} · ${escapeHtml(lesson.lesson_number)} урок</div></div><div><h4 class="font-medium text-slate-900">${escapeHtml(lesson.subject_name)}</h4><div class="mt-1 text-slate-500">${escapeHtml(lesson.teacher_name)}${lesson.room_name ? ` · Каб. ${escapeHtml(lesson.room_name)}` : ''}</div>${lesson.comment ? `<p class="mt-1 text-slate-600">${escapeHtml(lesson.comment)}</p>` : ''}</div><div><div class="text-xs font-medium ${isPlanned ? 'text-blue-700' : lesson.is_unconfirmed ? 'text-amber-800' : 'text-slate-600'}">${label}</div><div class="mt-1 text-slate-700">${escapeHtml(lesson.reason_name)}</div>${minutes ? `<div class="mt-1 text-xs text-slate-500">${minutes} мин.${!isPlanned && lesson.counts_as_missed_lesson === false ? ' · не засчитан как пропуск урока' : ''}</div>` : ''}</div></article>`;
-    };
-    return `<h3 class="font-semibold text-slate-900">Отсутствия по урокам</h3><p class="mt-1 text-sm text-slate-500">По отметкам и опубликованному расписанию</p>
-      ${gaps ? '<div class="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Для части дней нет опубликованного расписания. Периоды отсутствия сохранены в истории; полный расчёт уроков пока недоступен.</div>' : ''}
-      <div class="mt-3">${actual.length ? actual.map((lesson) => row(lesson, false)).join('') : `<div class="rounded-lg bg-slate-50 p-4 text-sm text-slate-600">${gaps ? 'Уроки за эти дни пока не рассчитаны.' : 'Фактических отсутствий на уроках за месяц нет.'}</div>`}</div>
-      ${planned.length ? `<section class="mt-6 border-t border-slate-200 pt-4"><h3 class="font-semibold text-slate-900">Планируемые отсутствия</h3><p class="mt-1 text-sm text-slate-500">Будущие уроки не входят в фактические пропуски.</p>${planned.map((lesson) => row(lesson, true)).join('')}</section>` : ''}`;
+    const options = (items, current) => items.map(([id, label]) =>
+      `<option value="${id}"${id === current ? ' selected' : ''}>${label}</option>`).join('');
+    return `<section class="lesson-analytics" aria-labelledby="lesson-analytics-title">
+      <h3 id="lesson-analytics-title">Отсутствия по урокам</h3>
+      <div class="lesson-analytics-controls">
+        <label>Группировка<select data-lesson-group>${options(lessonGroupOptions, state.lessonGroup)}</select></label>
+        <label>Показывать<select data-lesson-filter>${options(lessonFilterOptions, state.lessonFilter)}</select></label>
+      </div>
+      ${number(payload.learning?.data_gaps_total) ? '<p class="lesson-analytics-note">Для части дней нет опубликованного расписания. Отметки доступны в истории.</p>' : ''}
+      <div data-lesson-results>${renderLessonResults(payload)}</div>
+    </section>`;
+  }
+
+  function lessonNeedsReview(lesson) {
+    return lesson.is_unconfirmed || lesson.attendance_status === 'conflict';
+  }
+
+  function renderLessonResults(payload) {
+    let actual = payload.missed_lessons || payload.learning?.lessons || [];
+    const planned = ['all', 'planned'].includes(state.lessonFilter)
+      ? payload.planned_lessons || payload.learning?.planned_lessons || [] : [];
+    if (state.lessonFilter === 'planned') actual = [];
+    if (state.lessonFilter === 'missed') actual = actual.filter(lesson => lesson.counts_as_missed_lesson !== false);
+    if (state.lessonFilter === 'review') actual = actual.filter(lessonNeedsReview);
+
+    if (!actual.length && !planned.length) {
+      const message = state.lessonFilter === 'all' ? 'За месяц нет рассчитанных отсутствий на уроках.' : 'По выбранному фильтру записей нет.';
+      return `<p class="lesson-analytics-empty" role="status">${message}</p>`;
+    }
+    return `${renderLessonGroups(actual, false)}
+      ${planned.length ? `<section class="lesson-analytics-planned"><h4>Планируемые отсутствия</h4>${renderLessonGroups(planned, true)}</section>` : ''}`;
+  }
+
+  function renderLessonGroups(lessons, planned) {
+    if (!lessons.length) return '';
+    const byDay = state.lessonGroup === 'day';
+    const sorted = [...lessons].sort((a, b) =>
+      (planned ? a.date.localeCompare(b.date) : b.date.localeCompare(a.date)) ||
+      (a.starts_at || a.time_label).localeCompare(b.starts_at || b.time_label));
+    const rows = entries => `<ul class="lesson-analytics-rows">${entries.map(lesson => renderLessonRow(lesson, planned, !byDay)).join('')}</ul>`;
+    if (state.lessonGroup === 'none') return `<div class="lesson-analytics-group">${rows(sorted)}</div>`;
+
+    const groups = new Map();
+    for (const lesson of sorted) {
+      const subject = lesson.subject_name || 'Без предмета';
+      const key = byDay ? lesson.date : lesson.subject_id ? `id:${lesson.subject_id}` : `name:${subject.toLocaleLowerCase('ru')}`;
+      if (!groups.has(key)) {
+        let label = subject;
+        if (byDay) {
+          const date = new Date(lesson.date + 'T00:00:00Z');
+          label = Number.isNaN(date.valueOf()) ? lesson.date_label || 'Без даты' : lessonDateFormat.format(date);
+        }
+        groups.set(key, { label, lessons: [] });
+      }
+      groups.get(key).lessons.push(lesson);
+    }
+    const entries = [...groups.values()];
+    if (!byDay) entries.sort((a, b) => a.label.localeCompare(b.label, 'ru'));
+    return entries.map((group, index) => {
+      const count = group.lessons.length;
+      const word = { one: 'запись', few: 'записи', many: 'записей' }[lessonPlural.select(count)];
+      const missed = planned ? 0 : group.lessons.filter(lesson => lesson.counts_as_missed_lesson !== false).length;
+      const review = planned ? 0 : group.lessons.filter(lessonNeedsReview).length;
+      const summary = [`${count} ${word}`, missed && `${missed} засчитано`, review && `${review} к уточнению`].filter(Boolean).join(' · ');
+      return `<details class="lesson-analytics-group"${index === 0 ? ' open' : ''}>
+        <summary><span>${escapeHtml(group.label)}</span><small>${summary}</small></summary>
+        ${rows(group.lessons)}
+      </details>`;
+    }).join('');
+  }
+
+  function renderLessonRow(lesson, planned, showDate) {
+    const review = !planned && lessonNeedsReview(lesson);
+    const tone = planned ? 'planned' : review ? 'review' : 'missed';
+    let label = { planned: 'Запланировано', review: 'К уточнению', missed: 'Пропуск' }[tone];
+    if (!planned && !review && lesson.is_partial) label = 'Частичный пропуск';
+    const details = [lesson.teacher_name, lesson.room_name && `Каб. ${lesson.room_name}`].filter(Boolean).join(' · ');
+    const time = [showDate && (lesson.date_label || lesson.date), lesson.time_label, lesson.lesson_number > 0 && `${lesson.lesson_number} урок`].filter(Boolean).join(' · ');
+    const minutes = number(lesson.absence_minutes ?? lesson.overlap_minutes);
+    const duration = minutes > 0 && (minutes < 1 ? '< 1 мин.' : `${lessonNumberFormat.format(minutes)} мин.`);
+    const counted = !planned && lesson.counts_as_missed_lesson === false ? 'Не засчитан как пропуск урока' : '';
+    const info = [duration, counted].filter(Boolean).join(' · ');
+    const reason = [lesson.attendance_status === 'conflict' && 'Расхождение отметок', lesson.reason_name].filter(Boolean).join(' · ');
+    return `<li class="lesson-analytics-row">
+      <div class="lesson-analytics-subject">${escapeHtml(lesson.subject_name || 'Без предмета')}</div>
+      ${details ? `<p class="lesson-analytics-meta">${escapeHtml(details)}</p>` : ''}
+      <p class="lesson-analytics-time">${escapeHtml(time)}</p>
+      <span class="lesson-analytics-badge lesson-analytics-badge--${tone}">${label}</span>
+      ${reason || lesson.comment || info ? `<div class="lesson-analytics-reason">
+        ${reason ? `<p>${escapeHtml(reason)}</p>` : ''}
+        ${lesson.comment ? `<p>${escapeHtml(lesson.comment)}</p>` : ''}
+        ${info ? `<p class="lesson-analytics-meta-text">${escapeHtml(info)}</p>` : ''}
+      </div>` : ''}
+    </li>`;
   }
 
   function renderHistory(payload, canManage) {
@@ -2428,6 +2521,16 @@
     await ensureHistory(true, Boolean(more)); render(); body.scrollTop = more ? scroll : 0;
   });
   dialog.addEventListener('change', async (event) => {
+    if (state.tab === 'lessons' && event.target.matches('[data-lesson-group], [data-lesson-filter]')) {
+      if (event.target.matches('[data-lesson-group]')) {
+        state.lessonGroup = event.target.value;
+        try { localStorage.setItem(lessonGroupStorageKey, state.lessonGroup); } catch {}
+      } else {
+        state.lessonFilter = event.target.value;
+      }
+      body.querySelector('[data-lesson-results]').innerHTML = renderLessonResults(state.payload);
+      return;
+    }
     const edit = event.target.closest('[data-edit-absence], [data-edit-presence]');
     if (edit && ['from', 'occurredAt'].includes(event.target.name)) {
       const reason = edit.elements.changeReason || edit.elements.reason;

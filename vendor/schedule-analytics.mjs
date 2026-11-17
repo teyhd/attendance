@@ -1,9 +1,11 @@
 export const DEFAULT_ACTIVE_WEEKDAYS = [1, 2, 3, 4, 5];
 const IGNORED_ATTENDANCE_SUBJECTS = new Set(['завтрак', 'полдник']);
+const LUNCH_SUBJECT = /(?:^|[^\p{L}\p{N}])обед(?=$|[^\p{L}\p{N}])/iu;
 
 export function buildScheduleIndex(rows) {
   const index = { byStudentDay: new Map(), byClassDay: new Map() };
   for (const row of rows || []) {
+    if (LUNCH_SUBJECT.test(row?.subject_name || '')) continue;
     const lesson = normalizeScheduleLesson(row);
     if (!lesson || !isSchoolWeekday(lesson.date)) continue;
     const map = lesson.student_id ? index.byStudentDay : index.byClassDay;

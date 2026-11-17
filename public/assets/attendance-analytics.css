@@ -119,9 +119,128 @@ button.analytics-calendar-day { color: #0f172a; }
 .analytics-journal-actions { display: flex; gap: .125rem .25rem; flex-wrap: wrap; }
 .analytics-dialog-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: .25rem .5rem; padding: .625rem .75rem; border-bottom: 1px solid #e2e8f0; }
 .analytics-dialog-heading .workspace-secondary { padding-inline: .5rem; }
+.analytics-dialog-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.analytics-dialog-actions [data-student-export-toggle] { border-color: #a5b4fc; color: #4338ca; }
+.analytics-dialog-tabs-frame { padding-inline: 1rem; border-bottom: 1px solid #e2e8f0; }
 .analytics-dialog-tabs { display: flex; flex-wrap: wrap; }
-.analytics-dialog-tabs button { padding: .375rem .625rem; font-size: .8125rem; white-space: normal; }
+.analytics-dialog-tabs button { padding: .375rem .625rem; font-size: .8125rem; white-space: normal; transition: none; }
 .student-dialog-shell .student-dialog-body { padding: .75rem; }
+
+.lesson-analytics { color: #0f172a; }
+.lesson-analytics h3 { font-size: 1.125rem; font-weight: 700; line-height: 1.3; }
+.lesson-analytics-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .5rem .75rem;
+  margin-block: .75rem;
+  color: #334155;
+  font-size: .875rem;
+  font-weight: 600;
+}
+.lesson-analytics-controls label { min-width: 0; }
+.lesson-analytics-controls select {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 2.75rem;
+  margin-top: .25rem;
+  border: 1px solid #cbd5e1;
+  border-radius: .5rem;
+  background: #fff;
+  color: #0f172a;
+  font: inherit;
+  font-weight: 400;
+  padding-inline: .5rem;
+}
+.lesson-analytics-controls select:focus-visible,
+.lesson-analytics-group summary:focus-visible { outline: 2px solid #4338ca; outline-offset: -2px; }
+.lesson-analytics-note, .lesson-analytics-empty {
+  margin-block: .75rem;
+  padding: .5rem .75rem;
+  border-radius: .5rem;
+  font-size: .875rem;
+}
+.lesson-analytics-note { border: 1px solid #fde68a; background: #fffbeb; color: #78350f; }
+.lesson-analytics-empty { background: #f8fafc; color: #475569; }
+.lesson-analytics-planned { margin-top: 1rem; }
+.lesson-analytics-planned h4 { margin-bottom: .5rem; font-size: 1rem; font-weight: 650; }
+.lesson-analytics-group { border: 1px solid #cbd5e1; border-radius: .625rem; overflow: hidden; }
+.lesson-analytics-group + .lesson-analytics-group { margin-top: .5rem; }
+.lesson-analytics-group summary {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: .25rem 1rem;
+  min-height: 2.75rem;
+  padding: .5rem .75rem;
+  background: #f8fafc;
+  cursor: pointer;
+  list-style: none;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.lesson-analytics-group summary::-webkit-details-marker { display: none; }
+.lesson-analytics-group summary::after {
+  content: "";
+  width: .475rem;
+  height: .475rem;
+  margin-right: .1875rem;
+  border: solid #334155;
+  border-width: 0 2px 2px 0;
+  transform: translateY(-.125rem) rotate(45deg);
+}
+.lesson-analytics-group[open] summary::after { transform: translateY(.125rem) rotate(225deg); }
+.lesson-analytics-group small { color: #475569; font-size: .8125rem; font-weight: 400; }
+.lesson-analytics-group[open] > .lesson-analytics-rows { border-top: 1px solid #e2e8f0; }
+.lesson-analytics-rows { margin: 0; padding-inline: .75rem; list-style: none; }
+.lesson-analytics-row {
+  display: grid;
+  grid-template-areas: "subject time badge" "meta time reason";
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, .8fr) minmax(0, 1.15fr);
+  align-items: start;
+  gap: .125rem .75rem;
+  padding-block: .625rem;
+  font-size: .875rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.lesson-analytics-row + .lesson-analytics-row { border-top: 1px solid #e2e8f0; }
+.lesson-analytics-subject { grid-area: subject; font-weight: 650; }
+.lesson-analytics-meta { grid-area: meta; }
+.lesson-analytics-time { grid-area: time; font-variant-numeric: tabular-nums; }
+.lesson-analytics-meta, .lesson-analytics-time, .lesson-analytics-meta-text { color: #475569; font-size: .8125rem; }
+.lesson-analytics-reason { grid-area: reason; color: #334155; }
+.lesson-analytics-badge {
+  grid-area: badge;
+  justify-self: start;
+  padding: .125rem .375rem;
+  border-radius: .375rem;
+  font-size: .75rem;
+  font-weight: 650;
+}
+.lesson-analytics-badge--missed { background: #fee2e2; color: #991b1b; }
+.lesson-analytics-badge--review { background: #fef3c7; color: #92400e; }
+.lesson-analytics-badge--planned { background: #e2e8f0; color: #334155; }
+
+@media (max-width: 39.99rem) {
+  .analytics-dialog-heading > :first-child { flex-basis: 100%; }
+  .analytics-dialog-actions { width: 100%; }
+  .analytics-dialog-actions .workspace-secondary { min-height: 2.75rem; }
+  .analytics-dialog-actions .workspace-secondary:not([hidden]) { flex: 1; }
+  .lesson-analytics-group summary { grid-template-columns: minmax(0, 1fr) auto; gap: 0 .5rem; }
+  .lesson-analytics-group small { grid-column: 1; }
+  .lesson-analytics-group summary::after { grid-column: 2; grid-row: 1 / span 2; }
+  .lesson-analytics-row {
+    grid-template-areas: "subject badge" "meta meta" "time time" "reason reason";
+    grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+  }
+  .lesson-analytics-badge { justify-self: end; max-width: 8rem; }
+  .lesson-analytics-controls select { font-size: 1rem; }
+}
+@media (max-width: 23.49rem) {
+  .lesson-analytics-controls { grid-template-columns: minmax(0, 1fr); }
+}
+
 .staff-person summary > span:first-of-type { overflow-wrap: anywhere; }
 .staff-person .staff-counts { gap: .25rem .75rem; }
 #adult-people .no-print, #adult-people :is(input, select) { min-width: 0; max-width: 100%; }
@@ -142,7 +261,9 @@ button.analytics-calendar-day { color: #0f172a; }
   .analytics-controls input:not([type="hidden"]), .analytics-controls select { width: 100%; }
   .analytics-download { grid-column: 2; grid-row: 1; }
   .analytics-today-list[tabindex] { max-height: 10rem; }
-  .analytics-tabs button, .analytics-dialog-tabs button { padding-inline: .4375rem; font-size: .8125rem; }
+  .analytics-tabs button { padding-inline: .4375rem; font-size: .8125rem; }
+  .analytics-dialog-tabs-frame { padding-inline: .375rem; }
+  .analytics-dialog-tabs button { padding-inline: .3125rem; }
   .analytics-report-table, .analytics-report-table tbody { display: block; }
   .analytics-report-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .analytics-report-table tbody tr { display: flex; flex-wrap: wrap; gap: .1875rem .75rem; padding-block: .375rem; border-top: 1px solid var(--report-border); }
