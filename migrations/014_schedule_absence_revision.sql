@@ -1,0 +1,2 @@
+ALTER TABLE attendance.absence_periods
+  ADD COLUMN IF NOT EXISTS revision INT UNSIGNED NOT NULL DEFAULT 0;

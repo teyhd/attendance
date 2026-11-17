@@ -347,7 +347,7 @@
 
       {{#if analytics.learning.data_gaps_total}}
         <div class="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-          Отметки без опубликованного расписания: {{analytics.learning.uncovered_absence_periods}}. Дней без расписания: {{analytics.learning.data_gaps_total}}.
+          Отметки с неполным расписанием: {{analytics.learning.uncovered_absence_periods}}. Пробелов в расписании: {{analytics.learning.data_gaps_total}}.
         </div>
       {{/if}}
 
@@ -1221,16 +1221,16 @@
         ${summaryCard('Неполных дней', kpi.incomplete_days, number(kpi.incomplete_days) ? 'sky' : 'gray')}
         ${summaryCard('Периодов', kpi.periods)}
         ${summaryCard('Дней', kpi.absence_days)}
-        ${summaryCard('Уроков', kpi.missed_lessons)}
+        ${summaryCard('Уроков по отметкам', !kpi.missed_lessons && learning.historical_schedule_gap_dates?.length ? '—' : kpi.missed_lessons)}
         ${summaryCard('Опозданий', kpi.late_days, number(kpi.late_days) ? 'amber' : 'gray')}
         ${summaryCard('Минут опозд.', kpi.late_minutes, number(kpi.late_minutes) ? 'amber' : 'gray')}
         ${summaryCard('Уроков из-за опозд.', kpi.late_missed_lessons, number(kpi.late_missed_lessons) ? 'amber' : 'gray')}
-        ${summaryCard('Без расписания', kpi.data_gaps, number(kpi.data_gaps) ? 'red' : 'gray')}
+        ${summaryCard('Пробелы расписания', kpi.data_gaps, number(kpi.data_gaps) ? 'red' : 'gray')}
         ${summaryCard('Внимание', kpi.needs_attention, number(kpi.needs_attention) ? 'red' : 'gray')}
         ${summaryCard('Без причины', kpi.without_reason, number(kpi.without_reason) ? 'amber' : 'gray')}
       </div>
       ${attendance.metric_label ? `<button type="button" class="mt-3 rounded border border-gray-200 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50" data-student-tab="days" data-student-days-mode="all">${escapeHtml(attendance.metric_label)}</button>` : ''}
-      ${learning.data_gaps_total ? `<div class="mt-3 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Есть дни без опубликованного расписания: ${escapeHtml(learning.data_gaps_total)}.</div>` : ''}
+      ${renderHistoricalGaps(learning)}
       ${lateness.data_gaps_total ? `<div class="mt-3 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Без расписания по присутствию: ${escapeHtml(lateness.data_gaps_total)}.</div>` : ''}
       <div class="mt-4 grid gap-4 lg:grid-cols-2">
         <div>
@@ -1295,10 +1295,42 @@
   }
 
   function renderLessons(payload) {
-    const lessons = payload.learning?.lessons || [];
-    if (!lessons.length) return '<div class="rounded border border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">Пропущенных уроков по опубликованному расписанию нет.</div>';
+    const learning = payload.learning || {};
+    const actual = learning.confirmed_lessons ?? learning.lessons ?? [];
+    const planned = learning.planned_lessons || [];
+    const empty = learning.historical_schedule_gap_dates?.length
+      ? 'Сохранённые отметки доступны на вкладке «Отсутствия».'
+      : 'Пропусков по отметкам за период нет.';
     return `
-      <div class="overflow-x-auto">
+      ${renderHistoricalGaps(learning)}
+      <h3 class="mb-2 text-sm font-semibold text-gray-900">Пропуски по отметкам</h3>
+      ${actual.length ? renderLessonTable(actual) : `<p class="text-sm text-gray-500">${empty}</p>`}
+      ${planned.length ? `<h3 class="mt-4 mb-2 text-sm font-semibold text-gray-900">Запланировано</h3>${renderLessonTable(planned)}` : ''}
+    `;
+  }
+
+  function renderHistoricalGaps(learning) {
+    const dates = learning.historical_schedule_gap_dates || [];
+    return dates.length ? `<p class="my-2 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><strong>Расчёт неполный.</strong> Исторические назначения без подтверждения: ${dates.map(day => escapeHtml(day.date_label)).join(', ')}.</p>` : '';
+  }
+
+  function renderLessonTable(lessons) {
+    return `
+      <ul class="divide-y divide-gray-200 text-sm sm:hidden">
+        ${lessons.map((lesson) => `
+          <li class="py-3">
+            <p class="text-xs text-gray-600"><time datetime="${attr(lesson.date)}">${escapeHtml(lesson.date_label)}</time> · ${escapeHtml(lesson.time_label)}</p>
+            <strong class="text-gray-900">${escapeHtml(lesson.subject_name)}</strong>
+            ${lesson.removed_from_schedule ? '<p class="text-xs text-gray-600">Снято из-за отсутствия</p>' : ''}
+            ${lesson.has_conflict ? `<p class="text-xs text-amber-700">Конфликт: ${escapeHtml(lesson.conflict_subjects)}</p>` : ''}
+            ${lesson.teacher_name || lesson.room_name ? `<p class="text-xs text-gray-600">${[lesson.teacher_name, lesson.room_name].filter(Boolean).map(escapeHtml).join(' · ')}</p>` : ''}
+            <p>${escapeHtml(lesson.reason_name)}</p>
+            ${lesson.overlap_label ? `<p class="text-xs text-gray-600">${lesson.partial_confirmed_absence ? 'Часть урока · ' : ''}${escapeHtml(lesson.overlap_label)}</p>` : ''}
+            ${lesson.comment ? `<p class="text-xs text-gray-600">${escapeHtml(lesson.comment)}</p>` : ''}
+          </li>
+        `).join('')}
+      </ul>
+      <div class="hidden overflow-x-auto sm:block">
         <table class="min-w-full text-sm">
           <thead class="text-xs text-gray-500">
             <tr class="border-b">
@@ -1320,12 +1352,14 @@
                 <td class="py-2 pr-3 align-top">
                   <div class="font-medium text-gray-900">${escapeHtml(lesson.subject_name)}</div>
                   ${lesson.subject_type ? `<div class="text-xs text-gray-500">${escapeHtml(lesson.subject_type)}</div>` : ''}
+                  ${lesson.removed_from_schedule ? '<div class="text-xs text-gray-600">Снято из-за отсутствия</div>' : ''}
                   ${lesson.has_conflict ? `<div class="text-xs text-amber-700">Конфликт: ${escapeHtml(lesson.conflict_subjects)}</div>` : ''}
                 </td>
                 <td class="py-2 pr-3 align-top text-gray-700">${escapeHtml(lesson.teacher_name)}</td>
                 <td class="py-2 pr-3 align-top text-gray-700">${escapeHtml(lesson.room_name)}</td>
                 <td class="py-2 align-top text-gray-700">
                   <div class="font-medium text-gray-900">${escapeHtml(lesson.reason_name)}</div>
+                  ${lesson.overlap_label ? `<div class="text-xs text-gray-600">${lesson.partial_confirmed_absence ? 'Часть урока · ' : ''}${escapeHtml(lesson.overlap_label)}</div>` : ''}
                   ${lesson.comment ? `<div class="text-xs text-gray-500">${escapeHtml(lesson.comment)}</div>` : ''}
                 </td>
               </tr>

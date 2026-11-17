@@ -121,6 +121,8 @@ function sanitizeLearning(learning = {}) {
     has_data: Boolean(learning.has_data),
     subjects: array(learning.subjects).map(sanitizeSubject),
     lessons: array(learning.lessons).map(sanitizeLesson),
+    display_lessons: [...array(learning.confirmed_lessons ?? learning.lessons), ...array(learning.planned_lessons)].map(sanitizeLesson),
+    historical_schedule_gap_dates: array(learning.historical_schedule_gap_dates).map(({ date, date_label }) => ({ date, date_label })),
   };
 }
 
@@ -151,6 +153,10 @@ function sanitizeLesson(lesson = {}) {
     room_name: lesson.room_name || '',
     reason_name: lesson.reason_name || '',
     comment: lesson.comment || '',
+    is_planned: Boolean(lesson.is_planned),
+    removed_from_schedule: Boolean(lesson.removed_from_schedule),
+    partial_confirmed_absence: Boolean(lesson.partial_confirmed_absence),
+    overlap_label: lesson.overlap_label || '',
   };
 }
 

@@ -4,6 +4,7 @@ import {
   dateOnly,
   formatDateLabel,
   isoWeekday,
+  isHistoricalScheduleGap,
   lessonsForStudentDay,
   parseDateTimeMs,
 } from './schedule-analytics.mjs';
@@ -18,6 +19,7 @@ export function buildScheduledAttendanceAnalytics({
   publishedSchoolDays = [],
   activeWeekdays = [1, 2, 3, 4, 5],
   now = '',
+  scheduleCoverageFrom = '',
 } = {}) {
   if (!range) return emptyScheduledAnalytics();
 
@@ -40,13 +42,20 @@ export function buildScheduledAttendanceAnalytics({
       const dayStartMs = parseDateTimeMs(`${day} 00:00:00`);
       if (!Number.isFinite(dayStartMs) || dayStartMs > nowMs) continue;
       const isPublished = published.has(day);
-      const lessons = isPublished ? lessonsForStudentDay(scheduleIndex, student, student, day) : [];
+      const hasAssignments = scheduleIndex.assignmentsByStudentDay.has(studentDayKey(studentId, day));
+      const studentPeriods = periodsByStudent.get(studentId) || [];
+      const historyGap = (isPublished || hasAssignments || expectedWeekdays.has(isoWeekday(day)))
+        && isHistoricalScheduleGap(day, studentPeriods, scheduleCoverageFrom);
+      const lessons = isPublished || hasAssignments
+        ? lessonsForStudentDay(scheduleIndex, student, student, day).filter((lesson) => !historyGap || lesson.assignment_key)
+        : [];
       const scheduled = mergeIntervals(lessons.map((lesson) => ({ start: lesson.starts_ms, end: lesson.ends_ms })));
-      if (!isPublished || !scheduled.length) {
-        if ((isPublished || expectedWeekdays.has(isoWeekday(day))) && dayStartMs <= nowMs) {
-          row.schedule_gap_days += 1;
-          row.days.push(dayPayload(day, 'schedule_gap'));
-        }
+      const missing = !hasAssignments && !scheduled.length && (isPublished || expectedWeekdays.has(isoWeekday(day)));
+      if (historyGap || missing) {
+        row.schedule_gap_days += 1;
+        if (!scheduled.length) row.days.push(dayPayload(day, 'schedule_gap'));
+      }
+      if (!scheduled.length) {
         continue;
       }
 
@@ -54,7 +63,7 @@ export function buildScheduledAttendanceAnalytics({
       if (!actualScheduled.length) continue;
       const key = studentDayKey(studentId, day);
       const presence = presenceIntervals(eventsByStudentDay.get(key) || [], actualScheduled, nowMs);
-      const absences = periodIntervals(periodsByStudent.get(studentId) || [], day, nowMs);
+      const absences = periodIntervals(studentPeriods, day, nowMs);
       const conflictIntervals = (conflictsByStudentDay.get(key) || [])
         .map(conflictInterval)
         .filter(Boolean)

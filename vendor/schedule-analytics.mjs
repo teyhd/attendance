@@ -2,10 +2,21 @@ export const DEFAULT_ACTIVE_WEEKDAYS = [1, 2, 3, 4, 5];
 const IGNORED_ATTENDANCE_SUBJECTS = new Set(['завтрак', 'полдник']);
 
 export function buildScheduleIndex(rows) {
-  const index = { byStudentDay: new Map(), byClassDay: new Map() };
+  const index = { byStudentDay: new Map(), byClassDay: new Map(), assignmentsByStudentDay: new Map() };
   for (const row of rows || []) {
     const lesson = normalizeScheduleLesson(row);
     if (!lesson) continue;
+    if (lesson.assignment_key && lesson.student_id) {
+      if (isoWeekday(lesson.date) === 7 || (lesson.assignment_status === 'assigned' && lesson.release_state === 'restored')) continue;
+      const key = `${lesson.student_id}|${lesson.date}`;
+      if (!index.assignmentsByStudentDay.has(key)) index.assignmentsByStudentDay.set(key, new Map());
+      const assignments = index.assignmentsByStudentDay.get(key);
+      const current = assignments.get(lesson.assignment_key);
+      if (!current || current.assignment_updated_at <= lesson.assignment_updated_at) {
+        assignments.set(lesson.assignment_key, lesson);
+      }
+      continue;
+    }
     const map = lesson.student_id ? index.byStudentDay : index.byClassDay;
     const ownerId = lesson.student_id || lesson.class_id;
     if (!ownerId) continue;
@@ -27,8 +38,9 @@ export function normalizeScheduleLesson(row) {
   const date = dateOnly(row.lesson_date) || dateFromWeekStart(row.week_start, row.day_of_week);
   if (!date) return null;
 
-  const fullStartsAt = `${date} ${normalizeTime(row.start_time)}`;
-  const fullEndsAt = `${date} ${normalizeTime(row.end_time)}`;
+  const assignmentKey = String(row.assignment_key || '');
+  const fullStartsAt = assignmentKey ? row.assignment_starts_at : `${date} ${normalizeTime(row.start_time)}`;
+  const fullEndsAt = assignmentKey ? row.assignment_ends_at : `${date} ${normalizeTime(row.end_time)}`;
   const fullStartMs = parseDateTimeMs(fullStartsAt);
   const fullEndMs = parseDateTimeMs(fullEndsAt);
   if (!Number.isFinite(fullStartMs) || !Number.isFinite(fullEndMs) || fullEndMs <= fullStartMs) {
@@ -36,7 +48,9 @@ export function normalizeScheduleLesson(row) {
   }
 
   const slotPart = normalizeSlotPart(row.slot_part);
-  const [effectiveStartMs, effectiveEndMs] = effectiveLessonBounds(fullStartMs, fullEndMs, slotPart);
+  const [effectiveStartMs, effectiveEndMs] = assignmentKey
+    ? [fullStartMs, fullEndMs]
+    : effectiveLessonBounds(fullStartMs, fullEndMs, slotPart);
   const effectiveStartsAt = formatSqlDateTime(effectiveStartMs);
   const effectiveEndsAt = formatSqlDateTime(effectiveEndMs);
   const subjectName = String(row.subject_name || '').trim() || 'Без предмета';
@@ -56,6 +70,7 @@ export function normalizeScheduleLesson(row) {
     class_id: classId,
     class_name: row.class_name || '',
     student_id: studentId,
+    group_id: positiveString(row.group_id),
     subject_id: row.subject_id ? String(row.subject_id) : '',
     subject_key: subjectKey,
     subject_name: subjectName,
@@ -76,7 +91,11 @@ export function normalizeScheduleLesson(row) {
     starts_ms: effectiveStartMs,
     ends_ms: effectiveEndMs,
     time_label: formatTimeRange(effectiveStartsAt, effectiveEndsAt),
-    scope: studentId ? 'student' : 'class',
+    scope: row.source_scope || (studentId ? 'student' : 'class'),
+    assignment_key: assignmentKey,
+    assignment_status: row.assignment_status || '',
+    assignment_updated_at: row.assignment_updated_at || '',
+    release_state: row.release_state || '',
   };
 }
 
@@ -92,12 +111,30 @@ function isIgnoredAttendanceScheduleRow(row) {
 export function lessonsForStudentDay(index, item, student, day) {
   const studentId = String(item.student_id || item.person_id || student.student_id || student.person_id || student.id || '');
   const classId = String(item.class_id || student.class_id || student.classId || '');
-  const individual = index.byStudentDay.get(`${studentId}|${day}`) || [];
+  const key = `${studentId}|${day}`;
+  const assignments = Array.from(index.assignmentsByStudentDay.get(key)?.values() || []);
+  const individual = (index.byStudentDay.get(key) || []).filter((lesson) => !assignments.some((assignment) => replacesLiveLesson(assignment, lesson)));
   const classLessons = index.byClassDay.get(`${classId}|${day}`) || [];
   const filteredClassLessons = classLessons.filter((classLesson) => (
     !individual.some((studentLesson) => sameSlotOverlap(studentLesson, classLesson))
+    && !assignments.some((assignment) => sameSlotOverlap(assignment, classLesson) && (
+      isExpectedAssignment(assignment) || assignment.scope !== 'class' || replacesLiveLesson(assignment, classLesson)
+    ))
   ));
-  return dedupeAndMarkConflicts([...individual, ...filteredClassLessons]);
+  return dedupeAndMarkConflicts([...assignments.filter(isExpectedAssignment), ...individual, ...filteredClassLessons]);
+}
+
+function replacesLiveLesson(assignment, lesson) {
+  if (!sameSlotOverlap(assignment, lesson)) return false;
+  if (isExpectedAssignment(assignment)) return true;
+  if (assignment.entry_ids.some((id) => lesson.entry_ids.includes(id))) return true;
+  return assignment.scope === lesson.scope
+    && assignment.subject_key === lesson.subject_key
+    && assignment.group_id === lesson.group_id;
+}
+
+function isExpectedAssignment(lesson) {
+  return lesson.assignment_status === 'assigned' && lesson.release_state !== 'return_conflict';
 }
 
 export function overlapMinutesForPeriod(period, lesson, range) {
@@ -156,6 +193,14 @@ export function addDays(dateText, amount) {
   const [year, month, day] = dateText.split('-').map(Number);
   const date = new Date(Date.UTC(year, month - 1, day + amount));
   return `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())}`;
+}
+
+export function isHistoricalScheduleGap(day, periods, coverageFrom) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(coverageFrom || '') || day >= coverageFrom) return false;
+  const dayStart = `${day} 00:00:00`;
+  const dayEnd = `${addDays(day, 1)} 00:00:00`;
+  return periods.some((period) => !period.deleted_at && !period.cancelled_at
+    && period.starts_at < dayEnd && (!period.ends_at || period.ends_at > dayStart));
 }
 
 function dedupeAndMarkConflicts(lessons) {

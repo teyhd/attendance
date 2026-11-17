@@ -10,8 +10,8 @@ import {
   formatSqlDateTime,
   isoWeekday,
   lessonsForStudentDay,
-  overlapMinutesForPeriod,
   parseDateTimeMs,
+  isHistoricalScheduleGap,
 } from './schedule-analytics.mjs';
 
 export const MISSED_LESSON_MIN_OVERLAP_MINUTES = 15;
@@ -42,41 +42,58 @@ export function buildLearningAnalytics({
   publishedSchoolDays = [],
   activeWeekdays = DEFAULT_ACTIVE_WEEKDAYS,
   includeLessons = false,
+  now = '',
+  scheduleCoverageFrom = '',
 } = {}) {
   if (!range) {
-    return includeLessons ? { ...EMPTY_LEARNING, lessons: [] } : { ...EMPTY_LEARNING };
+    return includeLessons ? { ...EMPTY_LEARNING, lessons: [], confirmed_lessons: [], planned_lessons: [] } : { ...EMPTY_LEARNING };
   }
 
   const studentById = buildStudentMap(students, periods);
   const scheduleIndex = buildScheduleIndex(scheduleRows);
   const publishedDaySet = new Set(publishedSchoolDays.map(dateOnly).filter(Boolean));
   const activeWeekdaySet = new Set((activeWeekdays || DEFAULT_ACTIVE_WEEKDAYS).map(Number));
-  const missedLessons = [];
+  const actual = new Map();
+  const planned = new Map();
+  const rangeStart = parseDateTimeMs(range.start_at);
+  const rangeEnd = parseDateTimeMs(range.end_at);
+  const nowMs = parseDateTimeMs(now || range.end_at);
   const dataGaps = [];
   const periodIds = new Set();
   const uncoveredPeriodIds = new Set();
 
   for (const period of periods) {
+    if (period.deleted_at || period.cancelled_at) continue;
     const periodId = String(period.id || '');
     if (!periodId) continue;
     periodIds.add(periodId);
 
     const student = studentById.get(String(period.student_id)) || period;
     const days = expandPeriodDaysWithinRange(period, range);
+    const start = Math.max(rangeStart, parseDateTimeMs(period.starts_at));
+    const end = Math.min(rangeEnd, parseDateTimeMs(period.ends_at || range.end_at));
     let hasGap = false;
 
     for (const day of days) {
-      if (!activeWeekdaySet.has(isoWeekday(day))) continue;
-      if (!publishedDaySet.has(day)) {
+      const hasAssignments = scheduleIndex.assignmentsByStudentDay.has(`${student.student_id}|${day}`);
+      if (!activeWeekdaySet.has(isoWeekday(day)) && !hasAssignments) continue;
+      const historicalGap = isHistoricalScheduleGap(day, [period], scheduleCoverageFrom);
+      if (historicalGap) {
         hasGap = true;
-        dataGaps.push(createDataGap(period, student, day));
+        dataGaps.push({ ...createDataGap(period, student, day), code: 'unverified_historical_schedule', message: 'Исторические назначения не подтверждены' });
+      }
+      if (!publishedDaySet.has(day) && !hasAssignments) {
+        hasGap = true;
+        if (!historicalGap) dataGaps.push(createDataGap(period, student, day));
         continue;
       }
 
       for (const lesson of lessonsForStudentDay(scheduleIndex, period, student, day)) {
-        const overlapMinutes = overlapMinutesForPeriod(period, lesson, range);
-        if (overlapMinutes <= MISSED_LESSON_MIN_OVERLAP_MINUTES) continue;
-        missedLessons.push(createMissedLesson(period, student, lesson, overlapMinutes));
+        if (historicalGap && !lesson.assignment_key) continue;
+        const from = Math.max(start, lesson.starts_ms);
+        const to = Math.min(end, lesson.ends_ms);
+        recordOverlap(actual, period, student, lesson, from, Math.min(to, nowMs));
+        recordOverlap(planned, period, student, lesson, Math.max(from, nowMs), to);
       }
     }
 
@@ -85,7 +102,9 @@ export function buildLearningAnalytics({
     }
   }
 
-  missedLessons.sort(compareMissedLessons);
+  const confirmedLessons = summarizeOverlaps(actual, false);
+  const missedLessons = confirmedLessons.filter((lesson) => lesson.counts_as_confirmed_missed_lesson);
+  const plannedLessons = summarizeOverlaps(planned, true);
   const learning = aggregateLearning({
     range,
     students,
@@ -94,12 +113,54 @@ export function buildLearningAnalytics({
     periodIds,
     uncoveredPeriodIds,
   });
+  learning.confirmed_missed_lessons_total = missedLessons.length;
+  learning.confirmed_absence_minutes = confirmedLessons.reduce((sum, lesson) => sum + lesson.confirmed_absence_minutes, 0);
+  learning.planned_lessons_total = plannedLessons.length;
+  learning.historical_schedule_gap_dates = [...new Set(dataGaps.filter((gap) => gap.code === 'unverified_historical_schedule').map((gap) => gap.date))]
+    .sort().map((date) => ({ date, date_label: formatDateLabel(date) }));
 
   if (includeLessons) {
     learning.lessons = missedLessons;
+    learning.confirmed_lessons = confirmedLessons;
+    learning.planned_lessons = plannedLessons;
   }
 
   return learning;
+}
+
+function recordOverlap(groups, period, student, lesson, start, end) {
+  if (!(end > start)) return;
+  const key = JSON.stringify([student.student_id, lesson.date, lesson.slot_id, lesson.starts_ms, lesson.ends_ms, lesson.subject_key]);
+  if (!groups.has(key)) groups.set(key, { key, student, lesson, periods: [], intervals: [] });
+  const group = groups.get(key);
+  group.periods.push(period);
+  group.intervals.push({ start, end });
+}
+
+function summarizeOverlaps(groups, isPlanned) {
+  return [...groups.values()].map(({ key, student, lesson, periods, intervals }) => {
+    const ordered = intervals.sort((a, b) => a.start - b.start);
+    let coveredThrough = Number.NEGATIVE_INFINITY;
+    let coveredMs = 0;
+    for (const { start, end } of ordered) {
+      coveredMs += Math.max(0, end - Math.max(start, coveredThrough));
+      coveredThrough = Math.max(coveredThrough, end);
+    }
+    const minutes = coveredMs / 60_000;
+    const period = periods[0];
+    const distinct = (values) => [...new Set(values.filter(Boolean))].join(' · ');
+    return {
+      ...createMissedLesson(period, student, lesson, minutes),
+      id: periods.length === 1 ? `${period.id}:${lesson.assignment_key || lesson.entry_ids.join(',')}` : key,
+      reason_name: distinct(periods.map((item) => item.reason_name || item.reason_code)),
+      comment: distinct(periods.map((item) => item.comment)),
+      is_planned: isPlanned,
+      confirmed_absence_minutes: isPlanned ? 0 : minutes,
+      counts_as_confirmed_missed_lesson: !isPlanned && minutes > MISSED_LESSON_MIN_OVERLAP_MINUTES,
+      partial_confirmed_absence: coveredMs < lesson.ends_ms - lesson.starts_ms,
+      removed_from_schedule: lesson.release_state === 'full',
+    };
+  }).sort(compareMissedLessons);
 }
 
 function buildStudentMap(students, periods) {
@@ -393,10 +454,10 @@ function compareMissedLessons(a, b) {
 function expandPeriodDaysWithinRange(period, range) {
   const startMs = Math.max(parseDateTimeMs(period.starts_at), parseDateTimeMs(range.start_at));
   const endMs = Math.min(parseDateTimeMs(period.ends_at || range.end_at), parseDateTimeMs(range.end_at));
-  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) return [];
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return [];
 
   const startDate = dateOnly(formatSqlDateTime(startMs));
-  const endDate = dateOnly(formatSqlDateTime(endMs));
+  const endDate = dateOnly(formatSqlDateTime(endMs - 1));
   const days = [];
   for (let day = startDate; day <= endDate; day = addDays(day, 1)) {
     days.push(day);

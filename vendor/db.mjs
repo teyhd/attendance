@@ -176,6 +176,7 @@ export async function ensureAttendanceSchema() {
   await ensureColumn('attendance', 'absence_periods', 'attention_status', "VARCHAR(32) NOT NULL DEFAULT 'normal' AFTER confirmation_status");
   await ensureColumn('attendance', 'absence_periods', 'resolved_at', 'DATETIME NULL AFTER attention_status');
   await ensureColumn('attendance', 'absence_periods', 'resolved_by', 'INT NULL AFTER resolved_at');
+  await ensureColumn('attendance', 'absence_periods', 'revision', 'INT UNSIGNED NOT NULL DEFAULT 0');
   await ensureIndex('attendance', 'absence_periods', 'idx_absence_attention', 'attention_status, resolved_at');
   await ensureIndex('attendance', 'absence_periods', 'idx_absence_resolution', 'resolved_by, resolved_at');
 
@@ -1051,7 +1052,7 @@ export async function resolveAttendanceConflict(id, resolutionValue, actorId, { 
       if (String(conflict.occurred_at) <= String(before.starts_at)) {
         await conn.query(
           `UPDATE attendance.absence_periods
-              SET deleted_at = CURRENT_TIMESTAMP, deleted_by = ?, updated_by = ?
+              SET deleted_at = CURRENT_TIMESTAMP, deleted_by = ?, updated_by = ?, revision = revision + 1
             WHERE id = ? AND deleted_at IS NULL`,
           [actorId || null, actorId || null, before.id],
         );
@@ -1059,7 +1060,7 @@ export async function resolveAttendanceConflict(id, resolutionValue, actorId, { 
       } else {
         await conn.query(
           `UPDATE attendance.absence_periods
-              SET ends_at = ?, confirmation_status = 'confirmed', updated_by = ?
+              SET ends_at = ?, confirmation_status = 'confirmed', updated_by = ?, revision = revision + 1
             WHERE id = ? AND deleted_at IS NULL`,
           [conflict.occurred_at, actorId || null, before.id],
         );
@@ -1200,7 +1201,8 @@ export async function updateAbsencePeriod(id, input) {
     await conn.query(
       `UPDATE attendance.absence_periods
           SET student_id = ?, class_id = ?, starts_at = ?, ends_at = ?, reason_code = ?, comment = ?, source = ?,
-              confirmation_status = ?, attention_status = ?, resolved_at = ?, resolved_by = ?, updated_by = ?
+              confirmation_status = ?, attention_status = ?, resolved_at = ?, resolved_by = ?, updated_by = ?,
+              revision = revision + 1
         WHERE id = ? AND deleted_at IS NULL`,
       [data.studentId, data.classId, data.startsAt, data.endsAt, data.reasonCode, data.comment, data.source,
         data.confirmationStatus, data.attentionStatus, data.resolvedAt, data.resolvedBy, data.actorId, id],
@@ -1241,7 +1243,7 @@ export async function softDeleteAbsencePeriod(id, actorId) {
     }
     const [result] = await conn.query(
       `UPDATE attendance.absence_periods
-          SET deleted_at = CURRENT_TIMESTAMP, deleted_by = ?, updated_by = ?
+          SET deleted_at = CURRENT_TIMESTAMP, deleted_by = ?, updated_by = ?, revision = revision + 1
         WHERE id = ? AND deleted_at IS NULL`,
       [actorId || null, actorId || null, id],
     );
@@ -1269,7 +1271,8 @@ export async function resolveAbsenceAttention(id, actorId) {
         SET attention_status = 'resolved',
             resolved_at = CURRENT_TIMESTAMP,
             resolved_by = ?,
-            updated_by = ?
+            updated_by = ?,
+            revision = revision + 1
       WHERE id = ? AND deleted_at IS NULL`,
     [actorId || null, actorId || null, id],
   );
@@ -1745,7 +1748,7 @@ export async function getMonthlyAttendanceAnalytics({ month, classId, risk, reas
   const [students, periods, scheduleRows, publishedSchoolDays, activeWeekdays, arrivals, presenceEvents, todayAbsences, conflicts] = await Promise.all([
     getMonthlyAnalyticsStudents(classFilter),
     getMonthlyAnalyticsPeriods(range, classFilter),
-    getPublishedScheduleRows(range, classFilter),
+    withScheduleAbsenceAssignments(getPublishedScheduleRows(range, classFilter), range, { classIds: classFilter }),
     getPublishedScheduleDays(range),
     getActiveScheduleWeekdays(),
     getMonthlyFirstPresenceArrivals(range, classFilter),
@@ -1772,6 +1775,8 @@ export async function getMonthlyAttendanceAnalytics({ month, classId, risk, reas
     scheduleRows,
     publishedSchoolDays,
     activeWeekdays,
+    now: sqlNow(),
+    scheduleCoverageFrom: process.env.SCHEDULE_ABSENCE_COVERAGE_FROM,
   });
   analytics.lateness = buildLateAnalytics({
     range,
@@ -1852,6 +1857,7 @@ export async function getMonthlyAttendanceAnalytics({ month, classId, risk, reas
       publishedSchoolDays,
       activeWeekdays,
       now: sqlNow(),
+      scheduleCoverageFrom: process.env.SCHEDULE_ABSENCE_COVERAGE_FROM,
     }), selectedClass);
   }
   return analytics;
@@ -2178,8 +2184,8 @@ export async function getStudentLearningAnalytics(studentId, { month } = {}) {
   const range = buildMonthRange(selectedMonth);
   const [classStudents, periods, scheduleRows, publishedSchoolDays, activeWeekdays] = await Promise.all([
     getMonthlyAnalyticsStudents(student.classId),
-    getMonthlyAnalyticsPeriods(range, student.classId, student.id),
-    getPublishedScheduleRows(range, student.classId),
+    getMonthlyAnalyticsPeriods(range, null, student.id),
+    withScheduleAbsenceAssignments(getPublishedScheduleRows(range, student.classId), range, { studentIds: [student.id] }),
     getPublishedScheduleDays(range),
     getActiveScheduleWeekdays(),
   ]);
@@ -2192,6 +2198,8 @@ export async function getStudentLearningAnalytics(studentId, { month } = {}) {
     publishedSchoolDays,
     activeWeekdays,
     includeLessons: true,
+    now: sqlNow(),
+    scheduleCoverageFrom: process.env.SCHEDULE_ABSENCE_COVERAGE_FROM,
   });
   const selectedStudent = students[0] || {
     student_id: String(student.id),
@@ -2277,7 +2285,7 @@ export async function getStudentMonthlyAnalytics(studentId, { month, metricVersi
     getAbsenceReasons(),
     getClasses(),
     getMonthlyAnalyticsStudents(student.classId),
-    getPublishedScheduleRows(range, student.classId),
+    withScheduleAbsenceAssignments(getPublishedScheduleRows(range, student.classId), range, { studentIds: [student.id] }),
     getPublishedScheduleDays(range),
     getActiveScheduleWeekdays(),
     getMonthlyFirstPresenceArrivals(range, student.classId, student.id),
@@ -2299,6 +2307,7 @@ export async function getStudentMonthlyAnalytics(studentId, { month, metricVersi
       publishedSchoolDays,
       activeWeekdays,
       now: sqlNow(),
+      scheduleCoverageFrom: process.env.SCHEDULE_ABSENCE_COVERAGE_FROM,
     }).students[0] || null
     : buildStudentAttendanceAnalytics({
       range,
@@ -2396,7 +2405,7 @@ export async function getAttendanceAnalyticsQuery({ period, items } = {}) {
     getCanonicalPeriods(range, personIds),
     getCanonicalPresenceEvents(range, personIds),
     getCanonicalConflicts(range, personIds),
-    studentIds.length ? getFeedbackScheduleRows(range, studentIds, classIds) : [],
+    studentIds.length ? withScheduleAbsenceAssignments(getFeedbackScheduleRows(range, studentIds, classIds), range, { studentIds }) : [],
     getPublishedScheduleDays(range),
     getActiveScheduleWeekdays(),
     studentIds.length ? getCanonicalLessonFacts(range, studentIds) : [],
@@ -2414,6 +2423,7 @@ export async function getAttendanceAnalyticsQuery({ period, items } = {}) {
     activeWeekdays,
     lessonFacts,
     now: sqlNow(),
+    scheduleCoverageFrom: process.env.SCHEDULE_ABSENCE_COVERAGE_FROM,
   });
 }
 
@@ -2900,6 +2910,8 @@ async function getFeedbackScheduleRows(range, studentIds, classIds) {
         TIME_FORMAT(ts.end_time, '%H:%i:%s') AS end_time,
         CAST(e.class_id AS CHAR) AS class_id,
         k.name AS class_name,
+        CAST(e.group_id AS CHAR) AS group_id,
+        CASE WHEN e.student_id IS NOT NULL THEN 'student' WHEN e.group_id IS NOT NULL THEN 'group' ELSE 'class' END AS source_scope,
         CAST(CASE
           WHEN e.student_id IS NOT NULL THEN e.student_id
           WHEN e.group_id IS NOT NULL THEN sgm.student_id
@@ -3225,6 +3237,8 @@ async function getPublishedScheduleRows(range, classIds = null) {
         TIME_FORMAT(ts.end_time, '%H:%i:%s') AS end_time,
         CAST(COALESCE(e.class_id, su.kaf) AS CHAR) AS class_id,
         k.name AS class_name,
+        CAST(e.group_id AS CHAR) AS group_id,
+        CASE WHEN e.student_id IS NOT NULL THEN 'student' WHEN e.group_id IS NOT NULL THEN 'group' ELSE 'class' END AS source_scope,
         CAST(CASE
           WHEN e.student_id IS NOT NULL THEN e.student_id
           WHEN e.group_id IS NOT NULL THEN sgm.student_id
@@ -3266,6 +3280,49 @@ async function getPublishedScheduleRows(range, classIds = null) {
     params,
   );
   return rows;
+}
+
+async function withScheduleAbsenceAssignments(scheduleRows, range, { studentIds = null, classIds = null } = {}) {
+  const where = ['a.lesson_date BETWEEN ? AND ?'];
+  const params = [range.start_date, range.end_date];
+  for (const [column, requestedIds] of [['student_id', studentIds], ['class_id', classIds]]) {
+    if (requestedIds === null) continue;
+    const ids = uniquePositiveIds(Array.isArray(requestedIds) ? requestedIds : [requestedIds]);
+    if (!ids.length) return scheduleRows;
+    where.push(`a.${column} IN (${sqlPlaceholders(ids)})`);
+    params.push(...ids);
+  }
+  const assignments = usr.query(
+    `SELECT
+        CAST(a.source_entry_id AS CHAR) AS entry_id,
+        CAST(a.student_id AS CHAR) AS student_id,
+        CAST(a.class_id AS CHAR) AS class_id,
+        CAST(a.group_id AS CHAR) AS group_id,
+        a.source_scope, a.lesson_key AS assignment_key, a.status AS assignment_status, a.release_state,
+        DATE_FORMAT(a.lesson_date, '%Y-%m-%d') AS lesson_date,
+        DATE_FORMAT(a.starts_at, '%Y-%m-%d %H:%i:%s') AS assignment_starts_at,
+        DATE_FORMAT(a.ends_at, '%Y-%m-%d %H:%i:%s') AS assignment_ends_at,
+        DATE_FORMAT(a.updated_at, '%Y-%m-%d %H:%i:%s.%f') AS assignment_updated_at,
+        TIME_FORMAT(TIME(a.starts_at), '%H:%i:%s') AS start_time,
+        TIME_FORMAT(TIME(a.ends_at), '%H:%i:%s') AS end_time,
+        CAST(a.slot_id AS CHAR) AS slot_id,
+        a.slot_number, a.slot_part,
+        CAST(a.subject_id AS CHAR) AS subject_id,
+        a.subject_name, a.teacher_name, a.room_name, a.is_paid, a.is_online,
+        CAST(a.teacher_id AS CHAR) AS teacher_id,
+        CAST(a.room_id AS CHAR) AS room_id,
+        CAST(a.week_id AS CHAR) AS week_id,
+        CAST(a.week_version_id AS CHAR) AS week_version_id
+       FROM school_local.schedule_absence_assignments a
+      WHERE ${where.join(' AND ')}
+      ORDER BY a.student_id, a.lesson_date, a.updated_at, a.absence_id`,
+    params,
+  ).then(([rows]) => rows).catch((error) => {
+    if (error.code === 'ER_NO_SUCH_TABLE') return [];
+    throw error;
+  });
+  const [rows, saved] = await Promise.all([scheduleRows, assignments]);
+  return [...rows, ...saved];
 }
 
 async function getPublishedScheduleDays(range) {

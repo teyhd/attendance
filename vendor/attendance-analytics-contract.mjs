@@ -4,6 +4,7 @@ import {
   buildScheduleIndex,
   dateOnly,
   isoWeekday,
+  isHistoricalScheduleGap,
   lessonsForStudentDay,
   parseDateTimeMs,
 } from './schedule-analytics.mjs';
@@ -66,6 +67,7 @@ export function buildAttendanceAnalyticsContract({
   activeWeekdays = DEFAULT_ACTIVE_WEEKDAYS,
   lessonFacts = [],
   now = '',
+  scheduleCoverageFrom = '',
 } = {}) {
   if (!range) throw new TypeError('Не передан период');
   const calculatedAt = new Date().toISOString();
@@ -91,7 +93,7 @@ export function buildAttendanceAnalyticsContract({
     if (!computed.has(cacheKey)) {
       computed.set(cacheKey, request.personType === 'employee'
         ? buildEmployeeAnalytics({ request, person, range, periods: periodsByPerson.get(String(request.personId)) || [], eventsByPersonDay, conflictsByPersonDay, nowMs })
-        : buildStudentAnalytics({ request, person, range, scheduleIndex, published, active, periods: periodsByPerson.get(String(request.personId)) || [], eventsByPersonDay, conflictsByPersonDay, lessonFacts: factsByPerson.get(String(request.personId)) || [], nowMs }));
+        : buildStudentAnalytics({ request, person, range, scheduleIndex, published, active, periods: periodsByPerson.get(String(request.personId)) || [], eventsByPersonDay, conflictsByPersonDay, lessonFacts: factsByPerson.get(String(request.personId)) || [], nowMs, scheduleCoverageFrom }));
     }
     return scopeResult(computed.get(cacheKey), request, range, calculatedAt);
   });
@@ -105,19 +107,24 @@ export function buildAttendanceAnalyticsContract({
   };
 }
 
-function buildStudentAnalytics({ request, person, range, scheduleIndex, published, active, periods, eventsByPersonDay, conflictsByPersonDay, lessonFacts, nowMs }) {
+function buildStudentAnalytics({ request, person, range, scheduleIndex, published, active, periods, eventsByPersonDay, conflictsByPersonDay, lessonFacts, nowMs, scheduleCoverageFrom }) {
   const lessons = [];
   const daily = new Map();
   const reasons = new Map();
   const subjects = new Map();
-  const expectedDates = range.days.filter((day) => active.has(isoWeekday(day)) && parseDateTimeMs(`${day} 00:00:00`) <= nowMs);
-  const missingScheduleDates = expectedDates.filter((day) => !published.has(day));
+  const hasAssignments = (day) => scheduleIndex.assignmentsByStudentDay.has(`${request.personId}|${day}`);
+  const expectedDates = range.days.filter((day) => (active.has(isoWeekday(day)) || hasAssignments(day))
+    && parseDateTimeMs(`${day} 00:00:00`) <= nowMs);
+  const historicalGaps = new Set(expectedDates.filter((day) => isHistoricalScheduleGap(day, periods, scheduleCoverageFrom)));
+  const missingScheduleDates = expectedDates.filter((day) => historicalGaps.has(day) || (!published.has(day) && !hasAssignments(day)));
   let unmatchedEvents = 0;
   let ambiguousLessonFacts = 0;
 
   for (const day of range.days) {
     const personDayKey = `${request.personId}|${day}`;
-    const scheduled = published.has(day) ? lessonsForStudentDay(scheduleIndex, person, person, day) : [];
+    const scheduled = published.has(day) || hasAssignments(day)
+      ? lessonsForStudentDay(scheduleIndex, person, person, day).filter((lesson) => !historicalGaps.has(day) || lesson.assignment_key)
+      : [];
     const pastLessons = scheduled.filter((lesson) => lesson.starts_ms <= nowMs);
     const dayEvents = eventsByPersonDay.get(personDayKey) || [];
     const paired = presenceIntervals(dayEvents, pastLessons, nowMs);

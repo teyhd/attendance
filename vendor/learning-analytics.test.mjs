@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { buildMonthRange } from './analytics.mjs';
+import { buildAnalyticsRange } from './attendance-analytics-contract.mjs';
 import {
   MISSED_LESSON_MIN_OVERLAP_MINUTES,
   buildLearningAnalytics,
@@ -62,6 +63,128 @@ function schedule(overrides = {}) {
     ...overrides,
   };
 }
+
+function assignment(overrides = {}) {
+  return schedule({
+    assignment_key: 'assignment-1',
+    assignment_status: 'assigned',
+    assignment_starts_at: '2026-05-04 09:00:00',
+    assignment_ends_at: '2026-05-04 09:40:00',
+    entry_id: 'old-individual',
+    student_id: student.student_id,
+    source_scope: 'student',
+    release_state: 'full',
+    ...overrides,
+  });
+}
+
+test('saved assignments preserve original subjects and exact half-slot times without counting unconfirmed minutes', () => {
+  const fixtureRange = buildAnalyticsRange('2026-05-04', '2026-05-05');
+  const english = assignment({
+    assignment_key: 'english', source_scope: 'group', group_id: '4', entry_id: 'old-group',
+    subject_id: 'english', subject_name: 'English', slot_id: 's2', slot_number: 2, slot_part: 'H2',
+    assignment_starts_at: '2026-05-04 10:20:00', assignment_ends_at: '2026-05-04 10:40:00',
+  });
+  const input = {
+    range: fixtureRange, students: [student], includeLessons: true,
+    publishedSchoolDays: fixtureRange.days,
+    periods: [period({ starts_at: '2026-05-04 08:55:00', ends_at: '2026-05-05 10:15:00' })],
+    scheduleRows: [
+      schedule({ subject_id: 'literature', subject_name: 'Literature' }),
+      schedule({
+        entry_id: 'new-group', subject_id: 'french', subject_name: 'French', student_id: student.student_id,
+        group_id: '5', source_scope: 'group', slot_id: 's2', slot_number: 2, start_time: '10:00:00', end_time: '10:40:00',
+      }),
+      schedule({ entry_id: 'biology', lesson_date: '2026-05-05', subject_id: 'biology', subject_name: 'Biology' }),
+      schedule({
+        entry_id: 'physics', lesson_date: '2026-05-05', subject_id: 'physics', subject_name: 'Physics',
+        slot_id: 's2', slot_number: 2, start_time: '10:00:00', end_time: '10:40:00',
+      }),
+      assignment(), english, english,
+    ],
+  };
+  const planned = buildLearningAnalytics({ ...input, now: '2026-05-03 12:00:00' });
+  assert.equal(planned.missed_lessons_total, 0);
+  assert.equal(planned.planned_lessons_total, 4);
+  const actual = buildLearningAnalytics({ ...input, now: '2026-05-05 12:00:00' });
+  assert.equal(actual.confirmed_missed_lessons_total, 3);
+  assert.equal(actual.missed_lessons_total, 3);
+  assert.deepEqual(actual.confirmed_lessons.map((lesson) => [lesson.subject_name, lesson.confirmed_absence_minutes, lesson.removed_from_schedule]), [
+    ['Math', 40, true], ['English', 20, true], ['Biology', 40, false], ['Physics', 15, false],
+  ]);
+  assert.equal(actual.confirmed_lessons[1].time_label, '10:20-10:40');
+  assert.equal(actual.confirmed_lessons[3].counts_as_confirmed_missed_lesson, false);
+});
+
+test('new snapshot states suppress a moved or cancelled original without suppressing the replacement slot', () => {
+  const fixtureRange = buildAnalyticsRange('2026-05-04', '2026-05-04');
+  const input = {
+    range: fixtureRange, students: [student], includeLessons: true,
+    now: '2026-05-04 12:00:00', publishedSchoolDays: fixtureRange.days,
+    periods: [period({ ends_at: '2026-05-04 10:45:00' })],
+    scheduleRows: [
+      schedule({ subject_id: 'literature', subject_name: 'Literature' }),
+      assignment({ assignment_updated_at: '2026-05-01 09:00:00' }),
+      assignment({ assignment_updated_at: '2026-05-02 09:00:00', assignment_status: 'moved' }),
+      assignment({
+        assignment_key: 'moved-math', entry_id: 'new-individual', slot_id: 's2', slot_number: 2,
+        assignment_starts_at: '2026-05-04 10:00:00', assignment_ends_at: '2026-05-04 10:40:00',
+      }),
+    ],
+  };
+  const moved = buildLearningAnalytics(input);
+  assert.equal(moved.confirmed_missed_lessons_total, 1);
+  assert.deepEqual(moved.lessons.map((lesson) => lesson.time_label), ['10:00-10:40']);
+
+  const cancelled = buildLearningAnalytics({ ...input, scheduleRows: [
+    input.scheduleRows[0], input.scheduleRows[1], { ...input.scheduleRows[2], assignment_status: 'cancelled' },
+  ] });
+  assert.equal(cancelled.missed_lessons_total, 0);
+  assert.equal(cancelled.data_gaps_total, 0);
+});
+
+test('historical absences with no saved assignment are reported as incomplete and keep the original absence', () => {
+  const fixtureRange = buildAnalyticsRange('2026-05-04', '2026-05-04');
+  const result = buildLearningAnalytics({
+    range: fixtureRange, students: [student], includeLessons: true,
+    scheduleCoverageFrom: '2026-05-05', now: '2026-05-04 12:00:00', publishedSchoolDays: fixtureRange.days,
+    periods: [period({ ends_at: '2026-05-04 09:40:00' })], scheduleRows: [schedule()],
+  });
+  assert.deepEqual(result.lessons, []);
+  assert.equal(result.confirmed_missed_lessons_total, 0);
+  assert.equal(result.uncovered_absence_periods, 1);
+  assert.equal(result.data_gaps[0].absence_id, 'p1');
+  assert.equal(result.data_gaps[0].code, 'unverified_historical_schedule');
+  assert.deepEqual(result.historical_schedule_gap_dates.map((row) => row.date), ['2026-05-04']);
+});
+
+test('only explicit saved weekend assignments enter the Saturday lesson calculation', () => {
+  const fixtureRange = buildAnalyticsRange('2026-05-09', '2026-05-10');
+  const raw = schedule({ entry_id: 'live-saturday', lesson_date: '2026-05-09', subject_name: 'Live subject' });
+  const saved = assignment({
+    lesson_date: '2026-05-09', assignment_starts_at: '2026-05-09 09:00:00',
+    assignment_ends_at: '2026-05-09 09:40:00', release_state: 'partial',
+  });
+  const input = {
+    range: fixtureRange, students: [student], includeLessons: true,
+    periods: [period({ starts_at: '2026-05-09 09:00:00', ends_at: '2026-05-09 09:15:00' })],
+    scheduleRows: [raw, saved],
+  };
+  const planned = buildLearningAnalytics({ ...input, now: '2026-05-08 12:00:00' });
+  assert.equal(planned.confirmed_missed_lessons_total, 0);
+  assert.equal(planned.planned_lessons_total, 1);
+  assert.equal(planned.planned_lessons[0].overlap_minutes, 15);
+
+  const actual = buildLearningAnalytics({ ...input, now: '2026-05-10 12:00:00' });
+  assert.equal(actual.covered_absence_periods, 1);
+  assert.equal(actual.confirmed_missed_lessons_total, 0);
+  assert.equal(actual.data_gaps_total, 0);
+  assert.deepEqual(actual.confirmed_lessons.map((lesson) => [lesson.subject_name, lesson.confirmed_absence_minutes]), [['Math', 15]]);
+
+  const baseline = buildLearningAnalytics({ ...input, scheduleRows: [raw], now: '2026-05-10 12:00:00' });
+  assert.deepEqual(baseline.confirmed_lessons, []);
+  assert.equal(baseline.data_gaps_total, 0);
+});
 
 test('lesson is missed only when overlap is strictly greater than threshold', () => {
   const exact = buildLearningAnalytics({

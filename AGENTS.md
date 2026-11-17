@@ -68,6 +68,7 @@
   - `AUTH_SESSION_COOKIE_NAME`
   - `AUTH_SESSION_TTL`
   - `AUTH_DISABLED` только для локальной разработки.
+  - `SCHEDULE_ABSENCE_COVERAGE_FROM` — дата запуска сохранения назначений в BestSchedule (`ГГГГ-ММ-ДД`). Для более ранних дат с отметками об отсутствии аналитика помечает расчёт как неполный и учитывает только сохранённые назначения.
 - В production `SSO_CLIENT_SECRET`, `JWT_SECRET` и `AUTH_SESSION_SECRET` должны задаваться через окружение PM2 или `.env`, а не храниться в Git.
 
 ## Границы данных
