@@ -72,6 +72,8 @@ export async function loadWeeklyAttendance(executor, studentIds, date) {
     (e.student_id IS NULL OR e.student_id<>u.id OR e.group_id IS NOT NULL OR COALESCE(e.is_online,0)<>0
      OR COALESCE(e.activity_type,'') NOT IN ('default_lesson','indiv') OR ts.is_active<>1 OR v.content_revision<>0
      OR p.published_at>=${day} OR e.updated_at>=${day}
+     OR EXISTS (SELECT 1 FROM school_local.schedule_audit_log al
+       WHERE al.entity_type IN ('time_slot','activity_type') AND al.created_at>=${day})
      OR EXISTS (SELECT 1 FROM school_local.schedule_absence_assignments a WHERE a.student_id=u.id AND a.week_version_id=v.id
        AND a.status='assigned' AND a.release_state IN ('full','partial','return_conflict')
        AND a.starts_at<DATE_ADD(${day},INTERVAL 1 DAY) AND a.ends_at>${day})

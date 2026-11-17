@@ -31,7 +31,7 @@ test('batch queries are scoped and explicitly exclude historical ambiguity',asyn
  assert.equal(queries.length,2);
  assert.deepEqual(queries[0].args,[10,date,date]);assert.deepEqual(queries[1].args,[10,date,date]);
  for(const pattern of [/cancelled_at IS NULL/,/presence_absence_conflicts/,/absence_periods/])assert.match(queries[0].sql,pattern);
- for(const pattern of [/content_revision<>0/,/published_at>=/,/updated_at>=/,/return_conflict/,/schedule_flex_assignments/,/e.is_online/])assert.match(queries[1].sql,pattern);
+ for(const pattern of [/content_revision<>0/,/published_at>=/,/updated_at>=/,/return_conflict/,/schedule_flex_assignments/,/schedule_audit_log/,/'time_slot','activity_type'/,/e.is_online/])assert.match(queries[1].sql,pattern);
 });
 test('assigned grant is backwards compatible and cannot widen signed visible scope',()=>{
  const now=new Date('2026-11-17T10:00:00Z');const secret='test';
