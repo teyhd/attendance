@@ -1,3 +1,4 @@
+import { acquireToggleLocks, releaseToggleLocks } from './presence-lock.mjs';
 import mysql from 'mysql2';
 import { buildAdultArrivalAnalytics } from './adult-arrival-analytics.mjs';
 import { getPublishedMentorWeeks, isWorkMentor, schoolSqlNow } from './mentor-work.mjs';
@@ -668,14 +669,14 @@ export async function getPresenceBoard({ date, audience = AUDIENCE_CHILDREN, cla
         ...event,
         can_edit: isManualPresenceEvent(event),
       })),
-      state: buildPresenceViewState({
+      state: { ...buildPresenceViewState({
         latestEvent,
         absence,
         conflicts: studentConflicts,
         firstArrival,
         firstLesson,
         arrivalAssessment: adultArrivalByStudent.get(String(student.id)) || null,
-      }),
+      }), last_event_revision: Number(latestEvent?.revision || 0) },
     });
   }
 
@@ -699,35 +700,49 @@ export async function getPresenceBoard({ date, audience = AUDIENCE_CHILDREN, cla
 export async function togglePresenceEvent({
   studentId, classId, actorId, idempotencyKey, audience = AUDIENCE_CHILDREN,
   phoneSubmitted, phoneAction, phoneRevision, expectedDate, expectedLastEventId,
+  expectedEventType, expectedLastEventRevision, expectedActorId,
 } = {}) {
   const normalizedAudience = normalizeDataAudience(audience);
   const isChild = normalizedAudience === AUDIENCE_CHILDREN;
+  const explicit = expectedEventType !== undefined || expectedLastEventRevision !== undefined || expectedActorId !== undefined;
+  if (explicit && (!['arrival', 'departure'].includes(expectedEventType)
+    || typeof expectedDate !== 'string' || expectedLastEventId === undefined || expectedLastEventId === null
+    || !Number.isSafeInteger(expectedLastEventRevision) || expectedLastEventRevision < 0
+    || !idempotencyKey || expectedActorId == null || String(expectedActorId) !== String(actorId))) {
+    throw new ValidationError('Обновите страницу и повторите отметку.', 409);
+  }
   if (phoneSubmitted !== undefined) {
     if (!isChild) throw new ValidationError('Отметка о телефоне доступна только для ученика');
     validatePhoneHandover(phoneSubmitted, phoneRevision, phoneAction);
   }
   const student = await assertPresencePerson(studentId, classId, normalizedAudience);
-  const nowSql = sqlNow();
+  let nowSql = sqlNow();
   const attendanceDate = dateOnlyFromSql(nowSql);
   if (expectedDate !== undefined && expectedDate !== attendanceDate) {
     throw new ValidationError('Дата изменилась. Обновите страницу и повторите отметку.', 409);
   }
   const normalizedIdempotencyKey = normalizeIdempotencyKey(idempotencyKey);
+  if (explicit && !normalizedIdempotencyKey) throw new ValidationError('Обновите страницу и повторите отметку.', 409);
   const conn = await usr.getConnection();
-  let lockAcquired = false;
+  let acquiredLocks = [];
+  let lockUncertain = false;
 
   try {
     await conn.beginTransaction();
-    lockAcquired = await acquirePresenceLock(conn, student.id, attendanceDate);
-    if (!lockAcquired) {
-      throw new ValidationError('Повторите нажатие через секунду', 409);
+    const locks = await acquireToggleLocks(conn, student.id, attendanceDate);
+    acquiredLocks = locks.acquired;
+    if (!locks.locked) {
+      throw new ValidationError('Повторите нажатие через секунду', explicit ? 503 : 409);
     }
+
+    nowSql = sqlNow();
+    if (dateOnlyFromSql(nowSql) !== attendanceDate) throw new ValidationError('Дата изменилась. Обновите страницу и повторите отметку.', 409);
 
     if (normalizedIdempotencyKey) {
       const existing = await getPresenceEventByIdempotencyKey(conn, normalizedIdempotencyKey);
       if (existing) {
-        if (String(existing.student_id) !== String(student.id)) throw new ValidationError('Ключ отметки уже использован', 409);
-        const conflicts = await createConflictsForPresenceEvent(conn, existing);
+        if (String(existing.student_id) !== String(student.id) || (explicit && (String(existing.class_id) !== String(student.classId) || existing.attendance_date !== attendanceDate || existing.event_type !== expectedEventType || String(existing.actor_id ?? 0) !== String(actorId)))) throw new ValidationError('Ключ отметки уже использован', 409);
+        const conflicts = explicit ? [] : await createConflictsForPresenceEvent(conn, existing);
         const phoneCheck = isChild ? await getPhoneHandoverDay(conn, student.id, attendanceDate) : null;
         await conn.commit();
         return {
@@ -744,7 +759,9 @@ export async function togglePresenceEvent({
     if (expectedLastEventId !== undefined && String(latestEvent?.id || '') !== String(expectedLastEventId)) {
       throw new ValidationError('Приход или уход уже изменился. Обновите страницу и повторите отметку.', 409);
     }
+    if (explicit && Number(latestEvent?.revision || 0) !== expectedLastEventRevision) throw new ValidationError('Приход или уход уже изменился. Обновите страницу и повторите отметку.', 409);
     const decision = resolvePresenceToggle({ latestEvent, now: nowSql });
+    if (explicit && decision.eventType !== expectedEventType) throw new ValidationError('Приход или уход уже изменился. Обновите страницу и повторите отметку.', 409);
     if (!decision.shouldInsert) {
       const conflicts = await createConflictsForPresenceEvent(conn, latestEvent);
       const phoneCheck = isChild ? await getPhoneHandoverDay(conn, student.id, attendanceDate) : null;
@@ -812,11 +829,13 @@ export async function togglePresenceEvent({
       duplicate: false,
     };
   } catch (err) {
+    if (err.presenceLocks) acquiredLocks = err.presenceLocks;
+    lockUncertain = Boolean(err.presenceLockUncertain);
     await conn.rollback();
     if (isDuplicateKeyError(err) && normalizedIdempotencyKey) {
       const event = await getPresenceEventByIdempotencyKey(usr, normalizedIdempotencyKey);
-      if (event && String(event.student_id) === String(student.id)) {
-        const conflicts = await createConflictsForPresenceEvent(usr, event);
+      if (event && String(event.student_id) === String(student.id) && (!explicit || (String(event.class_id) === String(student.classId) && event.attendance_date === attendanceDate && event.event_type === expectedEventType && String(event.actor_id ?? 0) === String(actorId)))) {
+        const conflicts = explicit ? [] : await createConflictsForPresenceEvent(usr, event);
         return {
           event,
           conflicts,
@@ -828,10 +847,7 @@ export async function togglePresenceEvent({
     }
     throw err;
   } finally {
-    if (lockAcquired) {
-      await releasePresenceLock(conn, student.id, attendanceDate);
-    }
-    conn.release();
+    await releaseToggleLocks(conn, acquiredLocks, lockUncertain);
   }
 }
 
@@ -5462,6 +5478,7 @@ function presenceStateFromEvent(latestEvent, conflicts = []) {
     is_present: isPresent,
     status_code: statusCode,
     last_event_id: latestEvent?.id || '',
+    last_event_revision: Number(latestEvent?.revision || 0),
     last_event_type: latestEvent?.event_type || '',
     status_word: statusWord,
     status_time: statusTime,

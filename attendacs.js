@@ -27,6 +27,7 @@ import express from 'express';
 import exphbs from 'express-handlebars';
 import cookieParser from 'cookie-parser';
 import path from 'path';
+import { createHash } from 'crypto';
 import { fileURLToPath, pathToFileURL } from 'url';
 
 let i_count = 1;
@@ -480,6 +481,50 @@ app.get('/attendance/presence', requirePageAuth, asyncHandler(async (req, res) =
   });
 }));
 
+// Only the source board is shared; authorization and projection run for every request.
+const manualBoardCache = new Map();
+function invalidateManualBoardCache() { manualBoardCache.clear(); }
+async function getManualBoard(date, audience) {
+  const key = `${audience}:${date}`;
+  const cached = manualBoardCache.get(key);
+  if (cached && (cached.pending || cached.expires > Date.now())) return cached.promise;
+  const entry = { pending: true, expires: 0 };
+  entry.promise = db.getPresenceBoard({ date, audience, classIds: null, includePhoneChecks: true })
+    .then((board) => { entry.pending = false; entry.expires = Date.now() + 2000; return board; })
+    .catch((error) => { if (manualBoardCache.get(key) === entry) manualBoardCache.delete(key); throw error; });
+  manualBoardCache.set(key, entry);
+  while (manualBoardCache.size > 2) manualBoardCache.delete(manualBoardCache.keys().next().value);
+  return entry.promise;
+}
+
+app.get('/api/attendance/presence/manual-state', requireApiAuth, requirePermission('manage_presence'), asyncHandler(async (req, res) => {
+  const audience = String(req.query.audience || '');
+  if (![AUDIENCE_CHILDREN, AUDIENCE_ADULTS].includes(audience)) return res.status(400).json({ error: 'invalid_audience' });
+  if (!canUseAudience(req.authUser, audience)) return res.status(403).json({ error: 'forbidden' });
+  const classIds = await getPresenceClassScope(req.authUser, audience);
+  const date = formatDateInput(new Date());
+  const board = await getManualBoard(date, audience);
+  const students = [];
+  for (const group of board.classes || []) for (const student of group.students || []) {
+    if (!canManagePresenceClass(classIds, student.classId)) continue;
+    const events = (student.presence_events || []).map(toPublicPresenceHistoryEvent);
+    const state = toPublicPresenceBoardState(student.state, { canManage: true });
+    state.last_event_revision = events.find(event => event.id === String(state.last_event_id))?.revision ?? 0;
+    students.push({ id: String(student.id), class_id: String(student.classId), state,
+      phone_check: student.phone_check ? { date: student.phone_check.date, submitted: student.phone_check.submitted,
+        picked_up: student.phone_check.picked_up, submitted_after_notice_at: student.phone_check.submitted_after_notice_at,
+        revision: student.phone_check.revision } : null, presence_events: events });
+  }
+  const payload = { date, audience, actor_id: String(req.authUser.id), students };
+  const body = JSON.stringify(payload);
+  const etag = `"${createHash('sha256').update(body).digest('hex')}"`;
+  res.set('Cache-Control', 'private, no-cache');
+  res.set('ETag', etag);
+  const validators = String(req.get('If-None-Match') || '').split(',').map(value => value.trim());
+  if (validators.includes(etag) || validators.includes(`W/${etag}`) || validators.includes('*')) return res.status(304).end();
+  return res.type('json').send(body);
+}));
+
 app.get('/attendance/presence/manual', requirePageAuth, requirePermission('manage_presence'), asyncHandler(async (req, res) => {
   const audience = normalizePageAudience(req.query.audience, req.authUser);
   const selectedDate = formatDateInput(new Date());
@@ -493,6 +538,7 @@ app.get('/attendance/presence/manual', requirePageAuth, requirePermission('manag
     audience,
     adultView: audience === AUDIENCE_ADULTS,
     audienceTabs: buildAudienceTabs('/attendance/presence/manual', audience, req.query, req.authUser),
+    manualServerTime: Date.now(),
     board,
   });
 }));
@@ -800,8 +846,10 @@ app.patch('/api/attendance/students/:id/phone-handover/:date', requireApiAuth, a
       studentId: req.phoneStudent.id, date: req.params.date, actorId: req.authUser.id,
       submitted: req.body?.submitted, action: req.body?.action, answers: req.body?.answers, expectedRevision: req.body?.expectedRevision,
     });
+    invalidateManualBoardCache();
     return res.json({ day });
   } catch (err) {
+    if (err.status === 409) invalidateManualBoardCache();
     if (err.status === 409 && err.phoneDay) return res.status(409).json({ error: 'conflict', message: err.message, day: err.phoneDay });
     return sendApiError(res, err);
   }
@@ -894,6 +942,9 @@ app.post('/api/attendance/absences', requireApiAuth, requirePermission('mark_abs
 app.post('/api/attendance/presence/toggle', requireApiAuth, requirePermission('manage_presence'), asyncHandler(async (req, res) => {
   try {
     const input = presenceInputFromBody(req.body, req.authUser);
+    if (input.expectedActorId !== undefined && String(input.expectedActorId) !== String(req.authUser.id)) {
+      return res.status(401).json({ error: 'session_changed' });
+    }
     if (!canUseAudience(req.authUser, input.audience)) {
       return res.status(403).json({ error: 'forbidden' });
     }
@@ -902,6 +953,7 @@ app.post('/api/attendance/presence/toggle', requireApiAuth, requirePermission('m
       return res.status(403).json({ error: 'forbidden' });
     }
     const result = await db.togglePresenceEvent(input);
+    invalidateManualBoardCache();
     res.status(result.duplicate ? 200 : 201).json({
       event: toPublicPresenceEvent(result.event),
       state: result.state,
@@ -910,6 +962,7 @@ app.post('/api/attendance/presence/toggle', requireApiAuth, requirePermission('m
       duplicate: Boolean(result.duplicate),
     });
   } catch (err) {
+    if (err.status === 409) invalidateManualBoardCache();
     sendApiError(res, err);
   }
 }));
@@ -923,6 +976,7 @@ app.post('/api/attendance/presence/late', requireApiAuth, requirePermission('mar
       idempotencyKey: req.body.idempotencyKey ?? req.body.idempotency_key,
       actorId: req.authUser?.id || null,
     });
+    invalidateManualBoardCache();
     return res.status(result.duplicate ? 200 : 201).json({
       event: toPublicPresenceEvent(result.event),
       state: result.state,
@@ -947,6 +1001,7 @@ app.patch('/api/attendance/presence/events/:id', requireApiAuth, requirePermissi
       expectedUpdatedAt: req.body.expectedUpdatedAt, audience, actorId: req.authUser.id,
     }, access);
     if (!result) return res.status(404).json({ error: 'not_found' });
+    invalidateManualBoardCache();
     return res.json({ event: toPublicPresenceEvent(result.event), conflicts: result.conflicts.map(toPublicAttendanceConflict) });
   } catch (err) { return sendApiError(res, err); }
 }));
@@ -970,6 +1025,7 @@ app.post('/api/attendance/presence/events/:id/cancel', requireApiAuth, requirePe
     if (!result) {
       return res.status(404).json({ error: 'not_found' });
     }
+    invalidateManualBoardCache();
     return res.json({
       cancelled: true,
       event: toPublicPresenceEvent(result.event),
@@ -993,6 +1049,7 @@ app.post('/api/attendance/conflicts/:id/resolve', requireApiAuth, requirePermiss
       { audience, classIds },
     );
     if (!conflict) return res.status(404).json({ error: 'not_found' });
+    invalidateManualBoardCache();
     return res.json({ conflict: toPublicAttendanceConflict(conflict) });
   } catch (err) {
     return sendApiError(res, err);
@@ -1258,12 +1315,15 @@ function presenceInputFromBody(body, user) {
     classId: body.classId ?? body.class_id,
     idempotencyKey: body.idempotencyKey ?? body.idempotency_key,
     audience: normalizeApiAudience(body.audience),
-    actorId: user?.id || null,
+    actorId: user?.id ?? null,
     phoneSubmitted: body.phoneSubmitted,
     phoneAction: body.phoneAction,
     phoneRevision: body.phoneRevision,
     expectedDate: body.expectedDate,
     expectedLastEventId: body.expectedLastEventId,
+    expectedLastEventRevision: body.expectedLastEventRevision,
+    expectedEventType: body.expectedEventType,
+    expectedActorId: body.expectedActorId,
   };
 }
 
@@ -1314,6 +1374,7 @@ function toPublicPresenceEvent(event) {
     attendance_date: event.attendance_date,
     actor_id: event.actor_id ? Number(event.actor_id) : null,
     source: event.source,
+    revision: Number(event.revision || 0),
     audience: event.audience || AUDIENCE_CHILDREN,
     cancelled_at: event.cancelled_at || null,
     cancelled_by: event.cancelled_by ? Number(event.cancelled_by) : null,
@@ -1409,6 +1470,7 @@ function toPublicPresenceBoardState(state, { canManage = false } = {}) {
     departure_time: state?.departure_time || '',
     departure_label: state?.departure_label || '',
     last_event_id: canManage ? (state?.last_event_id || '') : '',
+    last_event_revision: canManage ? Number(state?.last_event_revision || 0) : 0,
     last_event_type: canManage ? (state?.last_event_type || '') : '',
     next_event_type: canManage ? (state?.next_event_type || '') : '',
     next_action_label: canManage ? (state?.next_action_label || '') : '',
@@ -1425,6 +1487,8 @@ function toPublicPresenceHistoryEvent(event) {
     occurred_time: event?.occurred_time || '',
     occurred_label: event?.occurred_label || '',
     source: event?.source || '',
+    revision: Number(event?.revision || 0),
+    expected_updated_at: historyVersion(event),
     can_edit: Boolean(event?.can_edit),
   };
 }
@@ -1631,6 +1695,7 @@ function userErrorMessage(err) {
 }
 
 function sendApiError(res, err) {
+  if (err?.status === 503) return res.status(503).json({ error: 'temporarily_unavailable', message: err.message });
   if (err?.status && err.status < 500) {
     return res.status(err.status).json({ error: 'validation_error', message: err.message });
   }

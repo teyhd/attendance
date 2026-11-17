@@ -38,9 +38,9 @@
     return { day, conflict, message: payload.message || 'Отметки уже изменились. Проверьте значения и повторите правку.' };
   };
 
-  window.choosePresencePhoneAnswer = async function ({ name, departure, current, studentId, date }) {
+  window.choosePresencePhoneAnswer = async function ({ name, departure, current, studentId, date, useCurrent = false }) {
     if (departure) {
-      current = await window.getPresencePhoneDay(studentId, date);
+      if (!useCurrent) current = await window.getPresencePhoneDay(studentId, date);
       const handedIn = current?.submitted === true || Boolean(current?.submitted_after_notice_at);
       if (!handedIn || current.picked_up === true) return { phoneRevision: current?.revision || 0 };
     }
