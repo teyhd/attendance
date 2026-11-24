@@ -1,3 +1,4 @@
+import { registerRolePreview } from './vendor/rolePreview.mjs';
 import { mlog } from './vendor/logs.mjs';
 
 process.on('uncaughtException', (err) => {
@@ -11,7 +12,7 @@ import { isWithoutReasonCode } from './vendor/absence-reasons.mjs';
 import { buildAttendanceActions } from './vendor/attendance-ui.mjs';
 import { canManagePresenceClass, presenceViewClassScope } from './vendor/presence.mjs';
 import {
-  getAuthUserFromRequest,
+  getAuthUserFromRequest, makeAttendancePreviewUser,
   requireApiAuth,
   requireOwnAttendanceAuth,
   requirePageAuth,
@@ -150,6 +151,26 @@ app.use(express.json({
     req.rawJsonBody = buffer.toString('utf8');
   },
 }));
+const previewReads = new Set([
+  '/', '/attendance', '/attendance/me', '/attendance/analytics', '/attendance/presence', '/attendance/presence/manual',
+  '/attendance/mentor-schedule', '/api/me', '/api/attendance/me/analytics', '/api/attendance/summary',
+  '/api/attendance/presence/board', '/api/attendance/presence/events', '/api/attendance/presence/manual-state',
+  '/api/attendance/absences', '/api/attendance/analytics/monthly', '/api/attendance/analytics/phones',
+  '/api/v2/attendance/analytics/monthly', '/api/attendance/conflicts',
+]);
+registerRolePreview(app, {
+  key: process.env.ATTENDANCE_MAINPORTAL_SERVICE_KEY,
+  origin: 'https://stud.platoniks.ru',
+  async resolve(actorId, subjectId) {
+    const row = await db.getAttendancePreviewAccount(actorId, subjectId, Number(process.env.SSO_SERVICE_ID || 13));
+    return row && makeAttendancePreviewUser(row);
+  },
+  entry: user => user.landing,
+  allowRead: route => previewReads.has(route)
+    || /^\/attendance\/\d+\/new$/.test(route)
+    || /^\/api\/(?:v2\/)?attendance\/(?:people|students)\/\d+\/(?:history|context|analytics|phone-handover)$/.test(route),
+  audit: ({ actorId, subjectId }) => mlog('role_preview_open actor=' + actorId + ' subject=' + subjectId),
+});
 setupAuthRoutes(app);
 
 await db.ensureAttendanceSchema();

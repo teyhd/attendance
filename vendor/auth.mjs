@@ -126,7 +126,16 @@ export function requirePermission(permission) {
   };
 }
 
+export function makeAttendancePreviewUser(row) {
+  const rawRoleId = Number(row.role_id);
+  const permissions = attendancePermissions(rawRoleId);
+  if (rawRoleId === 5 || rawRoleId === 7 || (!permissions.use_attendance && !permissions.view_own_attendance)) return null;
+  return { id: Number(row.id), name: row.name, rawRoleId,
+    role: roleName(rawRoleId), permissions, landing: landingPath(rawRoleId) };
+}
+
 export function getAuthUserFromRequest(req) {
+  if (req.rolePreview) return req.rolePreview;
   const cfg = getAuthConfig();
   if (cfg.authDisabled) {
     return buildUserContext({ sub: 0, name: 'Local Dev', right: [{ srv_id: cfg.serviceID, role_id: 5 }] }, cfg);

@@ -1,3 +1,4 @@
+import { approvedPreviewAccount } from './rolePreview.mjs';
 import mysql from 'mysql2';
 import {
   buildClassPresenceSummary,
@@ -5188,4 +5189,14 @@ function confirmationLabel(value) {
     case 'system_conflict': return 'Конфликт с системой';
     default: return 'Подтверждено';
   }
+}
+
+export async function getAttendancePreviewAccount(actorId, subjectId, serviceId) {
+  const account = await approvedPreviewAccount(usr, actorId, subjectId, serviceId);
+  if (!account) return null;
+  const [[role]] = await usr.query(
+    'SELECT MAX(role_id) AS role_id FROM sso.rights WHERE usr_id = ? AND srv_id = ?',
+    [subjectId, serviceId]
+  );
+  return { ...account, role_id: role.role_id };
 }
